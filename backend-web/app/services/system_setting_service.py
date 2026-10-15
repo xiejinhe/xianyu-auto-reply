@@ -106,7 +106,8 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
         "语音转文字接口地址（OpenAI兼容地址，末尾不要带 /chat/completions）",
     ),
     "asr.model": ("qwen3-asr-flash", "语音转文字模型名"),
-    "asr.local_model": ("base", "本地离线模型大小：tiny/base/small/medium/large-v3"),
+    # 实测 small 的中文准确率和标点明显优于 base（base 会输出繁体且丢问号），故默认 small
+    "asr.local_model": ("small", "本地离线模型大小：tiny/base/small/medium/large-v3"),
 }
 
 # 不需要XSS转义的键（布尔值、数字等）

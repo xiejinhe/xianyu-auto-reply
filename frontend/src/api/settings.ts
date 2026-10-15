@@ -364,10 +364,10 @@ export const ASR_LOCAL_MODEL_SIZES = ['tiny', 'base', 'small', 'medium', 'large-
 
 /** 本地离线模型体积说明，用于设置页提示 */
 export const ASR_LOCAL_MODEL_HINTS: Record<string, string> = {
-  tiny: '约 75MB，最快但中文一般',
-  base: '约 145MB，速度与准确率均衡（推荐）',
-  small: '约 480MB，中文明显更准',
-  medium: '约 1.5GB，准确率更高但慢',
+  tiny: '约 75MB，最快但中文较差（会丢标点）',
+  base: '约 145MB，快，但中文一般（可能出繁体字、丢问号）',
+  small: '约 480MB，中文准、标点正常（推荐，默认）',
+  medium: '约 1.5GB，准确率更高但明显变慢',
   'large-v3': '约 3GB，最准但很慢',
 }
 
@@ -376,7 +376,7 @@ export const DEFAULT_ASR_SETTINGS: AsrSettingsPayload = {
   'asr.base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'asr.model': 'qwen3-asr-flash',
   'asr.provider': 'auto',
-  'asr.local_model': 'base',
+  'asr.local_model': 'small',
 }
 
 export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null): AsrSettingsPayload => {

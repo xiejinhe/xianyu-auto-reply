@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 import threading
 from typing import Any
@@ -30,7 +31,31 @@ from loguru import logger  # noqa: E402
 
 # 可选模型：体积从小到大，中文准确率从低到高
 MODEL_SIZES = ("tiny", "base", "small", "medium", "large-v3")
-DEFAULT_LOCAL_MODEL = "base"
+# 实测对比（3 段闲鱼砍价/发货场景中文语音）：
+#   base 会把「包邮」听成「包油」、「尺码」听成「石码」，还会输出繁体字，且疑问句问号基本丢失
+#   small 字词准确率明显更高，问号能正常输出 → 默认用 small
+DEFAULT_LOCAL_MODEL = "small"
+
+# 提示词（initial_prompt）对中文效果影响极大，实测能同时解决三件事：
+#   1. 繁体字 → 简体（base 不加提示词时输出「這個寶貝還在嗎」）
+#   2. 场景词纠错（包邮 / 尺码 / 发货）
+#   3. 句末标点和疑问句问号
+DEFAULT_INITIAL_PROMPT = (
+    "以下是普通话的句子，请使用中文标点符号，句末要有标点。"
+    "这是闲鱼二手交易聊天，常见说法：包邮、便宜一点、能优惠吗、什么时候发货、"
+    "尺码、库存、已拍下、下单、谢谢老板。"
+)
+
+# 需要转成全角的半角标点（仅当它们紧跟在中文字符后面时才转，避免误伤英文和数字）
+_PUNCT_MAP = {
+    ",": "，",
+    "?": "？",
+    "!": "！",
+    ";": "；",
+    ":": "：",
+    "(": "（",
+    ")": "）",
+}
 
 _MODEL_LOCK = threading.Lock()
 _MODELS: dict[str, Any] = {}
@@ -66,6 +91,11 @@ def is_model_ready(size: str) -> bool:
     return size in _MODELS
 
 
+def _is_cjk(ch: str) -> bool:
+    """判断是否为中日韩统一表意文字（用于标点全角化的上下文判断）"""
+    return bool(ch) and ("\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf")
+
+
 def _get_model(size: str) -> Any:
     """加载（并缓存）指定大小的模型；首次调用会联网下载模型文件"""
     from faster_whisper import WhisperModel
@@ -81,6 +111,32 @@ def _get_model(size: str) -> Any:
         return model
 
 
+def normalize_punctuation(text: str) -> str:
+    """
+    把中文语境里的半角标点转成全角，并去掉中文之间多余的空格
+
+    Whisper 输出的中英文标点混用（「便宜一点吗? 包邮吗?」），中文里读起来别扭，
+    统一成全角。只在标点前面是中文字符时才转换，避免误伤英文和数字（如 3.5、iPhone,）。
+    """
+    if not text:
+        return text
+
+    result: list[str] = []
+    for i, ch in enumerate(text):
+        prev = text[i - 1] if i > 0 else ""
+        if ch in _PUNCT_MAP and _is_cjk(prev):
+            result.append(_PUNCT_MAP[ch])
+        elif ch == "." and _is_cjk(prev):
+            result.append("。")
+        else:
+            result.append(ch)
+
+    out = "".join(result)
+    # 去掉中文之间被插入的空格：「今天能发货吗? 包邮吗?」→「今天能发货吗？包邮吗？」
+    out = re.sub(r"(?<=[\u4e00-\u9fff\uff0c\u3002\uff1f\uff01]) (?=[\u4e00-\u9fff])", "", out)
+    return out.strip()
+
+
 def _transcribe_sync(size: str, audio_bytes: bytes, language: str) -> str:
     """同步转写（内部函数，实际调用请用 transcribe 以免阻塞事件循环）"""
     model = _get_model(size)
@@ -90,8 +146,19 @@ def _transcribe_sync(size: str, audio_bytes: bytes, language: str) -> str:
     try:
         with open(path, "wb") as f:
             f.write(audio_bytes)
-        segments, _info = model.transcribe(path, language=language or "zh", beam_size=5)
-        return "".join(seg.text for seg in segments).strip()
+        segments, _info = model.transcribe(
+            path,
+            language=language or "zh",
+            beam_size=5,
+            # 提示词：显著改善简繁体、场景词与标点符号
+            initial_prompt=DEFAULT_INITIAL_PROMPT,
+            # 过滤静音段，减少录音头尾空白产生的幻听
+            vad_filter=True,
+            # 不参考上一段内容，避免长录音里反复重复同一句
+            condition_on_previous_text=False,
+        )
+        raw = "".join(seg.text for seg in segments).strip()
+        return normalize_punctuation(raw) if (language or "zh").startswith("zh") else raw
     finally:
         if os.path.exists(path):
             try:
