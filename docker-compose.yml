@@ -127,6 +127,8 @@ services:
       - backend_web_logs:/app/backend-web/logs
       - static-files:/app/static
       - backup-files:/app/backups
+      # 本地离线语音模型缓存：持久化，避免容器重建后重新下载
+      - asr_models:/app/data/asr_models
     ports:
       - "${BACKEND_WEB_PORT:-8089}:8089"
     networks:
@@ -328,4 +330,6 @@ volumes:
   backup-files:
     driver: local
   browser_data:
+    driver: local
+  asr_models:
     driver: local
