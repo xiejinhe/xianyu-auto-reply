@@ -1,6 +1,7 @@
 import { get, post, put } from '@/utils/request'
 import type {
   ApiResponse,
+  AsrProvider,
   AuthFooterAdSettings,
   DisclaimerSettings,
   LoginBrandingSettings,
@@ -18,6 +19,7 @@ import {
 const SYSTEM_SETTINGS_PREFIX = '/api/v1/system-settings'
 const PUBLIC_SYSTEM_SETTINGS_PREFIX = `${SYSTEM_SETTINGS_PREFIX}/public`
 const AI_SETTINGS_PREFIX = '/api/v1/ai-reply-settings'
+const CHAT_NEW_PREFIX = '/api/v1/chat-new'
 const ADMIN_PREFIX = '/api/v1/admin'
 const USERS_PREFIX = '/api/v1/users'
 const MENU_HIDDEN_SETTING_KEY = 'navigation.hidden_menu_keys'
@@ -353,18 +355,36 @@ export interface AsrSettingsPayload {
   'asr.api_key': string
   'asr.base_url': string
   'asr.model': string
+  'asr.provider': AsrProvider
+  'asr.local_model': string
+}
+
+/** 本地离线模型可选大小（体积从小到大，中文准确率从低到高） */
+export const ASR_LOCAL_MODEL_SIZES = ['tiny', 'base', 'small', 'medium', 'large-v3'] as const
+
+/** 本地离线模型体积说明，用于设置页提示 */
+export const ASR_LOCAL_MODEL_HINTS: Record<string, string> = {
+  tiny: '约 75MB，最快但中文一般',
+  base: '约 145MB，速度与准确率均衡（推荐）',
+  small: '约 480MB，中文明显更准',
+  medium: '约 1.5GB，准确率更高但慢',
+  'large-v3': '约 3GB，最准但很慢',
 }
 
 export const DEFAULT_ASR_SETTINGS: AsrSettingsPayload = {
   'asr.api_key': '',
   'asr.base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'asr.model': 'qwen3-asr-flash',
+  'asr.provider': 'auto',
+  'asr.local_model': 'base',
 }
 
 export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null): AsrSettingsPayload => {
   const apiKey = settings?.['asr.api_key']
   const baseUrl = settings?.['asr.base_url']
   const model = settings?.['asr.model']
+  const provider = settings?.['asr.provider']
+  const localModel = settings?.['asr.local_model']
   return {
     'asr.api_key': typeof apiKey === 'string' ? apiKey : '',
     'asr.base_url':
@@ -375,6 +395,14 @@ export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null):
       typeof model === 'string' && model.trim()
         ? model.trim()
         : DEFAULT_ASR_SETTINGS['asr.model'],
+    'asr.provider':
+      provider === 'local' || provider === 'cloud' || provider === 'auto'
+        ? provider
+        : DEFAULT_ASR_SETTINGS['asr.provider'],
+    'asr.local_model':
+      typeof localModel === 'string' && localModel.trim()
+        ? localModel.trim()
+        : DEFAULT_ASR_SETTINGS['asr.local_model'],
   }
 }
 
@@ -385,6 +413,8 @@ export const updateAsrSettings = async (settings?: Partial<SystemSettings> | nul
     ['asr.api_key', normalized['asr.api_key']],
     ['asr.base_url', normalized['asr.base_url']],
     ['asr.model', normalized['asr.model']],
+    ['asr.provider', normalized['asr.provider']],
+    ['asr.local_model', normalized['asr.local_model']],
   ]
 
   for (const [key, value] of entries) {
@@ -399,6 +429,27 @@ export const updateAsrSettings = async (settings?: Partial<SystemSettings> | nul
   }
 
   return { success: true, message: '语音转文字设置已保存' }
+}
+
+/** 语音转文字能力状态（本地依赖是否可用 / 模型是否就绪） */
+export interface AsrStatus {
+  provider: AsrProvider
+  localAvailable: boolean
+  localError: string
+  localModel: string
+  localModelReady: boolean
+  modelSizes: string[]
+  cloudConfigured: boolean
+  installCommand: string
+}
+
+export const getAsrStatus = (): Promise<{ success: boolean; message: string; data?: AsrStatus }> => {
+  return get(`${CHAT_NEW_PREFIX}/asr/status`)
+}
+
+/** 提前下载并加载本地模型，避免首次使用时干等 */
+export const warmupAsrModel = async (model?: string): Promise<ApiResponse> => {
+  return post(`${CHAT_NEW_PREFIX}/asr/warmup${model ? `?model=${encodeURIComponent(model)}` : ''}`)
 }
 
 // ========== 分销设置（独立保存） ==========

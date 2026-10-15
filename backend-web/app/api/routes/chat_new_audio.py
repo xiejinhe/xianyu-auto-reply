@@ -28,6 +28,15 @@ from common.schemas.common import ApiResponse
 from common.services.ai_provider_service import build_openai_url, normalize_ai_settings
 from common.utils.auth_scope import is_admin_user
 from common.utils.image_uploader import ImageUploader
+from common.utils.local_asr import (
+    DEFAULT_LOCAL_MODEL,
+    MODEL_SIZES,
+    is_available as local_asr_available,
+    is_model_ready,
+    transcribe as local_transcribe,
+    unavailable_reason,
+    warmup as local_warmup,
+)
 
 router = APIRouter(prefix="/chat-new")
 
@@ -207,30 +216,48 @@ async def send_audio(
 
 async def _resolve_asr_settings(db: AsyncSession, account: XYAccount) -> dict:
     """
-    解析语音转文字使用的接口配置，优先级：
+    解析语音转文字使用的配置，优先级：
 
-    1. 系统设置里的「语音转文字」专用配置（asr.api_key / asr.base_url / asr.model）
+    1. 系统设置里的「语音转文字」专用配置（asr.provider / asr.api_key /
+       asr.base_url / asr.model / asr.local_model）
     2. 账号 AI 回复设置里已有的接口配置（复用同一份 API Key）
+
+    Returns:
+        规范化后的配置，额外带 asr_provider / asr_local_model 两个字段
     """
+    provider = "auto"
+    local_model = DEFAULT_LOCAL_MODEL
     try:
         from app.services.system_setting_service import SystemSettingService
 
         all_settings = await SystemSettingService(db).list_settings()
+        raw_provider = str(all_settings.get("asr.provider") or "").strip().lower()
+        if raw_provider in ("auto", "cloud", "local"):
+            provider = raw_provider
+        raw_local_model = str(all_settings.get("asr.local_model") or "").strip()
+        if raw_local_model in MODEL_SIZES:
+            local_model = raw_local_model
+
         sys_key = str(all_settings.get("asr.api_key") or "").strip()
-        if sys_key:
-            return normalize_ai_settings(
-                {
-                    "api_key": sys_key,
-                    "base_url": str(all_settings.get("asr.base_url") or "").strip(),
-                    "model_name": str(all_settings.get("asr.model") or "").strip(),
-                    "asr_model": str(all_settings.get("asr.model") or "").strip(),
-                }
-            )
+        payload = normalize_ai_settings(
+            {
+                "api_key": sys_key,
+                "base_url": str(all_settings.get("asr.base_url") or "").strip(),
+                "model_name": str(all_settings.get("asr.model") or "").strip(),
+                "asr_model": str(all_settings.get("asr.model") or "").strip(),
+            }
+        )
+        payload["asr_provider"] = provider
+        payload["asr_local_model"] = local_model
+        return payload
     except Exception as e:
         logger.warning(f"读取系统语音转文字配置失败，回退到账号AI配置: {e}")
 
     stored = (account.metadata_json or {}).get("ai_reply_settings") or {}
-    return normalize_ai_settings(stored)
+    payload = normalize_ai_settings(stored)
+    payload["asr_provider"] = provider
+    payload["asr_local_model"] = local_model
+    return payload
 
 
 def _is_dashscope_base(base_url: str) -> bool:
@@ -328,21 +355,83 @@ async def _asr_via_whisper(
     return text
 
 
+async def _speech_to_text_local(local_model: str, audio_bytes: bytes) -> tuple[str, str]:
+    """本地离线转写（faster-whisper），不需要任何 API Key"""
+    text = await local_transcribe(audio_bytes, size=local_model)
+    if not text:
+        raise RuntimeError("本地模型没有识别出内容")
+    return text, f"本地模型 {local_model}"
+
+
 async def _speech_to_text(
     ai_settings: dict, audio_bytes: bytes, mime: str
 ) -> tuple[str, str]:
     """
-    按服务商类型依次尝试可用的 ASR 通道
+    按配置选择 ASR 通道
+
+    - provider=local：只用本地模型（离线，不需要 Key）
+    - provider=cloud：只用云端接口
+    - provider=auto（默认）：有云端 Key 走云端；没有 Key 或云端失败则回退本地
 
     Returns:
         (转写文本, 使用的模型名)
     Raises:
-        RuntimeError: 所有通道都失败时抛出最后一次错误
+        RuntimeError: 所有可用通道都失败
     """
+    provider = (ai_settings.get("asr_provider") or "auto").strip().lower()
+    local_model = (ai_settings.get("asr_local_model") or DEFAULT_LOCAL_MODEL).strip()
     api_key = (ai_settings.get("api_key") or "").strip()
     base_url = (ai_settings.get("base_url") or "").strip()
     custom_model = (ai_settings.get("asr_model") or "").strip()
 
+    # 明确指定本地：不碰任何云端配置
+    if provider == "local":
+        if not local_asr_available():
+            raise RuntimeError(
+                "本地语音转文字依赖未安装，请在后端目录执行：pip install faster-whisper av==14.0.1"
+            )
+        return await _speech_to_text_local(local_model, audio_bytes)
+
+    cloud_error: Exception | None = None
+
+    # 云端通道（需要 API Key）
+    if provider == "cloud" or (provider == "auto" and api_key and base_url):
+        try:
+            return await _speech_to_text_cloud(
+                ai_settings, audio_bytes, mime, api_key, base_url, custom_model
+            )
+        except Exception as e:
+            cloud_error = e
+            if provider == "cloud":
+                raise
+            logger.warning(f"云端语音转文字失败，回退本地模型: {e}")
+    elif provider == "cloud":
+        raise RuntimeError("选择了云端转写，但没有配置语音转文字 API Key")
+
+    # 走到这里说明：auto 模式下云端不可用/失败 → 尝试本地
+    if local_asr_available():
+        try:
+            return await _speech_to_text_local(local_model, audio_bytes)
+        except Exception as e:
+            if cloud_error:
+                raise RuntimeError(f"云端失败：{cloud_error}；本地失败：{e}")
+            raise
+    if cloud_error:
+        raise cloud_error
+    raise RuntimeError(
+        "没有可用的语音转文字方式：请在「系统设置 → 语音转文字」选择本地模型并安装依赖，或填写云端 API Key"
+    )
+
+
+async def _speech_to_text_cloud(
+    ai_settings: dict,
+    audio_bytes: bytes,
+    mime: str,
+    api_key: str,
+    base_url: str,
+    custom_model: str,
+) -> tuple[str, str]:
+    """云端 ASR：按服务商类型依次尝试 chat/completions(input_audio) 与 /audio/transcriptions"""
     dashscope_first = _is_dashscope_base(base_url)
     dashscope_models = ([custom_model] if custom_model else []) + _DASHSCOPE_ASR_MODELS
     whisper_models = ([custom_model] if custom_model else []) + _WHISPER_ASR_MODELS
@@ -431,13 +520,15 @@ async def transcribe_audio(
         return ApiResponse(success=False, message="音频大小不能超过10MB")
 
     ai_settings = await _resolve_asr_settings(db, account)
-    if not (ai_settings.get("api_key") or "").strip():
-        return ApiResponse(
-            success=False,
-            message="未配置语音转文字密钥：请在「系统设置 → 语音转文字」填写 API Key，或在账号的「AI回复设置」里填写",
-        )
-    if not (ai_settings.get("base_url") or "").strip():
-        return ApiResponse(success=False, message="未配置AI接口地址")
+    # 只有本地模式不需要任何云端配置，其余情况做一次前置提示，避免转半天才报错
+    if (ai_settings.get("asr_provider") or "auto") != "local" and not local_asr_available():
+        if not (ai_settings.get("api_key") or "").strip():
+            return ApiResponse(
+                success=False,
+                message="没有可用的语音转文字方式：请在「系统设置 → 语音转文字」选择「本地模型」并安装依赖，或填写云端 API Key",
+            )
+        if not (ai_settings.get("base_url") or "").strip():
+            return ApiResponse(success=False, message="未配置语音转文字接口地址")
 
     try:
         text, model = await _speech_to_text(ai_settings, audio_bytes, mime)
@@ -447,3 +538,56 @@ async def transcribe_audio(
 
     logger.info(f"【{account_id}】语音转文字成功 model={model} 长度={len(text)}")
     return ApiResponse(success=True, message="转写成功", data={"text": text, "model": model})
+
+
+@router.get("/asr/status")
+async def asr_status(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """查询语音转文字能力状态（本地依赖是否可用、模型是否就绪、云端是否配置）"""
+    from app.services.system_setting_service import SystemSettingService
+
+    settings = await SystemSettingService(db).list_settings()
+    provider = str(settings.get("asr.provider") or "auto").strip().lower() or "auto"
+    local_model = str(settings.get("asr.local_model") or DEFAULT_LOCAL_MODEL).strip()
+    if local_model not in MODEL_SIZES:
+        local_model = DEFAULT_LOCAL_MODEL
+
+    return ApiResponse(
+        success=True,
+        message="ok",
+        data={
+            "provider": provider,
+            "localAvailable": local_asr_available(),
+            "localError": unavailable_reason() if not local_asr_available() else "",
+            "localModel": local_model,
+            "localModelReady": is_model_ready(local_model),
+            "modelSizes": list(MODEL_SIZES),
+            "cloudConfigured": bool(str(settings.get("asr.api_key") or "").strip()),
+            "installCommand": "pip install faster-whisper av==14.0.1",
+        },
+    )
+
+
+@router.post("/asr/warmup")
+async def asr_warmup(
+    model: str | None = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """提前下载并加载本地模型（首次会比较慢，之后就秒开）"""
+    from app.services.system_setting_service import SystemSettingService
+
+    settings = await SystemSettingService(db).list_settings()
+    size = (model or str(settings.get("asr.local_model") or "") or DEFAULT_LOCAL_MODEL).strip()
+    if size not in MODEL_SIZES:
+        return ApiResponse(success=False, message=f"不支持的模型：{size}")
+
+    try:
+        await local_warmup(size)
+    except Exception as e:
+        logger.warning(f"本地语音模型预热失败: {e}")
+        return ApiResponse(success=False, message=f"模型下载失败：{str(e)[:200]}")
+
+    return ApiResponse(success=True, message=f"模型 {size} 已就绪", data={"model": size})

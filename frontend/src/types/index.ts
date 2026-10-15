@@ -263,6 +263,9 @@ export type PasswordLoginMode = 'protocol' | 'browser'
 export type SliderMode = 'browser' | 'real_mouse'
 export type TokenApiMode = 'web' | 'remote'
 
+/** 语音转文字方式：auto-自动（有云端Key走云端，否则本地）/ local-本地离线模型 / cloud-云端接口 */
+export type AsrProvider = 'auto' | 'local' | 'cloud'
+
 export interface SystemSettings {
   ai_model?: string
   ai_api_key?: string
@@ -289,6 +292,8 @@ export interface SystemSettings {
   'asr.api_key'?: string
   'asr.base_url'?: string
   'asr.model'?: string
+  'asr.provider'?: AsrProvider
+  'asr.local_model'?: string
   // SMTP邮件配置
   smtp_server?: string
   smtp_port?: number

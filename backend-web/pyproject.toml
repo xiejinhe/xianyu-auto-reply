@@ -40,6 +40,16 @@ dependencies = [
     "opencv-python-headless>=4.10.0",
 ]
 
+# 语音转文字（本地离线模型）为可选依赖：
+# 不装也能用云端 ASR；装了之后「系统设置 → 语音转文字」选择本地模型即可离线转写。
+# 安装：pip install -e ".[asr]"
+[project.optional-dependencies]
+asr = [
+    "faster-whisper>=1.1.0",
+    # faster-whisper 1.2.x 与 av>=15 不兼容（av.open 移除了 metadata_errors 参数），必须锁 <15
+    "av==14.0.1",
+]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
