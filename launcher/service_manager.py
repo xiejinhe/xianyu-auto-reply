@@ -32,6 +32,37 @@ _PROXY_RULES = {
     "/static/uploads/": "http://127.0.0.1:8089",
 }
 
+# 本地启动器生成 .env 时统一写入的 Redis 连接池参数
+_REDIS_POOL_ENV = (
+    "REDIS_POOL_SIZE=800\n"
+    "REDIS_SOCKET_TIMEOUT=5\n"
+    "REDIS_SOCKET_CONNECT_TIMEOUT=3\n"
+    "REDIS_SOCKET_KEEPALIVE=true\n"
+    "REDIS_SOCKET_KEEPALIVE_IDLE=60\n"
+    "REDIS_SOCKET_KEEPALIVE_INTERVAL=10\n"
+    "REDIS_SOCKET_KEEPALIVE_COUNT=3\n"
+    "REDIS_HEALTH_CHECK_INTERVAL=30\n"
+    "REDIS_PROTOCOL=2\n"
+    "REDIS_STARTUP_MAX_RETRIES=5\n"
+    "REDIS_STARTUP_RETRY_BASE_DELAY=1\n"
+    "REDIS_STARTUP_RETRY_CAP_DELAY=10\n"
+)
+
+# 本地启动器按服务写入数据库连接池参数，避免落到各服务不同的代码默认值
+_DB_POOL_COMMON_ENV = (
+    "DB_POOL_SIZE=800\n"
+    "DB_POOL_TIMEOUT=30\n"
+    "DB_POOL_RECYCLE=1800\n"
+    "DB_POOL_PRE_PING=true\n"
+    "DB_POOL_USE_LIFO=true\n"
+    "DB_CONNECT_TIMEOUT=10\n"
+)
+_DB_POOL_SERVICE_ENV = {
+    "backend-web": "DB_MAX_OVERFLOW=60\n",
+    "websocket": "DB_MAX_OVERFLOW=150\n",
+    "scheduler": "DB_MAX_OVERFLOW=30\n",
+}
+
 
 class FrontendHandler(http.server.SimpleHTTPRequestHandler):
     """
@@ -199,10 +230,13 @@ class ServiceManager:
             f"MYSQL_USER={config['mysql_user']}\n"
             f"MYSQL_PASSWORD={config['mysql_password']}\n"
             f"MYSQL_DATABASE={config['mysql_database']}\n"
+            f"{_DB_POOL_SERVICE_ENV['backend-web']}"
+            f"{_DB_POOL_COMMON_ENV}"
             f"REDIS_HOST={config['redis_host']}\n"
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_REDIS_POOL_ENV}"
             f"BACKEND_WEB_PORT=8089\n"
             f"JWT_ALGORITHM=HS256\n"
             f"ACCESS_TOKEN_EXPIRE_MINUTES=1440\n"
@@ -226,10 +260,13 @@ class ServiceManager:
             f"MYSQL_USER={config['mysql_user']}\n"
             f"MYSQL_PASSWORD={config['mysql_password']}\n"
             f"MYSQL_DATABASE={config['mysql_database']}\n"
+            f"{_DB_POOL_SERVICE_ENV['websocket']}"
+            f"{_DB_POOL_COMMON_ENV}"
             f"REDIS_HOST={config['redis_host']}\n"
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_REDIS_POOL_ENV}"
             f"WEBSOCKET_PORT=8090\n"
             f"MAX_CAPTCHA_CONCURRENT=1\n"
             f"BROWSER_HEADLESS=true\n"
@@ -249,10 +286,13 @@ class ServiceManager:
             f"MYSQL_USER={config['mysql_user']}\n"
             f"MYSQL_PASSWORD={config['mysql_password']}\n"
             f"MYSQL_DATABASE={config['mysql_database']}\n"
+            f"{_DB_POOL_SERVICE_ENV['scheduler']}"
+            f"{_DB_POOL_COMMON_ENV}"
             f"REDIS_HOST={config['redis_host']}\n"
             f"REDIS_PORT={config['redis_port']}\n"
             f"REDIS_PASSWORD={config['redis_password']}\n"
             f"REDIS_DB={config['redis_db']}\n"
+            f"{_REDIS_POOL_ENV}"
             f"SCHEDULER_PORT=8091\n"
             f"REDELIVERY_INTERVAL=5\n"
             f"RATE_INTERVAL=20\n"

@@ -48,11 +48,9 @@ class BaseConfig(BaseSettings):
     async_driver: str = Field(default="mysql+asyncmy")
 
     # 数据库连接池配置（账号数量较大时可通过环境变量调优）
-    # 重要：db_pool_size + db_max_overflow 不应超过 MySQL 的 max_connections，
-    # 否则连接池打满后还会触发 MySQL 的 "Too many connections"。
-    # 上千账号场景的建议：保持适中的连接池 + 短连接超时，让卡住的连接快速失败并归还，
-    # 而不是无限放大连接数把远程 MySQL 压垮。
-    db_pool_size: int = Field(default=30)            # 常驻连接数
+    # MySQL max_connections 必须大于所有服务进程的连接峰值总和并预留管理连接。
+    # 主服务默认峰值合计 2640；启用推广服务后为 3460，部署默认上限为 4000。
+    db_pool_size: int = Field(default=800, ge=600)   # 连接池容量，连接按需建立
     db_max_overflow: int = Field(default=70)         # 允许的溢出连接数（峰值 = pool_size + max_overflow）
     db_pool_timeout: int = Field(default=30)         # 从连接池获取连接的最长等待秒数
     db_pool_recycle: int = Field(default=1800)       # 连接回收时间（秒），防止 MySQL 主动断开陈旧连接
@@ -65,6 +63,38 @@ class BaseConfig(BaseSettings):
     redis_port: int = Field(default=6379)
     redis_password: str = Field(default="", repr=False)
     redis_db: int = Field(default=0)
+    redis_pool_size: int = Field(default=800, alias="REDIS_POOL_SIZE", ge=600)
+    redis_socket_timeout: float = Field(
+        default=5.0, alias="REDIS_SOCKET_TIMEOUT", gt=0
+    )
+    redis_socket_connect_timeout: float = Field(
+        default=3.0, alias="REDIS_SOCKET_CONNECT_TIMEOUT", gt=0
+    )
+    redis_socket_keepalive: bool = Field(
+        default=True, alias="REDIS_SOCKET_KEEPALIVE"
+    )
+    redis_socket_keepalive_idle: int = Field(
+        default=60, alias="REDIS_SOCKET_KEEPALIVE_IDLE", ge=1
+    )
+    redis_socket_keepalive_interval: int = Field(
+        default=10, alias="REDIS_SOCKET_KEEPALIVE_INTERVAL", ge=1
+    )
+    redis_socket_keepalive_count: int = Field(
+        default=3, alias="REDIS_SOCKET_KEEPALIVE_COUNT", ge=1
+    )
+    redis_health_check_interval: int = Field(
+        default=30, alias="REDIS_HEALTH_CHECK_INTERVAL", ge=0
+    )
+    redis_protocol: int = Field(default=2, alias="REDIS_PROTOCOL", ge=2, le=3)
+    redis_startup_max_retries: int = Field(
+        default=5, alias="REDIS_STARTUP_MAX_RETRIES", ge=0, le=20
+    )
+    redis_startup_retry_base_delay: float = Field(
+        default=1.0, alias="REDIS_STARTUP_RETRY_BASE_DELAY", gt=0
+    )
+    redis_startup_retry_cap_delay: float = Field(
+        default=10.0, alias="REDIS_STARTUP_RETRY_CAP_DELAY", gt=0
+    )
     
     # JWT配置（用于安全模块）
     # 注意：jwt_secret_key 由数据库统一托管（backend-web 启动时自动生成并持久化），

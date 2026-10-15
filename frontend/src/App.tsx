@@ -28,6 +28,7 @@ const Items = React.lazy(() => import('@/pages/items/Items').then(m => ({ defaul
 const Orders = React.lazy(() => import('@/pages/orders/Orders').then(m => ({ default: m.Orders })))
 const Keywords = React.lazy(() => import('@/pages/keywords/Keywords').then(m => ({ default: m.Keywords })))
 const About = React.lazy(() => import('@/pages/about/About').then(m => ({ default: m.About })))
+const PublicAbout = React.lazy(() => import('@/pages/about/PublicAbout').then(m => ({ default: m.PublicAbout })))
 const Disclaimer = React.lazy(() => import('@/pages/disclaimer/Disclaimer').then(m => ({ default: m.Disclaimer })))
 const NotificationChannels = React.lazy(() => import('@/pages/notifications/NotificationChannels').then(m => ({ default: m.NotificationChannels })))
 const MessageNotifications = React.lazy(() => import('@/pages/notifications/MessageNotifications').then(m => ({ default: m.MessageNotifications })))
@@ -81,6 +82,7 @@ const Logs = React.lazy(() => import('@/pages/admin/Logs').then(m => ({ default:
 const AutoReplyLogs = React.lazy(() => import('@/pages/autoReplyLogs/AutoReplyLogs').then(m => ({ default: m.AutoReplyLogs })))
 const RiskLogs = React.lazy(() => import('@/pages/admin/RiskLogs').then(m => ({ default: m.RiskLogs })))
 const AccountLoginLogs = React.lazy(() => import('@/pages/admin/AccountLoginLogs').then(m => ({ default: m.AccountLoginLogs })))
+const UserLoginLogs = React.lazy(() => import('@/pages/admin/UserLoginLogs').then(m => ({ default: m.UserLoginLogs })))
 const DbBackupLogs = React.lazy(() => import('@/pages/admin/DbBackupLogs').then(m => ({ default: m.DbBackupLogs })))
 const DataManagement = React.lazy(() => import('@/pages/admin/DataManagement').then(m => ({ default: m.DataManagement })))
 const ScheduledTasks = React.lazy(() => import('@/pages/admin/ScheduledTasks').then(m => ({ default: m.ScheduledTasks })))
@@ -323,6 +325,7 @@ function App() {
           <Route path="/renew-activation" element={<RenewActivation />} />
           <Route path="/get-local-version" element={<GetLocalVersion />} />
           <Route path="/get-source-code" element={<GetSourceCode />} />
+          <Route path="/about-public" element={<PublicAbout />} />
           {/* 兼职端扫码页面：无需登录，公开访问 */}
           <Route path="/shared-scan-page" element={<SharedScanPage />} />
           {/* 同意后发货提货页：无需登录，公开访问 */}
@@ -394,6 +397,7 @@ function App() {
             <Route path="admin/users" element={<Users />} />
             <Route path="admin/logs" element={<Logs />} />
             <Route path="admin/account-login-logs" element={<AccountLoginLogs />} />
+            <Route path="admin/user-login-logs" element={<UserLoginLogs />} />
             <Route path="admin/db-backup-logs" element={<DbBackupLogs />} />
             <Route path="admin/auto-reply-logs" element={<Navigate to="/message-logs" replace />} />
             <Route path="admin/risk-logs" element={<Navigate to="/risk-logs" replace />} />

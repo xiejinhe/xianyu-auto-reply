@@ -9,6 +9,7 @@ import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, S
 import { useUIStore } from '@/store/uiStore'
 import {
   getChatAccounts,
+  getConnectedChatAccountIds,
   connectAccount,
   disconnectAccount,
   getConversations,
@@ -40,6 +41,9 @@ import {
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
 import { useChatNewWs } from './useChatNewWs'
 import { playNewMessageSound } from '@/utils/notificationSound'
+import { appendMsg, mergeConversations, mergeMessages, toTimestampMs } from './chat_history_merge'
+import { ChatHistoryRecovery, recoverConversations, recoverMessages,
+  type ConversationCache, type MessageCache } from './chat_history_recovery'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { CustomerOrdersPanel } from './CustomerOrdersPanel'
 import { QuickPhrasesPanel } from './QuickPhrasesPanel'
@@ -52,9 +56,6 @@ import { cn } from '@/utils/cn'
 
 /** 检查昵称是否为纯数字（如用户ID），纯数字视为无效昵称 */
 const isPureDigits = (name: string) => /^\d+$/.test(name)
-
-const toTimestampMs = (timestamp: number) =>
-  timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
 
 const canRecallMessage = (message: ChatMessage) =>
   message.isSelf &&
@@ -156,7 +157,7 @@ export function ChatNew() {
   const [phraseContent, setPhraseContent] = useState('')
   const [savingPhrase, setSavingPhrase] = useState(false)
 
-  // 手动管理 WebSocket 连接的账号列表（仅用户显式操作时加入，页面刷新不自动重连）
+  // 页面需要实时订阅的账号列表（手动连接成功后加入，刷新后自动恢复已连接账号）
   const [wsAccountIds, setWsAccountIds] = useState<string[]>([])
 
   // 手机端 Tab 切换（桌面端 md+ 仍为四栏并排，本 state 不影响桌面布局）
@@ -191,18 +192,54 @@ export function ChatNew() {
   const activeCidRef = useRef(activeCid)
   useEffect(() => { activeCidRef.current = activeCid }, [activeCid])
   const reloadOrdersRef = useRef<() => void>(() => {})
+  const convCursorRef = useRef<number | null>(null)
+  useEffect(() => { convCursorRef.current = convCursor }, [convCursor])
+  const msgCursorRef = useRef<number | null>(null)
+  useEffect(() => { msgCursorRef.current = msgCursor }, [msgCursor])
+  const messagesRef = useRef<ChatMessage[]>([])
+  useEffect(() => { messagesRef.current = messages }, [messages])
+  const conversationsRef = useRef<Conversation[]>([])
+  useEffect(() => { conversationsRef.current = conversations }, [conversations])
+  const historyPageRef = useRef({ convHasMore, msgHasMore })
+  useEffect(() => { historyPageRef.current = { convHasMore, msgHasMore } }, [convHasMore, msgHasMore])
+  const convRequestIdRef = useRef<Record<string, number>>({})
+  const msgRequestIdRef = useRef(0)
+
+  /** 同步更新账号 ref，避免账号切换后旧请求把数据写入新账号窗口 */
+  const selectAccount = useCallback((accountId: string) => {
+    activeAccountIdRef.current = accountId
+    setActiveAccountId(accountId)
+  }, [])
+
+  /** 同步更新会话 ref，避免会话切换后旧请求把消息写入新会话窗口 */
+  const selectCid = useCallback((cid: string) => {
+    activeCidRef.current = cid
+    setActiveCid(cid)
+  }, [])
 
   // ==================== 按账号缓存：切换账号时保留数据 ====================
   /** 每个账号的会话列表缓存 */
-  const convsCacheRef = useRef<Record<string, {
-    convs: Conversation[]; hasMore: boolean; cursor: number | null
-  }>>({})
+  const convsCacheRef = useRef<Record<string, ConversationCache>>({})
   /** 每个账号每个会话的消息缓存 */
-  const msgsCacheRef = useRef<Record<string, Record<string, {
-    msgs: ChatMessage[]; hasMore: boolean; cursor: number | null
-  }>>>({})
+  const msgsCacheRef = useRef<Record<string, Record<string, MessageCache>>>({})
+  const recoveryRef = useRef(new ChatHistoryRecovery())
   /** 记住每个账号上次选中的会话 */
   const activeConvPerAccountRef = useRef<Record<string, string>>({})
+
+  /** 冻结断线前范围；重复断线和后续实时推送不能提前推进补偿边界。 */
+  const prepareAccountRecovery = useCallback((accountId: string, disconnected = false) => {
+    let conversationCache = convsCacheRef.current[accountId]
+    const messageCaches = { ...msgsCacheRef.current[accountId] }
+    if (accountId === activeAccountIdRef.current) {
+      conversationCache = { convs: conversationsRef.current,
+        hasMore: historyPageRef.current.convHasMore, cursor: convCursorRef.current }
+      if (activeCidRef.current) {
+        messageCaches[activeCidRef.current] = { msgs: messagesRef.current,
+          hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current }
+      }
+    }
+    recoveryRef.current.prepare(accountId, conversationCache, messageCaches, disconnected)
+  }, [])
 
   /**
    * 同步当前会话列表到缓存
@@ -266,62 +303,77 @@ export function ChatNew() {
     return [newConv, ...convs]
   }
 
-  /** 追加消息到消息列表（去重自己发的） */
-  const appendMsg = (msgs: ChatMessage[], msg: ChatMessage): ChatMessage[] => {
-    if (msg.isSelf && msgs.some((m) => m.isSelf && m.text === msg.text && Math.abs(m.time - msg.time) < 5000)) {
-      return msgs
-    }
-    return [...msgs, msg]
-  }
-
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     const summary = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
     const isActiveAccount = accountId === activeAccountIdRef.current
-
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响
     if (!msg.isSelf) {
       playNewMessageSound()
     }
 
+    const isViewingConv = isActiveAccount && cid === activeCidRef.current
+    const conversationCache = convsCacheRef.current[accountId]
+    if (conversationCache) {
+      conversationCache.convs = updateConvList(conversationCache.convs, cid, summary, msg, isViewingConv)
+    }
+    let messageCache = msgsCacheRef.current[accountId]?.[cid]
+    if (!messageCache && isViewingConv) {
+      msgsCacheRef.current[accountId] ??= {}
+      messageCache = { msgs: messagesRef.current,
+        hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current }
+      msgsCacheRef.current[accountId][cid] = messageCache
+    }
+    // 当前账号的非当前会话也更新缓存；补偿边界保存在独立对象中。
+    if (messageCache) messageCache.msgs = appendMsg(messageCache.msgs, msg)
     if (isActiveAccount) {
-      // 活跃账号 → 直接更新 React state
-      const isViewingConv = cid === activeCidRef.current
-      setConversations((prev) => updateConvList(prev, cid, summary, msg, isViewingConv))
-      if (isViewingConv) {
-        setMessages((prev) => appendMsg(prev, msg))
+      const nextConversations = conversationCache?.convs ??
+        updateConvList(conversationsRef.current, cid, summary, msg, isViewingConv)
+      conversationsRef.current = nextConversations
+      setConversations(nextConversations)
+      if (isViewingConv && messageCache) {
+        messagesRef.current = messageCache.msgs
+        setMessages(messageCache.msgs)
         window.setTimeout(() => reloadOrdersRef.current(), 900)
-      }
-    } else {
-      // 后台账号 → 更新缓存（不触发渲染）
-      const cached = convsCacheRef.current[accountId]
-      if (cached) {
-        cached.convs = updateConvList(cached.convs, cid, summary, msg, false)
-      }
-      // 如果该会话的消息也在缓存中，追加消息
-      const msgCache = msgsCacheRef.current[accountId]?.[cid]
-      if (msgCache) {
-        msgCache.msgs = appendMsg(msgCache.msgs, msg)
       }
     }
   }, [])
 
-  // WebSocket 断连时刷新账号状态（节流：最多每 5 秒刷一次）
+  // WebSocket 断连时刷新账号状态，保留订阅以等待 IM 临时离线后恢复
+  // （节流：最多每 5 秒刷一次，避免网络抖动时请求风暴）
   const lastDisconnectRefreshRef = useRef(0)
-  const handleWsDisconnect = useCallback((_accountId: string) => {
+  const handleWsDisconnect = useCallback((accountId: string) => {
+    prepareAccountRecovery(accountId, true)
     const now = Date.now()
     if (now - lastDisconnectRefreshRef.current < 5000) return
     lastDisconnectRefreshRef.current = now
-    getChatAccounts(1).then((res) => {
-      setAccounts(res.data)
-      setAccountPage(1)
-      setAccountHasMore(res.hasMore)
-    }).catch(() => {})
-  }, [])
+    getChatAccounts(1)
+      .then((res) => {
+        setAccounts(res.data)
+        setAccountPage(1)
+        setAccountHasMore(res.hasMore)
+      })
+      .catch((error: Error) => addToast({ message: error.message, type: 'error' }))
+  }, [addToast, prepareAccountRecovery])
 
-  // 仅为用户手动操作过的已连接账号建立 WebSocket（页面刷新不自动重连）
+  // WebSocket 首次连接或重连成功后，补偿会话缓存，并刷新当前窗口
+  const reloadCurrentChatRef = useRef<(accountId: string) => void>(() => {})
+  const handleWsConnected = useCallback((accountId: string, isReconnect: boolean) => {
+    setAccounts((prev) => prev.map((account) => (
+      account.account_id === accountId ? { ...account, connected: true } : account
+    )))
+    // 首次建连只补当前窗口，避免页面刷新时对全部在线账号并发拉取；
+    // 断线重连仍需补偿所有账号，确保断线期间的新会话不会丢失。
+    if (isReconnect || accountId === activeAccountIdRef.current) {
+      prepareAccountRecovery(accountId)
+      void reloadCurrentChatRef.current(accountId)
+    }
+  }, [prepareAccountRecovery])
+
+  // 为当前页面需要实时接收消息的账号建立独立 WebSocket
   useChatNewWs({
     accountIds: wsAccountIds,
     onNewMessage: handleWsNewMessage,
+    onConnected: handleWsConnected,
     onDisconnect: handleWsDisconnect,
   })
 
@@ -355,6 +407,30 @@ export function ChatNew() {
     loadAccounts()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 页面刷新后，自动恢复所有已连接账号的实时消息订阅
+  useEffect(() => {
+    let cancelled = false
+    getConnectedChatAccountIds()
+      .then((accountIds) => {
+        if (cancelled || accountIds.length === 0) return
+        setWsAccountIds((prev) => {
+          const next = [...prev]
+          for (const accountId of accountIds) {
+            if (!next.includes(accountId)) next.push(accountId)
+          }
+          return next.length === prev.length ? prev : next
+        })
+      })
+      .catch((e: any) => {
+        if (!cancelled) {
+          addToast({ message: e.message || '获取已连接账号失败', type: 'error' })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [addToast])
+
   // ==================== 连接/断开 ====================
   const handleConnect = async (accountId: string) => {
     setConnectingId(accountId)
@@ -363,7 +439,7 @@ export function ChatNew() {
       if (res.success) {
         addToast({ message: '连接成功', type: 'success' })
         await loadAccounts()
-        setActiveAccountId(accountId)
+        selectAccount(accountId)
         setWsAccountIds((prev) => prev.includes(accountId) ? prev : [...prev, accountId])
         // 手机端：连接成功后自动切到"会话"Tab（桌面端不受影响）
         setMobileTab('convs')
@@ -378,14 +454,15 @@ export function ChatNew() {
   }
 
   const handleDisconnect = async (accountId: string) => {
+    prepareAccountRecovery(accountId, true)
     try {
       await disconnectAccount(accountId)
       addToast({ message: '已断开连接', type: 'success' })
       setWsAccountIds((prev) => prev.filter((id) => id !== accountId))
       if (activeAccountId === accountId) {
-        setActiveAccountId('')
+        selectAccount('')
         setConversations([])
-        setActiveCid('')
+        selectCid('')
         setMessages([])
         // 手机端：当前账号被断开后回到"账号"Tab
         setMobileTab('accounts')
@@ -399,7 +476,7 @@ export function ChatNew() {
   /** 点击账号卡片：已连接则选中，未连接则自动连接 */
   const handleSelectAccount = async (acc: ChatAccount) => {
     if (acc.connected) {
-      setActiveAccountId(acc.account_id)
+      selectAccount(acc.account_id)
       // 选中已连接账号时也建立 WebSocket（页面刷新后首次选中时触发）
       setWsAccountIds((prev) => prev.includes(acc.account_id) ? prev : [...prev, acc.account_id])
       // 手机端：选中已连接账号后切到"会话"Tab
@@ -410,105 +487,74 @@ export function ChatNew() {
   }
 
   // ==================== 加载会话列表 ====================
-  const loadConversations = useCallback(
-    async (accountId: string, append = false) => {
-      if (!accountId) return
-      if (!append) setLoadingConvs(true)
-      try {
-        const cursor = append ? convCursor : undefined
-        const res = await getConversations(accountId, cursor ?? undefined)
-        // 从本地缓存补填已有的头像和昵称，避免刷新后信息消失
-        const withCachedAvatar = res.conversations.map((c: Conversation) => {
-          const cached = userInfoCacheRef.current[c.otherUserId]
-          if (!cached) return c
-          const updates: Partial<Conversation> = {}
-          if (cached.avatar && !c.otherUserAvatar) updates.otherUserAvatar = cached.avatar
-          // 昵称为空或纯数字时用缓存补填
-          if (cached.nick && (!c.otherUserName || isPureDigits(c.otherUserName))) updates.otherUserName = cached.nick
-          return Object.keys(updates).length > 0 ? { ...c, ...updates } : c
-        })
-        if (append) {
-          setConversations((prev) => [...prev, ...withCachedAvatar])
-        } else {
-          setConversations(withCachedAvatar)
-        }
-        setConvHasMore(res.hasMore)
-        setConvCursor(res.nextCursor)
-        if (!append && withCachedAvatar[0]?.cid) {
-          getAccountProfile(accountId, withCachedAvatar[0].cid).then((profile) => {
-            if (profile.nick) {
-              setAccounts((prev) => prev.map((account) => (
-                account.account_id === accountId ? { ...account, display_name: profile.nick } : account
-              )))
-            }
-          }).catch(() => {})
-        }
-      } catch (e: any) {
-        // 首次加载和翻页都提示错误
-        addToast({ message: e.message || '获取会话列表失败', type: 'error' })
-      } finally {
-        setLoadingConvs(false)
+  const loadConversations = useCallback(async (accountId: string, append = false, merge = false) => {
+    if (!accountId) return
+    const requestId = (convRequestIdRef.current[accountId] ?? 0) + 1
+    convRequestIdRef.current[accountId] = requestId
+    const generation = recoveryRef.current.generation(accountId)
+    const isCurrent = () => requestId === convRequestIdRef.current[accountId] &&
+      generation === recoveryRef.current.generation(accountId)
+    const isActive = () => accountId === activeAccountIdRef.current
+    if (isActive()) setLoadingConvs(true)
+    const existing = convsCacheRef.current[accountId] ?? { convs: [], hasMore: false, cursor: null }
+    let boundary = recoveryRef.current.conversations.get(accountId)
+    const compensating = merge || (append && !!boundary)
+    if (compensating) boundary ??= recoveryRef.current.ensureConversations(accountId, existing)
+
+    const fetchPage = async (cursor?: number) => {
+      const page = await getConversations(accountId, cursor)
+      return { items: page.conversations, hasMore: page.hasMore, nextCursor: page.nextCursor }
+    }
+    const request = compensating && boundary
+      ? recoverConversations(fetchPage, boundary, isCurrent)
+      : fetchPage(append ? existing.cursor ?? undefined : undefined).then((page) => ({
+        items: page.items, hasMore: page.hasMore, cursor: page.nextCursor, complete: true,
+      }))
+    await request.then((result) => {
+      if (!result || !isCurrent()) return
+      const latest = result.items.map((conversation) => {
+        const info = userInfoCacheRef.current[conversation.otherUserId]
+        if (!info) return conversation
+        return { ...conversation,
+          otherUserAvatar: conversation.otherUserAvatar || info.avatar,
+          otherUserName: !conversation.otherUserName || isPureDigits(conversation.otherUserName)
+            ? info.nick || conversation.otherUserName : conversation.otherUserName }
+      })
+      const cached = convsCacheRef.current[accountId]
+      const next: ConversationCache = {
+        convs: append || compensating ? mergeConversations(latest, cached?.convs ?? []) : latest,
+        hasMore: result.hasMore, cursor: result.cursor,
       }
-    },
-    [addToast, convCursor],
-  )
+      convsCacheRef.current[accountId] = next
+      if (result.complete) recoveryRef.current.conversations.delete(accountId)
+      else if (boundary) boundary.nextCursor = result.cursor
+      if (isActive()) {
+        conversationsRef.current = next.convs
+        convCursorRef.current = next.cursor
+        setConversations(next.convs)
+        setConvHasMore(next.hasMore)
+        setConvCursor(next.cursor)
+      }
+      if (!result.complete) {
+        addToast({ message: `账号 ${accountId} 会话较多，请点击加载更多继续补齐`, type: 'warning' })
+      }
+      if (!append && isActive() && latest[0]?.cid) {
+        getAccountProfile(accountId, latest[0].cid).then((profile) => {
+          if (profile.nick) setAccounts((prev) => prev.map((account) => (
+            account.account_id === accountId ? { ...account, display_name: profile.nick } : account
+          )))
+        }).catch((error: Error) => addToast({ message: error.message, type: 'error' }))
+      }
+    }).catch((error: Error) => {
+      if (isCurrent()) addToast({ message: error.message, type: 'error' })
+    }).finally(() => {
+      if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
+    })
+  }, [addToast])
 
   // 用 ref 保持 accounts 最新引用，避免 effect 闭包取到旧值
   const accountsRef = useRef(accounts)
   useEffect(() => { accountsRef.current = accounts }, [accounts])
-
-  // 选中账号时：优先从缓存恢复，无缓存才加载
-  useEffect(() => {
-    if (!activeAccountId) {
-      setConversations([])
-      setActiveCid('')
-      setMessages([])
-      return
-    }
-    const acc = accountsRef.current.find((a) => a.account_id === activeAccountId)
-    if (!acc?.connected) {
-      // 未连接的账号，先清空旧数据
-      setConversations([])
-      setActiveCid('')
-      setMessages([])
-      setMsgCursor(null)
-      setMsgHasMore(false)
-      return
-    }
-
-    // 1. 恢复会话列表
-    const cachedConvs = convsCacheRef.current[activeAccountId]
-    if (cachedConvs && cachedConvs.convs.length > 0) {
-      setConversations(cachedConvs.convs)
-      setConvHasMore(cachedConvs.hasMore)
-      setConvCursor(cachedConvs.cursor)
-    } else {
-      setConversations([])
-      setConvCursor(null)
-      loadConversations(activeAccountId)
-    }
-
-    // 2. 恢复上次选中的会话和消息
-    const prevCid = activeConvPerAccountRef.current[activeAccountId] || ''
-    setActiveCid(prevCid)
-    if (prevCid) {
-      const cachedMsgs = msgsCacheRef.current[activeAccountId]?.[prevCid]
-      if (cachedMsgs) {
-        setMessages(cachedMsgs.msgs)
-        setMsgHasMore(cachedMsgs.hasMore)
-        setMsgCursor(cachedMsgs.cursor)
-      } else {
-        setMessages([])
-        setMsgCursor(null)
-        setMsgHasMore(false)
-      }
-    } else {
-      setMessages([])
-      setMsgCursor(null)
-      setMsgHasMore(false)
-    }
-  }, [activeAccountId]) // eslint-disable-line react-hooks/exhaustive-deps
-
 
   // ==================== 加载用户信息（头像+昵称） ====================
   // 找出缺少头像或昵称的会话，构建 [{userId, cid}] 查询列表
@@ -586,53 +632,136 @@ export function ChatNew() {
   }, [activeAccountId, missingInfoKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ==================== 加载聊天记录 ====================
-  const loadMessages = useCallback(
-    async (accountId: string, cid: string, append = false) => {
-      if (!accountId || !cid) return
-      if (!append) setLoadingMsgs(true)
-      try {
-        const cursor = append ? msgCursor : undefined
-        const res = await getMessages(accountId, cid, cursor ?? undefined)
-        if (append) {
-          // 追加历史消息到前面
-          setMessages((prev) => [...res.messages, ...prev])
-        } else {
-          setMessages(res.messages)
-        }
-        setMsgHasMore(res.hasMore)
-        setMsgCursor(res.nextCursor)
-      } catch (e: any) {
-        if (!append) {
-          addToast({ message: e.message || '获取聊天记录失败', type: 'error' })
-        }
-      } finally {
-        setLoadingMsgs(false)
-      }
-    },
-    [addToast, msgCursor],
-  )
-
-  // 选中会话时：优先从缓存恢复消息，无缓存才加载
-  const handleSelectConversation = (cid: string) => {
-    setActiveCid(cid)
-    // 手机端：选中会话后切到"聊天"Tab
-    setMobileTab('chat')
-    // 清零该会话的未读数
-    setConversations((prev) =>
-      prev.map((c) => (c.cid === cid ? { ...c, unreadCount: 0 } : c)),
-    )
-    // 尝试从缓存恢复消息
-    const cachedMsgs = msgsCacheRef.current[activeAccountId]?.[cid]
-    if (cachedMsgs && cachedMsgs.msgs.length > 0) {
-      setMessages(cachedMsgs.msgs)
-      setMsgHasMore(cachedMsgs.hasMore)
-      setMsgCursor(cachedMsgs.cursor)
-    } else {
-      setMessages([])
-      setMsgCursor(null)
-      setMsgHasMore(false)
-      loadMessages(activeAccountId, cid)
+  const catchUpActiveConversation = useCallback(async (accountId: string, cid: string) => {
+    if (accountId !== activeAccountIdRef.current || cid !== activeCidRef.current) return
+    const requestId = ++msgRequestIdRef.current
+    const generation = recoveryRef.current.generation(accountId)
+    const isCurrent = () => requestId === msgRequestIdRef.current &&
+      generation === recoveryRef.current.generation(accountId) &&
+      accountId === activeAccountIdRef.current && cid === activeCidRef.current
+    const cached = msgsCacheRef.current[accountId]?.[cid] ?? {
+      msgs: messagesRef.current, hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current,
     }
+    const boundary = recoveryRef.current.ensureMessage(accountId, cid, cached)
+    setLoadingMsgs(true)
+    await recoverMessages(async (cursor, limit) => {
+      const page = await getMessages(accountId, cid, cursor, limit)
+      return { items: page.messages, hasMore: page.hasMore, nextCursor: page.nextCursor }
+    }, boundary, isCurrent).then((result) => {
+      if (!result || !isCurrent()) return
+      const current = msgsCacheRef.current[accountId]?.[cid]?.msgs ?? messagesRef.current
+      const next: MessageCache = { msgs: mergeMessages(result.items, current),
+        hasMore: result.hasMore, cursor: result.cursor }
+      msgsCacheRef.current[accountId] ??= {}
+      msgsCacheRef.current[accountId][cid] = next
+      if (result.complete) recoveryRef.current.messages.get(accountId)?.delete(cid)
+      else boundary.nextCursor = result.cursor
+      messagesRef.current = next.msgs
+      msgCursorRef.current = next.cursor
+      setMessages(next.msgs)
+      setMsgHasMore(next.hasMore)
+      setMsgCursor(next.cursor)
+      if (!result.complete) {
+        addToast({ message: '断线期间消息较多，请点击加载更多继续补齐', type: 'warning' })
+      }
+    }).catch((error: Error) => {
+      if (isCurrent()) addToast({ message: error.message, type: 'error' })
+    }).finally(() => {
+      if (requestId === msgRequestIdRef.current) setLoadingMsgs(false)
+    })
+  }, [addToast])
+
+  const loadMessages = useCallback(async (accountId: string, cid: string, append = false) => {
+    if (!accountId || !cid) return
+    if (recoveryRef.current.message(accountId, cid)) {
+      await catchUpActiveConversation(accountId, cid)
+      return
+    }
+    const requestId = ++msgRequestIdRef.current
+    const generation = recoveryRef.current.generation(accountId)
+    const isCurrent = () => requestId === msgRequestIdRef.current &&
+      generation === recoveryRef.current.generation(accountId) &&
+      accountId === activeAccountIdRef.current && cid === activeCidRef.current
+    setLoadingMsgs(true)
+    await getMessages(accountId, cid, append ? msgCursorRef.current ?? undefined : undefined)
+      .then((result) => {
+        if (!isCurrent()) return
+        const current = msgsCacheRef.current[accountId]?.[cid]?.msgs ?? messagesRef.current
+        const next = { msgs: mergeMessages(result.messages, current),
+          hasMore: result.hasMore, cursor: result.nextCursor }
+        msgsCacheRef.current[accountId] ??= {}
+        msgsCacheRef.current[accountId][cid] = next
+        messagesRef.current = next.msgs
+        msgCursorRef.current = next.cursor
+        setMessages(next.msgs)
+        setMsgHasMore(next.hasMore)
+        setMsgCursor(next.cursor)
+      }).catch((error: Error) => {
+        if (isCurrent()) addToast({ message: error.message, type: 'error' })
+      }).finally(() => {
+        if (requestId === msgRequestIdRef.current) setLoadingMsgs(false)
+      })
+  }, [addToast, catchUpActiveConversation])
+
+  // 边界已在断线时冻结，等待会话补偿期间收到的实时消息不会推进消息补偿终点。
+  const reloadCurrentChat = useCallback(async (accountId: string) => {
+    await loadConversations(accountId, false, true)
+    if (accountId !== activeAccountIdRef.current) return
+    const cid = activeCidRef.current
+    if (cid) await catchUpActiveConversation(accountId, cid)
+  }, [catchUpActiveConversation, loadConversations])
+
+  useEffect(() => {
+    reloadCurrentChatRef.current = reloadCurrentChat
+  }, [reloadCurrentChat])
+
+  /** 账号和会话切换共用恢复入口，后台缓存待补偿时立即拉取缺失消息。 */
+  const restoreConversation = useCallback((accountId: string, cid: string) => {
+    msgRequestIdRef.current += 1
+    const cached = msgsCacheRef.current[accountId]?.[cid]
+    const restored = cached ?? { msgs: [], hasMore: false, cursor: null }
+    messagesRef.current = restored.msgs
+    msgCursorRef.current = restored.cursor
+    setMessages(restored.msgs)
+    setMsgHasMore(restored.hasMore)
+    setMsgCursor(restored.cursor)
+    setLoadingMsgs(false)
+    if (cid && (!cached || recoveryRef.current.message(accountId, cid))) {
+      void loadMessages(accountId, cid)
+    }
+  }, [loadMessages])
+
+  // 选中账号时恢复缓存；离线期间产生的缺口通过同一补偿入口补齐。
+  useEffect(() => {
+    const accountId = activeAccountId
+    const account = accountsRef.current.find((item) => item.account_id === accountId)
+    if (!accountId || !account?.connected) {
+      setConversations([])
+      selectCid('')
+      restoreConversation(accountId, '')
+      return
+    }
+    const cached = convsCacheRef.current[accountId]
+    conversationsRef.current = cached?.convs ?? []
+    convCursorRef.current = cached?.cursor ?? null
+    setConversations(cached?.convs ?? [])
+    setConvHasMore(cached?.hasMore ?? false)
+    setConvCursor(cached?.cursor ?? null)
+    if (!cached || recoveryRef.current.conversations.has(accountId)) {
+      void loadConversations(accountId, false, !!cached)
+    }
+    const cid = activeConvPerAccountRef.current[accountId] || ''
+    selectCid(cid)
+    restoreConversation(accountId, cid)
+  }, [activeAccountId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSelectConversation = (cid: string) => {
+    selectCid(cid)
+    setMobileTab('chat')
+    setConversations((prev) => prev.map((conversation) =>
+      conversation.cid === cid ? { ...conversation, unreadCount: 0 } : conversation,
+    ))
+    restoreConversation(activeAccountId, cid)
   }
 
   const activeConversation = conversations.find((c) => c.cid === activeCid)
@@ -998,7 +1127,7 @@ export function ChatNew() {
         failReason: res.success ? undefined : (res.message || '发送失败'),
       }
       if (clearInput) setInputText('')
-      setMessages((prev) => [...prev, sentMsg])
+      setMessages((prev) => appendMsg(prev, sentMsg))
       if (res.success) {
         // 成功才更新会话列表摘要
         setConversations((prev) =>
@@ -1027,7 +1156,7 @@ export function ChatNew() {
         failReason,
       }
       if (clearInput) setInputText('')
-      setMessages((prev) => [...prev, sentMsg])
+      setMessages((prev) => appendMsg(prev, sentMsg))
       addToast({ message: failReason, type: 'error' })
     } finally {
       setSending(false)
@@ -1110,7 +1239,7 @@ export function ChatNew() {
         failed: !res.success,
         failReason: res.success ? undefined : (res.message || '发送失败'),
       }
-      setMessages((prev) => [...prev, sentMsg])
+      setMessages((prev) => appendMsg(prev, sentMsg))
       if (res.success) {
         setConversations((prev) =>
           prev.map((c) =>
@@ -1138,7 +1267,7 @@ export function ChatNew() {
         failed: true,
         failReason,
       }
-      setMessages((prev) => [...prev, sentMsg])
+      setMessages((prev) => appendMsg(prev, sentMsg))
       addToast({ message: failReason, type: 'error' })
       return false
     } finally {
