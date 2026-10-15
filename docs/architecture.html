@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>闲鱼自动回复系统 · 项目架构图</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e3e6ea;
+    --text: #1f2328;
+    --text-2: #5b6470;
+    --text-3: #8b949e;
+    --blue: #185fa5;
+    --blue-bg: #e6f1fb;
+    --green: #0f6e56;
+    --green-bg: #e1f5ee;
+    --purple: #534ab7;
+    --purple-bg: #eeedfe;
+    --amber: #854f0b;
+    --amber-bg: #faeeda;
+    --gray-bg: #f1efe8;
+    --gray-line: #888780;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  header { margin-bottom: 28px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.2px; }
+  .sub { color: var(--text-2); font-size: 14px; margin: 0; }
+  .meta { color: var(--text-3); font-size: 12px; margin-top: 10px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 26px;
+    margin-bottom: 22px;
+  }
+  h2 {
+    font-size: 17px; font-weight: 600; margin: 0 0 4px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2::before {
+    content: ""; width: 3px; height: 15px; border-radius: 2px; background: var(--blue);
+  }
+  .desc { color: var(--text-2); font-size: 13px; margin: 0 0 18px; }
+  .svg-box {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fcfcfd;
+    padding: 12px;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 720px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-2); font-weight: 600; background: #fafbfc; font-size: 12px; }
+  tbody tr:last-child td { border-bottom: none; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; background: var(--gray-bg); padding: 1px 5px; border-radius: 4px;
+  }
+  .tag {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 20px;
+    background: var(--blue-bg); color: var(--blue); margin-right: 4px;
+  }
+  .tag.g { background: var(--green-bg); color: var(--green); }
+  .tag.p { background: var(--purple-bg); color: var(--purple); }
+  .tag.a { background: var(--amber-bg); color: var(--amber); }
+  ul { margin: 8px 0 0; padding-left: 20px; font-size: 13px; color: var(--text-2); }
+  li { margin-bottom: 5px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .mini {
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: #fcfcfd;
+  }
+  .mini h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+  .mini p { font-size: 12px; color: var(--text-2); margin: 0; }
+  footer { color: var(--text-3); font-size: 12px; text-align: center; margin-top: 30px; }
+  @media print { body { background: #fff; } section { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>闲鱼自动回复系统 · 项目架构图</h1>
+  <p class="sub">六容器微服务 + 共享库 + 外部平台集成，源码级架构总览</p>
+  <p class="meta">仓库：xiejinhe/xianyu-auto-reply · 部署形态：Docker Compose（也支持源码 / 桌面 EXE 启动器）</p>
+</header>
+
+<section>
+  <h2>一、整体分层架构</h2>
+  <p class="desc">自上而下：使用方 → 前端（nginx）→ 三个 Python 服务 → 共享库 → 数据层。所有 Python 服务复用同一份 <code>common/</code> 代码。</p>
+  <div class="svg-box">
+    <svg viewBox="0 0 1080 650" role="img" aria-label="整体分层架构图">
+      <title>闲鱼自动回复系统整体分层架构</title>
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- 使用方 -->
+      <rect x="390" y="24" width="300" height="56" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+      <text x="540" y="44" text-anchor="middle" font-size="14" font-weight="600" fill="#2c2c2a">管理员浏览器</text>
+      <text x="540" y="63" text-anchor="middle" font-size="12" fill="#5f5e5a">React 单页应用，HTTP 轮询 + 可选 WS</text>
+
+      <!-- 前端 -->
+      <rect x="390" y="126" width="300" height="66" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+      <text x="540" y="148" text-anchor="middle" font-size="14" font-weight="600" fill="#042c53">frontend · nginx</text>
+      <text x="540" y="166" text-anchor="middle" font-size="12" fill="#185fa5">托管静态资源，反向代理 /api、/ws</text>
+      <text x="540" y="183" text-anchor="middle" font-size="12" fill="#185fa5">对外 9000 → 容器 80</text>
+
+      <!-- 应用服务层 -->
+      <rect x="60" y="256" width="300" height="92" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+      <text x="210" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#042c53">backend-web</text>
+      <text x="210" y="299" text-anchor="middle" font-size="12" fill="#185fa5">FastAPI 主服务 · 8089</text>
+      <text x="210" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">账号 / 商品 / 订单 / 在线聊天</text>
+      <text x="210" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">REST 接口 + 业务编排</text>
+
+      <rect x="390" y="256" width="300" height="92" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+      <text x="540" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#04342c">websocket</text>
+      <text x="540" y="299" text-anchor="middle" font-size="12" fill="#0f6e56">闲鱼 IM 长连接 · 8090</text>
+      <text x="540" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">消息收发 + 自动回复引擎</text>
+      <text x="540" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">心跳保活、断线重连</text>
+
+      <rect x="720" y="256" width="300" height="92" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+      <text x="870" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#26215c">scheduler</text>
+      <text x="870" y="299" text-anchor="middle" font-size="12" fill="#534ab7">定时任务 · 8091</text>
+      <text x="870" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">自动发货 / 评价 / 擦亮</text>
+      <text x="870" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">Cookie 续期、库存监控</text>
+
+      <!-- 共享库 -->
+      <rect x="60" y="410" width="960" height="66" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+      <text x="540" y="433" text-anchor="middle" font-size="14" font-weight="600" fill="#412402">common · 共享库（三个服务共同依赖）</text>
+      <text x="540" y="452" text-anchor="middle" font-size="12" fill="#854f0b">models / schemas / db / services / utils</text>
+      <text x="540" y="469" text-anchor="middle" font-size="11" fill="#5f5e5a">ORM 模型、闲鱼 mtop 客户端、图片上传器、消息解析、本地语音转文字</text>
+
+      <!-- 数据层 -->
+      <rect x="240" y="546" width="300" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+      <text x="390" y="570" text-anchor="middle" font-size="14" font-weight="600" fill="#2c2c2a">MySQL 8</text>
+      <text x="390" y="589" text-anchor="middle" font-size="12" fill="#5f5e5a">业务主库：账号、商品、订单</text>
+      <text x="390" y="607" text-anchor="middle" font-size="12" fill="#5f5e5a">消息、任务、日志</text>
+
+      <rect x="600" y="546" width="300" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+      <text x="750" y="570" text-anchor="middle" font-size="14" font-weight="600" fill="#2c2c2a">Redis 7</text>
+      <text x="750" y="589" text-anchor="middle" font-size="12" fill="#5f5e5a">缓存、队列、Token 缓存</text>
+      <text x="750" y="607" text-anchor="middle" font-size="12" fill="#5f5e5a">分布式锁、会话状态</text>
+
+      <!-- 连线 -->
+      <path d="M540 80 L540 122" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M540 192 L540 220 L210 220 L210 252" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M540 220 L540 252" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M540 192 L540 220 L870 220 L870 252" fill="none" stroke="#c9ccd1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+      <path d="M210 348 L210 406" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M540 348 L540 406" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M870 348 L870 406" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M390 476 L390 542" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M750 476 L750 542" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <h2>二、外部平台与第三方集成</h2>
+  <p class="desc">系统本身不生产数据，全部依赖闲鱼平台接口；AI 与语音识别为可选增强能力。</p>
+  <div class="svg-box">
+    <svg viewBox="0 0 1080 370" role="img" aria-label="外部平台集成图">
+      <title>外部平台与第三方服务集成</title>
+      <rect x="180" y="30" width="300" height="80" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+      <text x="330" y="56" text-anchor="middle" font-size="14" font-weight="600" fill="#042c53">backend-web</text>
+      <text x="330" y="76" text-anchor="middle" font-size="11" fill="#5f5e5a">商品详情 / 订单 / 评价 / 发货</text>
+      <text x="330" y="94" text-anchor="middle" font-size="11" fill="#5f5e5a">在线聊天、语音转文字</text>
+
+      <rect x="600" y="30" width="300" height="80" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+      <text x="750" y="56" text-anchor="middle" font-size="14" font-weight="600" fill="#04342c">websocket</text>
+      <text x="750" y="76" text-anchor="middle" font-size="11" fill="#5f5e5a">闲鱼 IM 长连接、消息收发</text>
+      <text x="750" y="94" text-anchor="middle" font-size="11" fill="#5f5e5a">AI 自动回复、自动发货</text>
+
+      <rect x="40" y="262" width="225" height="84" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+      <text x="152" y="288" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">闲鱼 IM（WSS）</text>
+      <text x="152" y="307" text-anchor="middle" font-size="11" fill="#5f5e5a">长连接收发消息</text>
+      <text x="152" y="324" text-anchor="middle" font-size="11" fill="#5f5e5a">约 2~3 小时被服务端踢</text>
+
+      <rect x="295" y="262" width="225" height="84" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+      <text x="407" y="288" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">闲鱼 mtop API</text>
+      <text x="407" y="307" text-anchor="middle" font-size="11" fill="#5f5e5a">mtop.taobao.idle.*</text>
+      <text x="407" y="324" text-anchor="middle" font-size="11" fill="#5f5e5a">商品 / 订单 / 评价 / 物流</text>
+
+      <rect x="550" y="262" width="225" height="84" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1"/>
+      <text x="662" y="288" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">阿里云百炼（可选）</text>
+      <text x="662" y="307" text-anchor="middle" font-size="11" fill="#5f5e5a">AI 自动回复 / 云端语音识别</text>
+      <text x="662" y="324" text-anchor="middle" font-size="11" fill="#5f5e5a">需要 API Key</text>
+
+      <rect x="805" y="262" width="225" height="84" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+      <text x="917" y="288" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">本地 Whisper（默认）</text>
+      <text x="917" y="307" text-anchor="middle" font-size="11" fill="#5f5e5a">faster-whisper 离线识别</text>
+      <text x="917" y="324" text-anchor="middle" font-size="11" fill="#5f5e5a">不需要任何 Key</text>
+
+      <path d="M700 110 L700 170 L200 170 L200 258" fill="none" stroke="#0f6e56" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M760 110 L760 170 L300 170 L300 258" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M300 170 L430 170 L430 258" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M330 110 L330 170 L660 170 L660 258" fill="none" stroke="#534ab7" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M370 110 L370 200 L920 200 L920 258" fill="none" stroke="#0f6e56" stroke-width="1.5" marker-end="url(#ar)"/>
+      <path d="M800 110 L800 258" fill="none" stroke="#0f6e56" stroke-width="1.5" marker-end="url(#ar)"/>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <h2>三、服务清单</h2>
+  <p class="desc">docker-compose 一键拉起 6 个容器；也可源码方式逐个启动。</p>
+  <table>
+    <thead>
+      <tr><th style="width:130px">服务</th><th style="width:90px">端口</th><th style="width:150px">技术栈</th><th>职责</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>frontend</b></td><td>9000 → 80</td><td>Vite + React 18 + TS + Tailwind + nginx</td>
+        <td>管理后台界面；nginx 托管构建产物并反向代理 <code>/api</code>、<code>/ws</code></td>
+      </tr>
+      <tr>
+        <td><b>backend-web</b></td><td>8089</td><td>FastAPI + SQLAlchemy(async) + asyncmy</td>
+        <td>主 API：账号、商品、订单、在线聊天、系统设置、语音转文字、AI 配置</td>
+      </tr>
+      <tr>
+        <td><b>websocket</b></td><td>8090</td><td>aiohttp + 闲鱼 IM WebSocket</td>
+        <td>维持闲鱼 IM 长连接、消息解析、AI 自动回复引擎、自动发货/评价</td>
+      </tr>
+      <tr>
+        <td><b>scheduler</b></td><td>8091</td><td>APScheduler</td>
+        <td>定时任务：自动发货、自动评价、商品擦亮、Cookie 续期、库存监控</td>
+      </tr>
+      <tr>
+        <td><b>mysql</b></td><td>3306</td><td>MySQL 8.0</td><td>业务主库，启动时自动建表并创建默认管理员账号</td>
+      </tr>
+      <tr>
+        <td><b>redis</b></td><td>6379</td><td>Redis 7</td><td>缓存、队列、Token 缓存、分布式锁</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>四、目录结构</h2>
+  <div class="grid">
+    <div class="mini">
+      <h3><span class="tag">核心</span>backend-web/</h3>
+      <p>FastAPI 主服务。<code>app/api/routes/</code> 按业务拆分路由，<code>app/services/</code> 放业务编排。</p>
+    </div>
+    <div class="mini">
+      <h3><span class="tag g">核心</span>websocket/</h3>
+      <p>闲鱼 IM 长连接与自动回复引擎，<code>app/services/xianyu/</code> 为核心实现。</p>
+    </div>
+    <div class="mini">
+      <h3><span class="tag p">核心</span>scheduler/</h3>
+      <p>各类定时任务调度，依赖 common 的模型与服务。</p>
+    </div>
+    <div class="mini">
+      <h3><span class="tag a">共享</span>common/</h3>
+      <p>三个 Python 服务共用：ORM 模型、Pydantic schemas、DB 会话、闲鱼接口客户端、工具类。</p>
+    </div>
+    <div class="mini">
+      <h3>frontend/</h3>
+      <p>Vite + React 单页应用，<code>src/pages/</code> 按模块划分页面。</p>
+    </div>
+    <div class="mini">
+      <h3>launcher/</h3>
+      <p>Tkinter 桌面 GUI 启动器，面向 EXE 分发场景（非 Docker 路线）。</p>
+    </div>
+    <div class="mini">
+      <h3>windows-one-click/</h3>
+      <p>Windows Docker 一键启动脚本与使用说明，供无技术背景的用户使用。</p>
+    </div>
+    <div class="mini">
+      <h3>promotion/ · xianyu-mobile/</h3>
+      <p>独立子项目：推广平台（前后端）、uni-app 移动端，不参与主链路部署。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>五、在线聊天语音转文字链路</h2>
+  <p class="desc">最新加入的能力：浏览器录音 → 统一转 WAV → 后端本地模型识别 → 回填输入框 → 以文本消息发出。</p>
+  <ul>
+    <li>浏览器 <code>MediaRecorder</code> 录音后，由 <code>frontend/src/utils/audio.ts</code> 解码重编码为 16k/16bit 单声道 WAV，避免依赖服务端 ffmpeg。</li>
+    <li>后端 <code>POST /api/v1/chat-new/transcribe-audio/{account_id}</code> 接收音频或音频直链。</li>
+    <li>识别方式由系统设置 <code>asr.provider</code> 决定：<span class="tag g">auto</span>有云端 Key 走云端，否则本地；<span class="tag g">local</span>只用本地；<span class="tag">cloud</span>只用云端。</li>
+    <li>本地模型走 <code>common/utils/local_asr.py</code>（faster-whisper，CPU int8），模型缓存在 <code>HF_HOME</code> 指向的持久化目录。</li>
+    <li>转写结果回填到聊天输入框，用户确认后按普通文本消息发送——绕开闲鱼仅接受图片的上传通道。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>六、已知边界</h2>
+  <ul>
+    <li><b>发送语音消息暂不可用</b>：闲鱼 PC 侧上传通道只做图片安全审核（传音频返回 <code>PICTURE_NOT_SAFE</code>），实测多种参数与路径变体均失败，需抓包确认 App 侧真实接口。</li>
+    <li><b>IM 长连接约 2~3 小时被服务端主动断开</b>，且断后不会自动重连，需要手动或补重连逻辑。</li>
+    <li><b>闲鱼商品页可 iframe 嵌入</b>（响应头无 X-Frame-Options），但登录态归浏览器，系统数据库里的账号 Cookie 无法跨域注入。</li>
+  </ul>
+</section>
+
+<footer>本文件由项目源码结构整理生成 · 单文件、无外链依赖，可直接双击打开或打印为 PDF</footer>
+
+</div>
+</body>
+</html>
