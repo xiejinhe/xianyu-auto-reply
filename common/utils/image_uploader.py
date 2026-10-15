@@ -23,6 +23,9 @@ class ImageUploader:
         self.cookies_str = cookies_str
         self.upload_url = "https://stream-upload.goofish.com/api/upload.api?floderId=0&appkey=xy_chat&_input_charset=utf-8"
         self.session: Optional[aiohttp.ClientSession] = None
+        # 最近一次上传失败的原因（服务端返回的 errorCode/message 或网络异常），
+        # 供调用方生成可读的错误提示。成功时置空。
+        self.last_error: Optional[str] = None
     
     async def create_session(self):
         """创建HTTP会话"""
@@ -202,17 +205,23 @@ class ImageUploader:
             logger.info(f"开始上传文件到闲鱼CDN: {filename} ({len(file_data)} 字节)")
             async with self.session.post(self.upload_url, data=data, headers=headers) as response:
                 if response.status != 200:
+                    self.last_error = f"HTTP {response.status}"
                     logger.error(f"文件上传失败: HTTP {response.status}")
                     return None
                 text = await response.text()
                 logger.debug(f"上传响应: {text}")
                 url = self._parse_upload_response(text)
                 if url:
+                    self.last_error = None
                     logger.info(f"文件上传成功: {url}")
                 else:
+                    # 服务端被拒时会返回 {"success":false,"errorCode":"...","message":"..."}，
+                    # 把 errorCode 带出去，调用方据此给出人话提示。
+                    self.last_error = text[:300]
                     logger.error("解析上传响应失败")
                 return url
         except Exception as e:
+            self.last_error = str(e)
             logger.error(f"文件上传异常: {e}")
             return None
 

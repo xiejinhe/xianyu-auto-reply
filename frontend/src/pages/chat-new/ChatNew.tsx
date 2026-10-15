@@ -113,6 +113,8 @@ export function ChatNew() {
   const chunksRef = useRef<Blob[]>([])
   const recTimerRef = useRef<number | null>(null)
   const recStartTsRef = useRef(0)
+  // 本次会话内是否已确认闲鱼网页端不支持发语音（避免每次点发送都白等一次上传）
+  const voiceUnsupportedRef = useRef(false)
   // 录完待处理的语音：可以「发送语音」或「转成文字」
   const [pendingAudio, setPendingAudio] = useState<{ blob: Blob; url: string; durationMs: number } | null>(null)
   // 语音转文字中
@@ -1277,7 +1279,10 @@ export function ChatNew() {
 
   // 发送语音：把录音 blob 交给后端（后端转 mp3 → 上传闲鱼CDN → 发 contentType=3 消息）
   const sendAudioBlob = async (blob: Blob, durationMs: number) => {
-    if (!activeAccountId || !activeCid) return false
+    if (!activeAccountId || !activeCid) {
+      addToast({ message: '请先选中一个会话再发送', type: 'error' })
+      return false
+    }
     const conv = conversations.find((c) => c.cid === activeCid)
     if (!conv) {
       addToast({ message: '未找到当前会话信息', type: 'error' })
@@ -1292,6 +1297,10 @@ export function ChatNew() {
         blob,
         durationMs,
       )
+      // 闲鱼网页端上传通道只收图片，一旦确认不支持就记住，后续直接走转文字，不再白等
+      if (!res.success && (res as any)?.data?.voiceUnsupported === true) {
+        voiceUnsupportedRef.current = true
+      }
       const localUrl = URL.createObjectURL(blob)
       const sentMsg: ChatMessage = {
         messageId: res.data?.messageId || '',
@@ -1412,14 +1421,25 @@ export function ChatNew() {
   /** 直接发送语音消息（走闲鱼语音上传通道） */
   const sendPendingAudio = async () => {
     if (!pendingAudio) return
+    // 已经确认闲鱼网页端不支持发语音，直接转成文字，省掉一次必然失败的上传
+    if (voiceUnsupportedRef.current) {
+      await transcribePendingAudio({ fallback: true })
+      return
+    }
     const { blob, durationMs } = pendingAudio
     const ok = await sendAudioBlob(blob, durationMs)
-    if (ok) clearPendingAudio()
+    if (ok) {
+      clearPendingAudio()
+      return
+    }
+    // 闲鱼网页端的上传通道目前只收图片，发语音大概率被拒。
+    // 失败后自动把这段录音转成文字填进输入框，保证一次点击一定发得出去。
+    await transcribePendingAudio({ fallback: true })
   }
 
   /** 语音转文字：转写结果回填到输入框，用户确认后再当普通文本发出去 */
-  const transcribePendingAudio = async () => {
-    if (!pendingAudio || !activeAccountId) return
+  const transcribePendingAudio = async (opts?: { fallback?: boolean }): Promise<boolean> => {
+    if (!pendingAudio || !activeAccountId) return false
     setTranscribing(true)
     try {
       // 浏览器里先统一转成 16k/16bit 单声道 WAV，兼容各家 ASR 接口
@@ -1427,18 +1447,25 @@ export function ChatNew() {
       const res = await transcribeAudio(activeAccountId, wav)
       if (!res.success) {
         addToast({ message: res.message || '转写失败', type: 'error' })
-        return
+        return false
       }
       const text = (res.data?.text || '').trim()
       if (!text) {
         addToast({ message: '没听清，请再说一遍', type: 'error' })
-        return
+        return false
       }
       setInputText((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
       clearPendingAudio()
-      addToast({ message: '已转成文字，确认后点击发送', type: 'success' })
+      addToast({
+        message: opts?.fallback
+          ? '闲鱼网页端暂不支持发语音，已自动转成文字，确认后发送'
+          : '已转成文字，确认后点击发送',
+        type: 'success',
+      })
+      return true
     } catch (e: any) {
       addToast({ message: e?.message || '转写失败', type: 'error' })
+      return false
     } finally {
       setTranscribing(false)
     }
@@ -2082,10 +2109,10 @@ export function ChatNew() {
                 <div className="flex items-center gap-2 ml-auto">
                   <button
                     type="button"
-                    onClick={transcribePendingAudio}
+                    onClick={() => transcribePendingAudio()}
                     disabled={transcribing || sending}
-                    title="把这段语音转成文字，填进输入框后发送"
-                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="把这段语音转成文字，填进输入框后发送（推荐，最稳定）"
+                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcribing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
                     {transcribing ? '转写中…' : '转文字'}
@@ -2094,8 +2121,8 @@ export function ChatNew() {
                     type="button"
                     onClick={sendPendingAudio}
                     disabled={transcribing || sending}
-                    title="直接发送语音消息"
-                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="直接发送语音消息。闲鱼网页端上传通道目前只收图片，失败会自动转成文字"
+                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     <Send className="w-3.5 h-3.5" />
                     发送语音
@@ -2126,7 +2153,7 @@ export function ChatNew() {
                 type="button"
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={sending && !isRecording}
-                title={isRecording ? '点击停止并发送语音' : '点击开始录音，再点一次发送'}
+                title={isRecording ? '点击停止录音' : '点击开始录音，再点一次结束，然后选择转文字或发送语音'}
                 className={cn(
                   'flex-shrink-0 flex items-center justify-center w-9 h-9 border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
                   isRecording

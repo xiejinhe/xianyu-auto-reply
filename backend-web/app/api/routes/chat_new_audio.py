@@ -176,9 +176,24 @@ async def send_audio(
             )
 
         if not cdn_url:
+            # 闲鱼PC网页端的上传通道（stream-upload.goofish.com）是图片通道，非图片会被
+            # 图片安全审核以 PICTURE_NOT_SAFE 拒绝。实测换 floderId/appkey/scene 均无效。
+            # 这里把不同失败原因翻译成人话，并带上 voiceUnsupported 标记，便于前端自动降级。
+            reason = (uploader.last_error or "").strip()
+            if "PICTURE_NOT_SAFE" in reason:
+                message = "闲鱼网页端的上传通道只收图片，正在改用「转文字」发送"
+            elif "TYPE_NOT_CONFIRMED" in reason:
+                message = "闲鱼无法识别这段录音的格式（建议转成 wav/mp3 再试）"
+            elif "timed out" in reason.lower() or "TimeoutError" in reason:
+                message = "语音上传超时，请检查网络后重试，或改用「转文字」发送"
+            elif "Cannot connect" in reason:
+                message = "连不上闲鱼上传服务，请检查网络后重试，或改用「转文字」发送"
+            else:
+                message = "语音上传失败，请检查账号Cookie是否有效或稍后重试"
             return ApiResponse(
                 success=False,
-                message="语音上传失败，请检查账号Cookie是否有效或稍后重试",
+                message=message,
+                data={"voiceUnsupported": True, "reason": reason[:300]},
             )
 
         # 4. 发送语音消息
