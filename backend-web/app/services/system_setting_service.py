@@ -96,6 +96,14 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
     "token.api_mode": ("web", "Token获取方式：web-网页接口/remote-远程接口"),
     "token.remote_url": ("", "Token远程接口URL"),
     "token.remote_secret_key": ("", "Token远程接口秘钥"),
+    # 语音转文字（ASR）设置：用于在线聊天把语音转成文字
+    # 留空 api_key 时自动回退到账号「AI回复设置」里配置的接口
+    "asr.api_key": ("", "语音转文字 API Key（阿里云百炼/其他OpenAI兼容服务商）"),
+    "asr.base_url": (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "语音转文字接口地址（OpenAI兼容地址，末尾不要带 /chat/completions）",
+    ),
+    "asr.model": ("qwen3-asr-flash", "语音转文字模型名"),
 }
 
 # 不需要XSS转义的键（布尔值、数字等）
@@ -154,6 +162,10 @@ NO_ESCAPE_KEYS = {
     "captcha.real_mouse_weight_remote",
     # 账号密码登录模式：枚举字符串，无需转义
     "password_login.mode",
+    # 语音转文字配置：接口地址含 :// 等字符、API Key 为随机串，均不能被 XSS 转义
+    "asr.api_key",
+    "asr.base_url",
+    "asr.model",
     # 协议登录远程接口配置：URL 和秘钥不能被 XSS 转义
     "password_login.remote_url",
     "password_login.remote_secret_key",

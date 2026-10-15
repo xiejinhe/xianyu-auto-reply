@@ -157,6 +157,65 @@ class ImageUploader:
                 except Exception:
                     pass
     
+    async def upload_file(
+        self,
+        file_path: str,
+        content_type: str = "application/octet-stream",
+        filename: str | None = None,
+    ) -> Optional[str]:
+        """上传任意文件到闲鱼CDN（不压缩、不转码，原样上传）
+
+        与 upload_image 走同一个 endpoint，只是跳过 PIL 压缩，用于语音等非图片文件。
+
+        Args:
+            file_path: 本地文件路径
+            content_type: 上传时的 Content-Type（音频建议 audio/mpeg）
+            filename: 传给服务端的文件名，默认随机生成
+
+        Returns:
+            可访问的 CDN URL，失败返回 None
+        """
+        import uuid
+
+        try:
+            if not self.session:
+                await self.create_session()
+
+            with open(file_path, "rb") as f:
+                file_data = f.read()
+
+            if not filename:
+                suffix = os.path.splitext(file_path)[1] or ".bin"
+                filename = f"file_{uuid.uuid4().hex[:12]}{suffix}"
+
+            headers = {
+                "cookie": self.cookies_str,
+                "Referer": "https://www.goofish.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "x-requested-with": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            }
+
+            data = aiohttp.FormData()
+            data.add_field("file", file_data, filename=filename, content_type=content_type)
+
+            logger.info(f"开始上传文件到闲鱼CDN: {filename} ({len(file_data)} 字节)")
+            async with self.session.post(self.upload_url, data=data, headers=headers) as response:
+                if response.status != 200:
+                    logger.error(f"文件上传失败: HTTP {response.status}")
+                    return None
+                text = await response.text()
+                logger.debug(f"上传响应: {text}")
+                url = self._parse_upload_response(text)
+                if url:
+                    logger.info(f"文件上传成功: {url}")
+                else:
+                    logger.error("解析上传响应失败")
+                return url
+        except Exception as e:
+            logger.error(f"文件上传异常: {e}")
+            return None
+
     def _parse_upload_response(self, response_text: str) -> Optional[str]:
         """解析上传响应获取图片URL"""
         try:

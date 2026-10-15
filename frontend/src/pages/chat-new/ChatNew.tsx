@@ -5,7 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
   getChatAccounts,
@@ -23,20 +23,32 @@ import {
   updateQuickPhrase,
   deleteQuickPhrase,
   recallMessage,
+  sendAudioMessage,
+  transcribeAudio,
+  transcribeAudioUrl,
   getOfficialBlacklistStatus,
   changeOfficialBlacklist,
+  copyImageToClipboard,
+  getItemInfo,
   type ChatAccount,
   type Conversation,
+  type ChatItemInfo,
   type ChatMessage,
   type CustomerOrder,
   type QuickPhrase,
 } from '@/api/chatNew'
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
 import { useChatNewWs } from './useChatNewWs'
+import { playNewMessageSound } from '@/utils/notificationSound'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { CustomerOrdersPanel } from './CustomerOrdersPanel'
 import { QuickPhrasesPanel } from './QuickPhrasesPanel'
 import { OrderDetailModal } from './OrderDetailModal'
+import { SoundPicker } from './SoundPicker'
+import { XianyuProfileModal } from './XianyuProfileModal'
+import { XianyuItemModal } from './XianyuItemModal'
+import { blobToWav } from '@/utils/audio'
+import { cn } from '@/utils/cn'
 
 /** 检查昵称是否为纯数字（如用户ID），纯数字视为无效昵称 */
 const isPureDigits = (name: string) => /^\d+$/.test(name)
@@ -80,8 +92,37 @@ export function ChatNew() {
   // 图片预览
   const [previewImage, setPreviewImage] = useState('')
 
+  // 图片右键菜单：右键聊天图片/预览大图时弹出，菜单里提供「复制图片」
+  const [imageMenu, setImageMenu] = useState<{ x: number; y: number; url: string } | null>(null)
+  const [copyingImageUrl, setCopyingImageUrl] = useState('')
+
   // 用户信息缓存（otherUserId -> {avatar, nick}）
   const userInfoCacheRef = useRef<Record<string, { avatar: string; nick: string }>>({})
+
+  // 当前用户（卖家）头像缓存，accountId -> 头像URL，用于消息气泡右侧头像
+  const [selfAvatars, setSelfAvatars] = useState<Record<string, string>>({})
+
+  // 闲鱼个人主页弹窗
+  const [profileModal, setProfileModal] = useState<{ userId: string; name: string; avatar: string } | null>(null)
+
+  // 语音录制
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordSeconds, setRecordSeconds] = useState(0)
+  const mediaRecRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const recTimerRef = useRef<number | null>(null)
+  const recStartTsRef = useRef(0)
+  // 录完待处理的语音：可以「发送语音」或「转成文字」
+  const [pendingAudio, setPendingAudio] = useState<{ blob: Blob; url: string; durationMs: number } | null>(null)
+  // 语音转文字中
+  const [transcribing, setTranscribing] = useState(false)
+  // 对方语音消息转写结果缓存：messageId -> 文本
+  const [audioTextMap, setAudioTextMap] = useState<Record<string, string>>({})
+  const [transcribingMsgId, setTranscribingMsgId] = useState('')
+
+  // 当前会话关联的商品：图/标题/itemId 来自会话列表，价格需要额外查详情接口
+  const [itemInfo, setItemInfo] = useState<ChatItemInfo | null>(null)
+  const [itemModalOpen, setItemModalOpen] = useState(false)
 
   // 发送消息
   const [inputText, setInputText] = useState('')
@@ -236,6 +277,11 @@ export function ChatNew() {
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     const summary = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
     const isActiveAccount = accountId === activeAccountIdRef.current
+
+    // 新私聊提示音：只响买家发来的消息，自己发出去的不响
+    if (!msg.isSelf) {
+      playNewMessageSound()
+    }
 
     if (isActiveAccount) {
       // 活跃账号 → 直接更新 React state
@@ -591,6 +637,52 @@ export function ChatNew() {
 
   const activeConversation = conversations.find((c) => c.cid === activeCid)
 
+  // 查当前会话关联商品的价格（图/标题会话里就有，价格要额外查闲鱼详情接口，后端缓存10分钟）
+  useEffect(() => {
+    const itemId = activeConversation?.itemId
+    if (!activeAccountId || !itemId) {
+      setItemInfo(null)
+      return
+    }
+    let cancelled = false
+    getItemInfo(activeAccountId, itemId).then((info) => {
+      if (!cancelled) setItemInfo(info)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeAccountId, activeConversation?.itemId])
+
+  // 打开闲鱼个人主页弹窗（昵称和头像直接用系统内已有的数据）
+  const openXianyuProfile = useCallback((userId: string, name: string, avatar: string) => {
+    if (!userId) return
+    setProfileModal({ userId, name, avatar })
+  }, [])
+
+  // 取一个会话ID，用于查询当前账号（卖家）自己的头像
+  const firstConvCid = conversations.find((c) => c.cid)?.cid || ''
+
+  // 获取当前账号自己的头像（消息气泡右侧显示），拿到后不再重复请求
+  useEffect(() => {
+    if (!activeAccountId || !firstConvCid) return
+    if (selfAvatars[activeAccountId]) return
+    let cancelled = false
+    getAccountProfile(activeAccountId, firstConvCid)
+      .then((profile) => {
+        if (cancelled) return
+        if (profile.avatar) {
+          setSelfAvatars((prev) => ({ ...prev, [activeAccountId]: profile.avatar }))
+        }
+        if (profile.nick) {
+          setAccounts((prev) => prev.map((account) => (
+            account.account_id === activeAccountId ? { ...account, display_name: profile.nick } : account
+          )))
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [activeAccountId, firstConvCid, selfAvatars])
+
   useEffect(() => {
     let cancelled = false
     setIsOfficiallyBlocked(false)
@@ -774,6 +866,40 @@ export function ChatNew() {
     }
   }
 
+  /** 右键图片菜单里的「复制图片」：走后端代理拿同源数据后写入剪贴板 */
+  const handleCopyImage = async (url: string) => {
+    setImageMenu(null)
+    if (!url || copyingImageUrl) return
+    setCopyingImageUrl(url)
+    try {
+      const res = await copyImageToClipboard(url)
+      addToast({ message: res.message, type: 'success' })
+    } catch (e: any) {
+      addToast({ message: e.message || '复制图片失败', type: 'error' })
+    } finally {
+      setCopyingImageUrl('')
+    }
+  }
+
+  /** 图片右键菜单：点别处、滚动、按 Esc 或改窗口大小时关闭 */
+  useEffect(() => {
+    if (!imageMenu) return
+    const close = () => setImageMenu(null)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setImageMenu(null)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('scroll', close, true)
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', close)
+    }
+  }, [imageMenu])
+
   const handleRecallMessage = async (msg: ChatMessage) => {
     if (!activeAccountId || !msg.messageId || recallingMessageId) return
     if (!canRecallMessage(msg)) {
@@ -811,6 +937,36 @@ export function ChatNew() {
     }
     prevMsgCountRef.current = messages.length
   }, [messages])
+
+  // 每 20 秒静默刷新当前会话的读状态：只按 messageId 更新 readStatus，不重排 UI，
+  // 让自己发出的消息「未读 → 已读」能及时变化（闲鱼不会主动推送读状态变更）。
+  useEffect(() => {
+    if (!activeAccountId || !activeCid) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const res = await getMessages(activeAccountId, activeCid, undefined, 20)
+        if (cancelled) return
+        // getMessages 直接返回 { messages, hasMore, nextCursor }，不包 success/data
+        const fresh = res.messages || []
+        setMessages((prev) => {
+          if (!prev.length) return prev
+          const statusMap = new Map(fresh.map((m) => [m.messageId, m.readStatus]))
+          return prev.map((m) => {
+            const s = statusMap.get(m.messageId)
+            return s === undefined || s === m.readStatus ? m : { ...m, readStatus: s }
+          })
+        })
+      } catch {
+        // 静默失败，等下一轮
+      }
+    }
+    const timer = window.setInterval(refresh, 20000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeAccountId, activeCid])
 
   // ==================== 发送消息 ====================
   const sendMessageText = async (rawText: string, clearInput = false) => {
@@ -987,6 +1143,198 @@ export function ChatNew() {
       return false
     } finally {
       setSending(false)
+    }
+  }
+
+  // 发送语音：把录音 blob 交给后端（后端转 mp3 → 上传闲鱼CDN → 发 contentType=3 消息）
+  const sendAudioBlob = async (blob: Blob, durationMs: number) => {
+    if (!activeAccountId || !activeCid) return false
+    const conv = conversations.find((c) => c.cid === activeCid)
+    if (!conv) {
+      addToast({ message: '未找到当前会话信息', type: 'error' })
+      return false
+    }
+    setSending(true)
+    try {
+      const res = await sendAudioMessage(
+        activeAccountId,
+        activeCid,
+        conv.otherUserId,
+        blob,
+        durationMs,
+      )
+      const localUrl = URL.createObjectURL(blob)
+      const sentMsg: ChatMessage = {
+        messageId: res.data?.messageId || '',
+        senderId: activeAccountId,
+        senderName: '',
+        isSelf: true,
+        type: 'audio',
+        text: '',
+        images: [],
+        audioUrl: (res.success && res.data?.audioUrl) ? res.data.audioUrl : localUrl,
+        audioDuration: durationMs,
+        time: Date.now(),
+        failed: !res.success,
+        failReason: res.success ? undefined : (res.message || '发送失败'),
+      }
+      setMessages((prev) => [...prev, sentMsg])
+      if (res.success) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.cid === activeCid
+              ? { ...c, lastMessageSummary: '[语音]', lastMessageTime: sentMsg.time }
+              : c,
+          ),
+        )
+      } else {
+        addToast({ message: res.message || '发送失败', type: 'error' })
+      }
+      return res.success
+    } catch (e: any) {
+      const failReason = e?.message || '发送失败'
+      const sentMsg: ChatMessage = {
+        messageId: '',
+        senderId: activeAccountId,
+        senderName: '',
+        isSelf: true,
+        type: 'audio',
+        text: '',
+        images: [],
+        audioUrl: URL.createObjectURL(blob),
+        audioDuration: durationMs,
+        time: Date.now(),
+        failed: true,
+        failReason,
+      }
+      setMessages((prev) => [...prev, sentMsg])
+      addToast({ message: failReason, type: 'error' })
+      return false
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const startRecording = async () => {
+    if (sending || !activeCid) return
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      addToast({ message: '当前浏览器不支持录音（需 https 或 localhost）', type: 'error' })
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const pickMime = () => {
+        for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']) {
+          if (MediaRecorder.isTypeSupported(m)) return m
+        }
+        return ''
+      }
+      const mime = pickMime()
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      chunksRef.current = []
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+      }
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        if (recTimerRef.current) {
+          window.clearInterval(recTimerRef.current)
+          recTimerRef.current = null
+        }
+        const durationMs = Date.now() - recStartTsRef.current
+        setIsRecording(false)
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || mime || 'audio/webm' })
+        if (durationMs < 800) {
+          addToast({ message: '录音时间太短，请多说一会儿', type: 'error' })
+          return
+        }
+        // 录完先停在「待发送」状态，由用户选择发送语音还是转成文字
+        setPendingAudio((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url)
+          return { blob, url: URL.createObjectURL(blob), durationMs }
+        })
+      }
+      rec.start()
+      mediaRecRef.current = rec
+      recStartTsRef.current = Date.now()
+      setIsRecording(true)
+      setRecordSeconds(0)
+      recTimerRef.current = window.setInterval(() => {
+        setRecordSeconds(Math.floor((Date.now() - recStartTsRef.current) / 1000))
+      }, 250)
+    } catch (e: any) {
+      addToast({ message: e?.message || '无法访问麦克风，请检查浏览器权限', type: 'error' })
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecRef.current && mediaRecRef.current.state !== 'inactive') {
+      mediaRecRef.current.stop()
+    }
+  }
+
+  const clearPendingAudio = () => {
+    setPendingAudio((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url)
+      return null
+    })
+  }
+
+  /** 直接发送语音消息（走闲鱼语音上传通道） */
+  const sendPendingAudio = async () => {
+    if (!pendingAudio) return
+    const { blob, durationMs } = pendingAudio
+    const ok = await sendAudioBlob(blob, durationMs)
+    if (ok) clearPendingAudio()
+  }
+
+  /** 语音转文字：转写结果回填到输入框，用户确认后再当普通文本发出去 */
+  const transcribePendingAudio = async () => {
+    if (!pendingAudio || !activeAccountId) return
+    setTranscribing(true)
+    try {
+      // 浏览器里先统一转成 16k/16bit 单声道 WAV，兼容各家 ASR 接口
+      const wav = await blobToWav(pendingAudio.blob)
+      const res = await transcribeAudio(activeAccountId, wav)
+      if (!res.success) {
+        addToast({ message: res.message || '转写失败', type: 'error' })
+        return
+      }
+      const text = (res.data?.text || '').trim()
+      if (!text) {
+        addToast({ message: '没听清，请再说一遍', type: 'error' })
+        return
+      }
+      setInputText((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+      clearPendingAudio()
+      addToast({ message: '已转成文字，确认后点击发送', type: 'success' })
+    } catch (e: any) {
+      addToast({ message: e?.message || '转写失败', type: 'error' })
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  /** 把对方发来的语音消息转成文字 */
+  const transcribeMessageAudio = async (msg: ChatMessage) => {
+    if (!activeAccountId || !msg.audioUrl || !msg.messageId) return
+    setTranscribingMsgId(msg.messageId)
+    try {
+      const res = await transcribeAudioUrl(activeAccountId, msg.audioUrl)
+      if (!res.success) {
+        addToast({ message: res.message || '转写失败', type: 'error' })
+        return
+      }
+      const text = (res.data?.text || '').trim()
+      if (!text) {
+        addToast({ message: '没听清这条语音', type: 'error' })
+        return
+      }
+      setAudioTextMap((prev) => ({ ...prev, [msg.messageId!]: text }))
+    } catch (e: any) {
+      addToast({ message: e?.message || '转写失败', type: 'error' })
+    } finally {
+      setTranscribingMsgId('')
     }
   }
 
@@ -1202,15 +1550,18 @@ export function ChatNew() {
       <div className={`${mobileTab === 'convs' ? 'flex' : 'hidden'} md:flex w-full md:w-72 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <span className="font-medium text-sm text-gray-700 dark:text-gray-300">会话列表</span>
-          {activeAccountId && (
-            <button
-              onClick={() => { setConvCursor(null); loadConversations(activeAccountId) }}
-              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-              title="刷新会话"
-            >
-              <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingConvs ? 'animate-spin' : ''}`} />
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            <SoundPicker />
+            {activeAccountId && (
+              <button
+                onClick={() => { setConvCursor(null); loadConversations(activeAccountId) }}
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                title="刷新会话"
+              >
+                <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingConvs ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
         </div>
         <div
           className="flex-1 overflow-y-auto"
@@ -1318,6 +1669,42 @@ export function ChatNew() {
             </button>
           )}
         </div>
+
+        {/* 会话关联的商品条：点开可看闲鱼商品页（图/标题来自会话，价格来自详情接口） */}
+        {activeConversation?.itemId && (
+          <button
+            onClick={() => setItemModalOpen(true)}
+            title="点击查看闲鱼商品页"
+            className="w-full flex items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
+          >
+            {activeConversation.itemMainPic ? (
+              <img
+                src={activeConversation.itemMainPic}
+                alt=""
+                className="w-10 h-10 rounded object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
+                <Package className="w-5 h-5 text-gray-400" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-gray-700 dark:text-gray-200 truncate">
+                {activeConversation.itemTitle || itemInfo?.title || '商品'}
+              </div>
+              <div className="text-xs text-gray-400 truncate">
+                商品ID {activeConversation.itemId} · 点击查看商品
+              </div>
+            </div>
+            {itemInfo?.price ? (
+              <span className="text-sm font-semibold text-red-500 flex-shrink-0">
+                ¥{itemInfo.price}
+              </span>
+            ) : null}
+            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          </button>
+        )}
+
         {/* 消息区域 */}
         <div ref={msgContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
           {!activeCid ? (
@@ -1341,12 +1728,40 @@ export function ChatNew() {
                   </button>
                 </div>
               )}
-              {messages.map((msg, idx) => (
+              {messages.map((msg, idx) => {
+                const isSystem = msg.type === 'system'
+                // 对方头像：优先用户信息缓存，退回当前会话的头像
+                const otherAvatar =
+                  userInfoCacheRef.current[msg.senderId]?.avatar || activeConversation?.otherUserAvatar || ''
+                // 自己（卖家）头像：来自账号资料缓存
+                const selfAvatar = (activeAccountId && selfAvatars[activeAccountId]) || ''
+                return (
                 <div
                   key={msg.messageId || idx}
-                  className={`flex ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
+                  className={`flex gap-2 ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`max-w-[70%] ${msg.isSelf ? 'order-1' : ''}`}>
+                  {/* 对方头像（系统消息不显示） */}
+                  {!msg.isSelf && !isSystem && (
+                    <button
+                      type="button"
+                      title="查看 TA 的闲鱼主页"
+                      className="flex-shrink-0 mt-5 rounded-full hover:opacity-80 transition-opacity"
+                      onClick={() => openXianyuProfile(msg.senderId, msg.senderName, otherAvatar)}
+                    >
+                      {otherAvatar ? (
+                        <img
+                          src={otherAvatar}
+                          className="w-9 h-9 rounded-full object-cover"
+                          alt=""
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-gray-200 dark:bg-gray-600 flex items-center justify-center">
+                          <User className="w-5 h-5 text-gray-400" />
+                        </div>
+                      )}
+                    </button>
+                  )}
+                  <div className="max-w-[70%]">
                     {/* 发送者名称 */}
                     <div
                       className={`text-xs text-gray-400 mb-1 ${
@@ -1365,7 +1780,39 @@ export function ChatNew() {
                             : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
                         } ${msg.type === 'system' ? '!bg-gray-200 dark:!bg-gray-600 text-center text-gray-500 dark:text-gray-400 text-xs' : ''}`}
                       >
-                        {msg.type === 'image' && msg.images.length > 0 ? (
+                        {msg.type === 'audio' && msg.audioUrl ? (
+                          <div className="space-y-1 min-w-[140px]">
+                            <div className="flex items-center gap-2">
+                              <audio
+                                controls
+                                src={msg.audioUrl}
+                                className="h-8 max-w-[220px]"
+                                preload="metadata"
+                              />
+                              {msg.audioDuration ? (
+                                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                                  {Math.max(1, Math.round(msg.audioDuration / 1000))}″
+                                </span>
+                              ) : null}
+                            </div>
+                            {msg.messageId ? (
+                              audioTextMap[msg.messageId] ? (
+                                <div className="text-xs leading-5 whitespace-pre-wrap opacity-90 pt-0.5">
+                                  {audioTextMap[msg.messageId]}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => transcribeMessageAudio(msg)}
+                                  disabled={transcribingMsgId === msg.messageId}
+                                  className="text-xs underline opacity-80 hover:opacity-100 disabled:opacity-50 disabled:no-underline"
+                                >
+                                  {transcribingMsgId === msg.messageId ? '转写中…' : '转文字'}
+                                </button>
+                              )
+                            ) : null}
+                          </div>
+                        ) : msg.type === 'image' && msg.images.length > 0 ? (
                           <div className="space-y-1">
                             {msg.images.map((url, i) => (
                               <img
@@ -1374,6 +1821,10 @@ export function ChatNew() {
                                 className="max-w-full rounded max-h-48 object-contain cursor-pointer hover:opacity-80 transition-opacity"
                                 alt="图片消息"
                                 onClick={() => setPreviewImage(url)}
+                                onContextMenu={(e) => {
+                                  e.preventDefault()
+                                  setImageMenu({ x: e.clientX, y: e.clientY, url })
+                                }}
                               />
                             ))}
                           </div>
@@ -1394,6 +1845,18 @@ export function ChatNew() {
                         </button>
                       )}
                     </div>
+                    {/* 已读/未读：readStatus 来自 IM 原始数据（0=未读 2=已读），自己消息代表对方是否已读 */}
+                    {msg.isSelf && msg.type !== 'system' && (msg.readStatus === 0 || msg.readStatus === 2) && (
+                      <div
+                        className={`text-xs mt-0.5 ${
+                          msg.readStatus === 2
+                            ? 'text-gray-400 dark:text-gray-500'
+                            : 'text-amber-500 dark:text-amber-400'
+                        } ${msg.isSelf ? 'text-right' : 'text-left'}`}
+                      >
+                        {msg.readStatus === 2 ? '已读' : '未读'}
+                      </div>
+                    )}
                     {canRecallMessage(msg) && (
                       <div className="mt-1 text-right">
                         <button
@@ -1406,8 +1869,30 @@ export function ChatNew() {
                       </div>
                     )}
                   </div>
+                  {/* 自己头像 */}
+                  {msg.isSelf && (
+                    <button
+                      type="button"
+                      onClick={() => openXianyuProfile(msg.senderId, msg.senderName, selfAvatar)}
+                      title="查看我的闲鱼主页"
+                      className="flex-shrink-0 mt-5 rounded-full hover:opacity-80 transition-opacity"
+                    >
+                      {selfAvatar ? (
+                        <img
+                          src={selfAvatar}
+                          className="w-9 h-9 rounded-full object-cover"
+                          alt=""
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                          <User className="w-5 h-5 text-blue-400" />
+                        </div>
+                      )}
+                    </button>
+                  )}
                 </div>
-              ))}
+                )
+              })}
             </>
           )}
         </div>
@@ -1444,6 +1929,60 @@ export function ChatNew() {
                 </button>
               </div>
             )}
+            {isRecording && (
+              <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-sm text-red-600 dark:text-red-300">
+                  录音中 {String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:
+                  {String(recordSeconds % 60).padStart(2, '0')}
+                </span>
+                <span className="text-xs text-red-400">再点一次麦克风结束录音</span>
+              </div>
+            )}
+            {pendingAudio && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
+                <audio
+                  controls
+                  src={pendingAudio.url}
+                  className="h-8 max-w-[220px]"
+                  preload="metadata"
+                />
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {Math.max(1, Math.round(pendingAudio.durationMs / 1000))}″
+                </span>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    type="button"
+                    onClick={transcribePendingAudio}
+                    disabled={transcribing || sending}
+                    title="把这段语音转成文字，填进输入框后发送"
+                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {transcribing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                    {transcribing ? '转写中…' : '转文字'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={sendPendingAudio}
+                    disabled={transcribing || sending}
+                    title="直接发送语音消息"
+                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    发送语音
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearPendingAudio}
+                    disabled={transcribing || sending}
+                    title="丢弃这段录音"
+                    className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-200 disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <button
                 type="button"
@@ -1453,6 +1992,20 @@ export function ChatNew() {
                 className="flex-shrink-0 flex items-center justify-center w-9 h-9 text-gray-500 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <ImagePlus className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={sending && !isRecording}
+                title={isRecording ? '点击停止并发送语音' : '点击开始录音，再点一次发送'}
+                className={cn(
+                  'flex-shrink-0 flex items-center justify-center w-9 h-9 border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                  isRecording
+                    ? 'text-white bg-red-500 border-red-500 hover:bg-red-600'
+                    : 'text-gray-500 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+                )}
+              >
+                {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
               </button>
               <textarea
                 value={inputText}
@@ -1544,7 +2097,32 @@ export function ChatNew() {
             className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg"
             alt="预览"
             onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setImageMenu({ x: e.clientX, y: e.clientY, url: previewImage })
+            }}
           />
+        </div>
+      )}
+      {/* 图片右键菜单：右键聊天图片或预览大图时弹出，用于把图片复制进剪贴板 */}
+      {imageMenu && (
+        <div
+          className="fixed z-[300] min-w-[140px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-800"
+          style={{
+            left: Math.min(imageMenu.x, window.innerWidth - 160),
+            top: Math.min(imageMenu.y, window.innerHeight - 60),
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            disabled={!!copyingImageUrl}
+            onClick={() => handleCopyImage(imageMenu.url)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-200 dark:hover:bg-slate-700"
+          >
+            <Copy className="w-4 h-4" />
+            {copyingImageUrl === imageMenu.url ? '复制中...' : '复制图片'}
+          </button>
         </div>
       )}
       <ConfirmModal
@@ -1555,6 +2133,30 @@ export function ChatNew() {
         type={confirmDialog?.type}
         onConfirm={() => closeConfirm(true)}
         onCancel={() => closeConfirm(false)}
+      />
+      <XianyuProfileModal
+        isOpen={!!profileModal}
+        userId={profileModal?.userId || ''}
+        name={profileModal?.name || ''}
+        avatar={profileModal?.avatar || ''}
+        onClose={() => setProfileModal(null)}
+      />
+      <XianyuItemModal
+        isOpen={itemModalOpen}
+        itemId={activeConversation?.itemId || ''}
+        title={activeConversation?.itemTitle || itemInfo?.title || ''}
+        pic={activeConversation?.itemMainPic || ''}
+        price={itemInfo?.price}
+        originalPrice={itemInfo?.originalPrice}
+        transportFee={itemInfo?.transportFee}
+        status={itemInfo?.status}
+        desc={itemInfo?.desc}
+        images={itemInfo?.images}
+        browseCnt={itemInfo?.browseCnt}
+        collectCnt={itemInfo?.collectCnt}
+        quantity={itemInfo?.quantity}
+        sellerNick={itemInfo?.sellerNick}
+        onClose={() => setItemModalOpen(false)}
       />
     </div>
   )

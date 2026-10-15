@@ -77,13 +77,13 @@ export default defineConfig({
     proxy: {
       // 所有 API 请求统一代理到后端（含WebSocket升级）
       '/api': {
-        target: 'http://localhost:8089',
+        target: 'http://127.0.0.1:8089',
         changeOrigin: true,
         ws: true,
       },
       // 静态文件代理到后端（包含上传的图片）
       '/static': {
-        target: 'http://localhost:8089',
+        target: 'http://127.0.0.1:8089',
         changeOrigin: true,
       },
     },

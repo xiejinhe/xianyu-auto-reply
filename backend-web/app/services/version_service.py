@@ -23,6 +23,11 @@ from loguru import logger
 
 # 默认更新服务器地址（与 launcher/updater.py 保持一致）
 _DEFAULT_UPDATE_URL = "https://xy-update.zhinianboke.com"
+# GitHub Releases API 基础地址（配置了 github_repo 时作为更新来源）
+_GITHUB_API_BASE = "https://api.github.com"
+# 默认 GitHub 仓库：未配置 github_repo 时使用（Docker 镜像不打包 data/ 目录，
+# 仅靠配置文件会失效，故在此兜底）
+_DEFAULT_GITHUB_REPO = "xiejinhe/xianyu-auto-reply"
 # 远程 version.json 请求超时时间（秒）
 _REMOTE_TIMEOUT_SECONDS = 10
 # HTTP User-Agent，便于服务端识别来源
@@ -72,6 +77,33 @@ def get_current_version() -> str:
     return ""
 
 
+def _load_update_config() -> dict[str, Any]:
+    """
+    读取更新配置 data/update_config.json
+
+    依次尝试以下路径，取第一个存在的文件：
+    1. 当前工作目录下的 data/（Docker 环境 WORKDIR=/app）
+    2. 上级目录的 data/（本地开发时 cwd 为 backend-web，项目根在其上级）
+
+    Returns:
+        配置字典，文件不存在或解析失败时返回空字典
+    """
+    cwd = Path.cwd()
+    candidates = (
+        cwd / "data" / "update_config.json",
+        cwd.parent / "data" / "update_config.json",
+    )
+    for config_path in candidates:
+        try:
+            if config_path.exists():
+                data = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception as exc:
+            logger.warning(f"读取更新配置失败（{config_path}）: {exc}")
+    return {}
+
+
 def _get_update_url() -> str:
     """
     获取更新服务器基础 URL
@@ -83,17 +115,27 @@ def _get_update_url() -> str:
     Returns:
         基础 URL（不含尾部斜杠）
     """
-    try:
-        # 以项目根为基准（Docker 里 WORKDIR=/app，根目录下有 data/）
-        config_path = Path.cwd() / "data" / "update_config.json"
-        if config_path.exists():
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            url = str(data.get("update_url", "") or "").strip().rstrip("/")
-            if url:
-                return url
-    except Exception as exc:
-        logger.warning(f"读取更新服务器配置失败，使用默认地址: {exc}")
-    return _DEFAULT_UPDATE_URL
+    url = str(_load_update_config().get("update_url", "") or "").strip().rstrip("/")
+    return url or _DEFAULT_UPDATE_URL
+
+
+def _get_github_repo() -> str:
+    """
+    获取用于检查更新的 GitHub 仓库，格式为 "owner/repo"
+
+    优先级：
+    1. data/update_config.json 中显式配置的 github_repo（配置成空字符串可关闭 GitHub 方式）
+    2. 默认仓库 _DEFAULT_GITHUB_REPO
+
+    返回非空时走 GitHub Releases API，否则沿用 version.json 方式。
+
+    Returns:
+        仓库标识（如 "xiejinhe/xianyu-auto-reply"）
+    """
+    config = _load_update_config()
+    if "github_repo" in config:
+        return str(config.get("github_repo", "") or "").strip().strip("/")
+    return _DEFAULT_GITHUB_REPO
 
 
 def _compare_versions(local: str, remote: str) -> bool:
@@ -136,7 +178,10 @@ async def check_update() -> dict[str, Any]:
     """
     检查是否有新版本可用
 
-    调用远程 ``{update_url}/version.json`` 获取最新版本信息，
+    更新来源二选一（见 data/update_config.json）：
+    1. 配置了 github_repo：查询该仓库的最新 Release
+    2. 否则：请求 ``{update_url}/version.json``
+
     与本地版本号比较后返回统一结构。网络错误、解析错误等情况
     由调用方转换为 ApiResponse 的 success=False 返回给前端。
 
@@ -165,7 +210,16 @@ async def check_update() -> dict[str, Any]:
         result["error"] = "无法读取当前版本号"
         return result
 
-    update_url = _get_update_url()
+    repo = _get_github_repo()
+    if repo:
+        return await _check_from_github(repo, current_version, result)
+    return await _check_from_version_json(_get_update_url(), current_version, result)
+
+
+async def _check_from_version_json(
+    update_url: str, current_version: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """通过远程 version.json 检查更新"""
     version_url = f"{update_url}/version.json"
 
     try:
@@ -204,5 +258,75 @@ async def check_update() -> dict[str, Any]:
     result["filename"] = filename
     result["download_url"] = f"{update_url}/{filename}" if filename else ""
     result["has_update"] = _compare_versions(current_version, remote_version)
+
+    return result
+
+
+async def _check_from_github(
+    repo: str, current_version: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    通过 GitHub Releases API 检查更新
+
+    取仓库的最新 Release：tag_name 作为版本号，body 作为更新说明，
+    第一个附件作为下载项；没有附件时下载地址回退到 Release 页面。
+
+    Args:
+        repo: 仓库标识，格式 "owner/repo"
+        current_version: 本地版本号
+        result: 结果字典骨架，本函数只填充字段并返回
+
+    Returns:
+        填充后的结果字典
+    """
+    url = f"{_GITHUB_API_BASE}/repos/{repo}/releases/latest"
+
+    try:
+        async with httpx.AsyncClient(timeout=_REMOTE_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "User-Agent": _USER_AGENT,
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            # 仓库不存在或从未发布过 Release 时 GitHub 返回 404
+            if response.status_code == 404:
+                result["error"] = f"仓库 {repo} 暂无 Release"
+                return result
+            response.raise_for_status()
+            data = response.json()
+    except httpx.TimeoutException:
+        result["error"] = "连接 GitHub 超时，请稍后重试"
+        return result
+    except httpx.HTTPStatusError as exc:
+        result["error"] = f"GitHub 返回错误状态码: {exc.response.status_code}"
+        return result
+    except httpx.HTTPError as exc:
+        result["error"] = f"无法连接 GitHub: {exc}"
+        return result
+    except json.JSONDecodeError:
+        result["error"] = "GitHub 返回的数据格式无效"
+        return result
+    except Exception as exc:
+        logger.exception("通过 GitHub 检查更新失败")
+        result["error"] = f"检查更新失败: {exc}"
+        return result
+
+    tag_name = str(data.get("tag_name", "") or "").strip()
+    if not tag_name:
+        result["error"] = "GitHub Release 未返回版本号"
+        return result
+
+    assets = data.get("assets") or []
+    asset = assets[0] if isinstance(assets, list) and assets else {}
+    result["remote_version"] = tag_name
+    result["description"] = str(data.get("body", "") or "").strip() or "无更新说明"
+    result["filename"] = str(asset.get("name", "") or "").strip()
+    result["download_url"] = (
+        str(asset.get("browser_download_url", "") or "").strip()
+        or str(data.get("html_url", "") or "").strip()
+    )
+    result["has_update"] = _compare_versions(current_version, tag_name)
 
     return result

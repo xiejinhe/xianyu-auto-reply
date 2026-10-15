@@ -37,6 +37,10 @@ from launcher.gui_theme import (
 from launcher.gui_running import show_running_page
 from launcher.browser_setup import check_and_install_chromium, is_chromium_installed
 
+# 激活页展示给用户的联系方式，改成你自己的即可（纯文本展示，不做跳转）
+_ACTIVATION_CONTACT = "请联系管理员获取激活码（微信：请填写你的微信号）"
+_RENEW_CONTACT = "请联系管理员获取续期码（微信：请填写你的微信号）"
+
 
 class LauncherApp:
     """
@@ -232,25 +236,17 @@ class LauncherApp:
         act_url_frame.pack(fill=tk.X, padx=20, pady=(10, 0))
         tk.Label(act_url_frame, text="🔑 获取激活码：", font=("微软雅黑", 9),
                  fg=_COLORS["text"], bg="#EFF6FF").pack(side=tk.LEFT)
-        act_url = "https://xy.zhinianboke.com/get-activation"
-        act_url_lbl = tk.Label(act_url_frame, text=act_url,
-                               font=("Consolas", 9, "underline"),
-                               fg=_COLORS["primary"], bg="#EFF6FF", cursor="hand2")
-        act_url_lbl.pack(side=tk.LEFT)
-        act_url_lbl.bind("<Button-1>",
-                         lambda e: __import__("webbrowser").open(act_url))
+        tk.Label(act_url_frame, text=_ACTIVATION_CONTACT,
+                 font=("微软雅黑", 9),
+                 fg=_COLORS["text"], bg="#EFF6FF").pack(side=tk.LEFT)
 
         renew_url_frame = tk.Frame(container, bg="#ECFDF5", padx=12, pady=8)
         renew_url_frame.pack(fill=tk.X, padx=20, pady=(8, 0))
         tk.Label(renew_url_frame, text="♻ 获取续期码：", font=("微软雅黑", 9),
                  fg=_COLORS["text"], bg="#ECFDF5").pack(side=tk.LEFT)
-        renew_url = "https://xy.zhinianboke.com/renew-activation"
-        renew_url_lbl = tk.Label(renew_url_frame, text=renew_url,
-                                 font=("Consolas", 9, "underline"),
-                                 fg=_COLORS["success"], bg="#ECFDF5", cursor="hand2")
-        renew_url_lbl.pack(side=tk.LEFT)
-        renew_url_lbl.bind("<Button-1>",
-                           lambda e: __import__("webbrowser").open(renew_url))
+        tk.Label(renew_url_frame, text=_RENEW_CONTACT,
+                 font=("微软雅黑", 9),
+                 fg=_COLORS["text"], bg="#ECFDF5").pack(side=tk.LEFT)
     
     def _copy_machine_id(self):
         """复制机器码到剪贴板"""

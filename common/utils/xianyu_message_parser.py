@@ -137,6 +137,46 @@ def interpret_content(decoded: Dict[str, Any]) -> Tuple[str, List[str], str]:
     return ("", [], "")
 
 
+def extract_audio_info(decoded: Dict[str, Any]) -> Tuple[str, int]:
+    """从语音消息内容里提取 (音频URL, 时长毫秒)
+
+    闲鱼语音消息为 contentType==3 + audio 对象。audio 内部的字段名在不同端
+    上不完全一致，这里做兼容匹配，取不到就返回空串/0。
+
+    Args:
+        decoded: 已解析的内容 dict
+    Returns:
+        (audio_url, duration_ms)；取不到时返回 ("", 0)
+    """
+    if not isinstance(decoded, dict):
+        return ("", 0)
+
+    audio = decoded.get("audio")
+    if not isinstance(audio, dict):
+        return ("", 0)
+
+    url = ""
+    for key in ("url", "mediaUrl", "fileUrl", "audioUrl", "src", "ossUrl"):
+        val = audio.get(key)
+        if isinstance(val, str) and val.startswith(("http://", "https://", "//")):
+            url = val
+            if url.startswith("//"):
+                url = "https:" + url
+            break
+    if not url and isinstance(audio.get("url"), str) and audio["url"]:
+        url = audio["url"]
+
+    duration = 0
+    for key in ("duration", "durationMs", "duration_ms", "length", "time", "second"):
+        val = audio.get(key)
+        if isinstance(val, (int, float)) and val > 0:
+            # 数值较小时按秒处理，较大时按毫秒处理
+            duration = int(val * 1000) if val < 1000 else int(val)
+            break
+
+    return (url, duration)
+
+
 def parse_content_payloads(candidates: Sequence[Any]) -> Tuple[str, List[str], str]:
     """便捷组合：从候选载荷列表解析出 (text, images, msg_type)
 

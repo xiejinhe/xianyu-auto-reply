@@ -37,6 +37,7 @@ import { ServiceRestartCard } from './ServiceRestartCard'
 import { PasswordLoginModeSetting } from './PasswordLoginModeSetting'
 import { SliderModeSetting } from './SliderModeSetting'
 import { TokenApiModeSetting } from './TokenApiModeSetting'
+import { AsrSettingsCard } from './AsrSettingsCard'
 import { useMenuVisibilityStore } from '@/store/menuVisibilityStore'
 import type {
   AuthFooterAdSettings,
@@ -720,6 +721,10 @@ export function Settings() {
                       }
                     : current
                 ))}
+              />
+              <AsrSettingsCard
+                settings={settings}
+                onSaved={(next) => setSettings((current) => (current ? { ...current, ...next } : current))}
               />
             </div>
           </div>

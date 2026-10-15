@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import time
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
+import aiohttp
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from loguru import logger
 from pydantic import BaseModel
 
@@ -32,7 +35,11 @@ from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
 from common.utils.xianyu_utils import trans_cookies
-from common.utils.xianyu_message_parser import load_content_json, interpret_content
+from common.utils.xianyu_message_parser import (
+    load_content_json,
+    interpret_content,
+    extract_audio_info,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -579,6 +586,121 @@ async def query_avatars(
         return ApiResponse(success=False, message=f"查询头像失败: {str(e)}")
 
 
+# ==================== 聊天图片代理 ====================
+
+# 允许代理的图片域名后缀（闲鱼 / 淘宝 CDN）
+# 目的：防止本接口被当成任意 URL 的代理服务器（SSRF）
+_IMAGE_PROXY_HOST_SUFFIXES = (
+    ".alicdn.com",
+    ".goofish.com",
+    ".taobao.com",
+    ".tbcdn.cn",
+)
+_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
+_IMAGE_PROXY_TIMEOUT = 15
+
+
+def _is_allowed_image_host(hostname: str) -> bool:
+    """仅允许闲鱼/淘宝 CDN 域名，其它域名一律拒绝"""
+    host = (hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return False
+    return any(host == s.lstrip(".") or host.endswith(s) for s in _IMAGE_PROXY_HOST_SUFFIXES)
+
+
+def _is_private_ip(text: str) -> bool:
+    """判断解析出的 IP 是否属于内网/回环等不可访问网段"""
+    try:
+        ip_obj = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_reserved
+        or ip_obj.is_multicast
+    )
+
+
+@router.get("/proxy-image")
+async def proxy_chat_image(
+    url: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    聊天图片代理：代拉闲鱼 CDN 图片，以同源响应返回
+
+    用途：前端要把图片写进剪贴板（右键「复制图片」），而闲鱼 CDN 不带 CORS 头，
+          浏览器直接 fetch 会被同源策略拦掉，所以改由后端代拉。
+
+    安全措施（防 SSRF）：
+    - 必须登录
+    - 仅允许 http(s) 协议
+    - 域名必须在闲鱼/淘宝 CDN 白名单内
+    - DNS 解析结果不得落在内网/回环网段
+    - 跟随重定向后再次校验最终域名
+    - 响应必须是 image/*，且不超过 10MB / 15 秒
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return ApiResponse(success=False, message="不支持的图片地址")
+        if not _is_allowed_image_host(parsed.hostname or ""):
+            logger.warning(f"[图片代理] 拒绝非白名单域名: {parsed.hostname} user={current_user.id}")
+            return ApiResponse(success=False, message="该图片地址不在允许范围内")
+
+        # 防 SSRF：白名单域名也不允许解析到内网地址
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await loop.getaddrinfo(parsed.hostname, None)
+        except Exception:
+            return ApiResponse(success=False, message="图片地址解析失败")
+        for _family, _type, _proto, _canonname, sockaddr in infos:
+            if _is_private_ip(sockaddr[0]):
+                logger.warning(f"[图片代理] 拒绝内网地址: {parsed.hostname} -> {sockaddr[0]}")
+                return ApiResponse(success=False, message="该图片地址不在允许范围内")
+
+        headers = {
+            # 闲鱼 CDN 对无 Referer 的请求可能拒绝，伪装成官方页面来源
+            "Referer": "https://www.goofish.com/",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        timeout = aiohttp.ClientTimeout(total=_IMAGE_PROXY_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers, allow_redirects=True, max_redirects=3) as resp:
+                if resp.status != 200:
+                    return ApiResponse(success=False, message=f"图片获取失败({resp.status})")
+                # 重定向后再次校验最终域名，避免借重定向绕过白名单
+                if not _is_allowed_image_host(resp.url.host or ""):
+                    logger.warning(f"[图片代理] 拒绝重定向后域名: {resp.url.host}")
+                    return ApiResponse(success=False, message="该图片地址不在允许范围内")
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if not content_type.startswith("image/"):
+                    return ApiResponse(success=False, message="该地址返回的不是图片")
+                declared = resp.headers.get("Content-Length")
+                if declared and int(declared) > _IMAGE_PROXY_MAX_BYTES:
+                    return ApiResponse(success=False, message="图片过大")
+                data = await resp.read()
+                if len(data) > _IMAGE_PROXY_MAX_BYTES:
+                    return ApiResponse(success=False, message="图片过大")
+
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+    except asyncio.TimeoutError:
+        return ApiResponse(success=False, message="图片获取超时")
+    except Exception as e:
+        logger.error(f"[图片代理] 处理失败: {e}")
+        return ApiResponse(success=False, message="图片获取失败")
+
+
 # ==================== 消息解析辅助函数 ====================
 
 
@@ -602,6 +724,86 @@ async def get_account_profile(
         account.display_name = info["nick"]
         await db.commit()
     return ApiResponse(success=True, data=info or {})
+
+
+# ==================== 会话关联商品信息 ====================
+
+# 商品详情缓存：key=f"{account_id}:{item_id}"，value=(过期时间戳, data)
+# 会话 extension 里自带 itemId/itemTitle/itemMainPic，但没有价格，
+# 价格需要额外调闲鱼 mtop.taobao.idle.pc.detail，故加缓存避免频繁请求。
+_ITEM_INFO_CACHE: dict[str, tuple[float, dict]] = {}
+_ITEM_INFO_TTL = 600
+
+
+@router.get("/item-info/{account_id}/{item_id}")
+async def get_chat_item_info(
+    account_id: str,
+    item_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    查询会话关联商品的详情（价格/原价/运费/状态）
+
+    会话列表的 extension 里只有 itemId / itemTitle / itemMainPic，不含价格，
+    所以价格要额外查一次闲鱼商品详情接口，结果缓存 10 分钟。
+    """
+    cache_key = f"{account_id}:{item_id}"
+    now = time.time()
+    hit = _ITEM_INFO_CACHE.get(cache_key)
+    if hit and hit[0] > now:
+        return ApiResponse(success=True, data=hit[1])
+
+    manager = get_im_session_manager()
+    client = manager.clients.get(account_id)
+    if not client or not client.is_connected:
+        return ApiResponse(success=False, message="账号未连接，无法获取商品信息")
+
+    try:
+        from common.services.xianyu_detail_client import XianyuItemDetailClient
+
+        detail_client = XianyuItemDetailClient(account_id, client.cookies_str)
+        result = await detail_client.get_detail(item_id)
+        if not result.get("success"):
+            return ApiResponse(
+                success=False,
+                message=result.get("error") or "商品信息获取失败",
+            )
+
+        item_do = (result.get("detail") or {}).get("itemDO") or {}
+
+        # 商品图：imageInfos 是一个列表，major=True 的是主图，排到最前
+        images: list[dict] = []
+        for img in item_do.get("imageInfos") or []:
+            if isinstance(img, dict) and img.get("url"):
+                url = str(img["url"])
+                # 详情接口返回的图片是 http://，统一成 https 避免将来 https 部署时被浏览器
+                # 按混合内容拦截（alicdn 同时支持 https）
+                if url.startswith("http://"):
+                    url = "https://" + url[len("http://"):]
+                images.append({"url": url, "major": bool(img.get("major"))})
+        images.sort(key=lambda x: not x["major"])
+
+        data = {
+            "itemId": str(item_id),
+            "title": item_do.get("title", "") or "",
+            "price": item_do.get("soldPrice", "") or "",
+            "originalPrice": item_do.get("originalPrice", "") or "",
+            "transportFee": item_do.get("transportFee", "") or "",
+            "status": item_do.get("itemStatusStr", "") or "",
+            # 下面这些用于前端自渲染商品详情，避免在弹窗里嵌闲鱼页面（那样会要求浏览器登录）
+            "desc": item_do.get("desc", "") or "",
+            "images": images,
+            "browseCnt": item_do.get("browseCnt", "") or "",
+            "collectCnt": item_do.get("collectCnt", "") or "",
+            "quantity": item_do.get("quantity", "") or "",
+            "sellerId": result.get("seller_user_id") or "",
+            "sellerNick": result.get("seller_nick") or "",
+        }
+        _ITEM_INFO_CACHE[cache_key] = (now + _ITEM_INFO_TTL, data)
+        return ApiResponse(success=True, data=data)
+    except Exception as e:
+        logger.error(f"【{account_id}】获取商品信息失败: {e}")
+        return ApiResponse(success=False, message=f"获取商品信息失败: {str(e)}")
 
 
 def _parse_conversation(conv: dict, myid: str) -> dict | None:
@@ -658,7 +860,11 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
                 ext = json.loads(ext)
             except (json.JSONDecodeError, TypeError):
                 ext = {}
+        # extension 里带的商品信息（实测字段：itemId / itemTitle / itemMainPic /
+        # itemSellerId；价格不在其中，需要另外调商品详情接口）
         item_title = ext.get("itemTitle", "") if isinstance(ext, dict) else ""
+        item_id = str(ext.get("itemId", "") or "") if isinstance(ext, dict) else ""
+        item_main_pic = ext.get("itemMainPic", "") if isinstance(ext, dict) else ""
 
         # 最后一条消息
         last_msg_obj = conv.get("lastMessage", {})
@@ -695,6 +901,8 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
             "otherUserName": other_user_name,
             "otherUserAvatar": "",
             "itemTitle": item_title,
+            "itemId": item_id,
+            "itemMainPic": item_main_pic,
             "lastMessageSummary": last_msg_summary,
             "lastMessageTime": last_msg_time,
             "unreadCount": unread_count,
@@ -782,6 +990,16 @@ def _parse_message(model: dict, myid: str) -> dict | None:
         # 消息时间戳（goofish IM 中字段名为 createAt）
         msg_time = message.get("createAt", 0) or message.get("time", 0)
 
+        # 语音：contentType==3 + audio，interpret_content 会降级成 "[语音消息]" 文本，
+        # 这里把真实的音频地址与时长取出来，让前端可以播放
+        audio_url = ""
+        audio_duration = 0
+        if msg_type == "text" and msg_text == "[语音消息]" and isinstance(decoded, dict):
+            audio_url, audio_duration = extract_audio_info(decoded)
+            if audio_url:
+                msg_type = "audio"
+                msg_text = ""
+
         return {
             "messageId": str(message.get("messageId", "") or ""),
             "senderId": sender_id,
@@ -790,7 +1008,12 @@ def _parse_message(model: dict, myid: str) -> dict | None:
             "type": msg_type,
             "text": msg_text,
             "images": msg_images,
+            "audioUrl": audio_url,
+            "audioDuration": audio_duration,
             "time": msg_time,
+            # 读状态（IM 原始字段，实测 0=未读、2=已读）：
+            # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
+            "readStatus": model.get("readStatus"),
         }
     except Exception as e:
         logger.warning(f"解析消息失败: {e}")

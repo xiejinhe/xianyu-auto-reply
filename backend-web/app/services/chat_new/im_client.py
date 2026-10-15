@@ -13,6 +13,7 @@
 import asyncio
 import base64
 import json
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -75,6 +76,10 @@ CAPTCHA_MAX_RETRY = 1
 # 被判定为「连接/Token 失效」的 LWP 响应码：此类响应无 body，仅有 code。
 # 闲鱼对 token 过期或注册态失效的请求统一返回 400，需要换新 token 重连才能恢复。
 TOKEN_INVALID_LWP_CODES = (400,)
+# 推送调试开关（环境变量 IM_PUSH_DEBUG=1 开启）：把解析器无法识别的 IM 推送原样记到日志，
+# 用于逆向未公开的协议类型（例如「对方已读」的读状态推送）。默认关闭，避免正常运行时刷屏。
+PUSH_DEBUG_ENABLED = os.getenv("IM_PUSH_DEBUG", "0").strip().lower() in ("1", "true", "on")
+PUSH_DEBUG_MAX_CHARS = 900
 
 
 class ImRequestRejected(Exception):
@@ -485,6 +490,83 @@ class GoofishImClient:
             lambda: (mid, msg), retry_after_reconnect=False
         )
         # 与文本发送一致，识别安全拦截等业务错误并抛出明文原因
+        self._raise_if_send_rejected(response)
+        body = response.get("body", {})
+        message_id = ""
+        if isinstance(body, dict):
+            raw_message_id = body.get("messageId") or body.get("1")
+            if isinstance(raw_message_id, dict):
+                raw_message_id = raw_message_id.get("messageId") or raw_message_id.get("1")
+            if isinstance(raw_message_id, str):
+                message_id = raw_message_id
+        return {"response": response, "messageId": message_id, "uuid": message_uuid}
+
+    async def send_audio_message(
+        self,
+        cid: str,
+        to_user_id: str,
+        audio_url: str,
+        duration_ms: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        发送语音消息
+
+        与 send_image_message 协议一致，内容为 contentType=3 的语音结构。
+        语音必须是已上传到闲鱼CDN的可访问URL。
+
+        注意：audio 内部字段名（duration 单位等）是按闲鱼通用结构推断的，
+        发送后可通过 get_messages 回显校验；见 _parse_message 的 audio 解析。
+
+        Args:
+            cid: 会话ID（不含@goofish后缀）
+            to_user_id: 对方用户ID
+            audio_url: 闲鱼CDN音频URL
+            duration_ms: 语音时长（毫秒）
+
+        Returns:
+            包含 response、messageId、uuid 的结果字典
+        """
+        full_cid = cid if "@goofish" in cid else f"{cid}@goofish"
+        full_to = to_user_id if "@goofish" in to_user_id else f"{to_user_id}@goofish"
+        full_self = f"{self.myid}@goofish"
+
+        payload = {
+            "contentType": 3,
+            "audio": {
+                "url": audio_url,
+                "duration": int(duration_ms),
+            },
+        }
+        data_b64 = base64.b64encode(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        ).decode("utf-8")
+
+        mid = generate_mid()
+        message_uuid = generate_uuid()
+        msg = {
+            "lwp": "/r/MessageSend/sendByReceiverScope",
+            "headers": {"mid": mid},
+            "body": [
+                {
+                    "uuid": message_uuid,
+                    "cid": full_cid,
+                    "conversationType": 1,
+                    "content": {
+                        "contentType": 101,
+                        "custom": {"type": 1, "data": data_b64},
+                    },
+                    "redPointPolicy": 0,
+                    "extension": {"extJson": "{}"},
+                    "ctx": {"appVersion": "1.0", "platform": "web"},
+                    "mtags": {},
+                    "msgReadStatusSetting": 1,
+                },
+                {"actualReceivers": [full_to, full_self]},
+            ],
+        }
+        response = await self._send_and_wait_with_retry(
+            lambda: (mid, msg), retry_after_reconnect=False
+        )
         self._raise_if_send_rejected(response)
         body = response.get("body", {})
         message_id = ""
@@ -1198,6 +1280,13 @@ class GoofishImClient:
                     continue
                 parsed = self._push_parser.parse(decrypted)
                 if parsed is None:
+                    # 未知推送类型：默认静默丢弃；开启 IM_PUSH_DEBUG 时原样落日志，
+                    # 便于排查闲鱼是否下发了「对方已读」之类的读状态推送。
+                    if PUSH_DEBUG_ENABLED:
+                        logger.info(
+                            f"【{self.account_id}】[未识别推送] "
+                            f"{json.dumps(decrypted, ensure_ascii=False)[:PUSH_DEBUG_MAX_CHARS]}"
+                        )
                     continue
                 for cb in self._push_callbacks:
                     try:

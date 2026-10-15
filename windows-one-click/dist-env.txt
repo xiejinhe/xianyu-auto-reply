@@ -1,0 +1,69 @@
+# ==========================================================
+# 闲鱼自动回复系统 - 环境变量配置
+#
+# 说明：这个文件是给「一键启动」用的，正常情况下不用改。
+#       打包脚本会把它重命名为 .env 放进分发包根目录。
+# ==========================================================
+
+# ---------- 数据库密码 ----------
+# 建议第一次启动前把 xianyu@2026 改成你自己的密码（三处要改成一样的）
+MYSQL_ROOT_PASSWORD=xianyu@2026
+MYSQL_DATABASE=xianyu_data
+MYSQL_USER=xianyu
+MYSQL_PASSWORD=xianyu@2026
+
+# ---------- Redis 密码 ----------
+REDIS_PASSWORD=xianyu@2026
+REDIS_DB=0
+
+# ---------- 网页端口 ----------
+# 改 FRONTEND_PORT 就能换访问地址，比如改成 8088 就是 http://localhost:8088
+FRONTEND_PORT=9000
+BACKEND_WEB_PORT=8089
+WEBSOCKET_PORT=8090
+SCHEDULER_PORT=8091
+
+# ---------- Docker 项目名 ----------
+# 固定项目名，避免文件夹被改成中文名后 Docker 报 "project name must not be empty"
+COMPOSE_PROJECT_NAME=xianyu
+
+# ---------- 基础镜像 ----------
+# 使用 Docker 官方镜像，不依赖任何第三方私有仓库
+MYSQL_IMAGE=mysql:8.0
+REDIS_IMAGE=redis:7-alpine
+
+# ---------- 日志 ----------
+LOG_LEVEL=INFO
+SQL_ECHO=false
+
+# ---------- Token 与定时任务 ----------
+TOKEN_CACHE_TTL_MIN_HOURS=5
+TOKEN_CACHE_TTL_MAX_HOURS=10
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+REFRESH_TOKEN_EXPIRE_MINUTES=10080
+REDELIVERY_INTERVAL=5
+RATE_INTERVAL=20
+MAX_CAPTCHA_CONCURRENT=3
+AUTO_START_WEBSOCKET=true
+AUTO_START_CRAWL_JOBS=true
+
+# ---------- 滑块验证兜底引擎 ----------
+CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED=false
+CAPTCHA_DRISSIONPAGE_TIMEOUT=25
+CAPTCHA_DRISSIONPAGE_HEADLESS=true
+
+# ---------- 远程官方服务 ----------
+# 本地独立运行：三个开关全部关闭，不会请求任何外部服务地址
+# （留着这三行是为了让你以后想接入时知道开关在哪）
+REMOTE_OFFICIAL_BASE_URL=
+ENABLE_REMOTE_ADS=false
+ENABLE_REMOTE_ANNOUNCEMENTS=false
+ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=false
+
+# ---------- 分销卡券（本地独立运行留空即可，不影响其它功能）----------
+CARD_DOCK_BASE_URL=
+EXTERNAL_API_KEY=
+
+# ---------- 前端公网地址（本地运行留空）----------
+FRONTEND_PUBLIC_URL=
+BACKEND_WEB_PUBLIC_URL=

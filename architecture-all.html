@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xianyu-auto-reply · 架构图合集</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #fff;
+      --border: #e2e5ea;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #eff4ff;
+      --ext: #E6F1FB;
+      --ext-s: #185FA5;
+      --ext-t: #0C447C;
+      --cli: #FBEAF0;
+      --cli-s: #993556;
+      --cli-t: #72243E;
+      --svc: #EEEDFE;
+      --svc-s: #534AB7;
+      --svc-t: #3C3489;
+      --co: #E1F5EE;
+      --co-s: #0F6E56;
+      --co-t: #085041;
+      --db: #FAEEDA;
+      --db-s: #854F0B;
+      --db-t: #633806;
+      --j: #FAEEDA;
+      --j-s: #854F0B;
+      --j-t: #633806;
+      --sk: #F1EFE8;
+      --sk-s: #5F5E5A;
+      --sk-t: #444441;
+      --out: #FCEBEB;
+      --out-s: #A32D2D;
+      --out-t: #791F1F;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 28px 20px 60px
+    }
+
+    .wrap {
+      max-width: 1080px;
+      margin: 0 auto
+    }
+
+    h1 {
+      font-size: 21px;
+      font-weight: 600
+    }
+
+    .repo {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 13px;
+      color: var(--accent);
+      margin: 2px 0 6px
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 16px
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0
+    }
+
+    .tab {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 9px 16px;
+      cursor: pointer;
+      font-family: inherit
+    }
+
+    .tab:hover {
+      color: var(--text)
+    }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 500
+    }
+
+    .chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 18px
+    }
+
+    .chip {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 13px;
+      font-size: 12px;
+      color: var(--muted)
+    }
+
+    .chip b {
+      color: var(--text);
+      font-weight: 600
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 18px;
+      align-items: start
+    }
+
+    @media(max-width:900px) {
+      .layout {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px
+    }
+
+    .panel h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 3px
+    }
+
+    .panel .path {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-bottom: 12px
+    }
+
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12.5px;
+      padding: 5px 0;
+      border-bottom: 1px solid #f2f4f6
+    }
+
+    .kv:last-child {
+      border: none
+    }
+
+    .kv span:first-child {
+      color: var(--muted)
+    }
+
+    .kv span:last-child {
+      font-weight: 500
+    }
+
+    .list {
+      margin: 10px 0 4px
+    }
+
+    .list li {
+      font-size: 12.5px;
+      margin-left: 16px;
+      margin-bottom: 3px
+    }
+
+    .tagline {
+      display: inline-block;
+      font-size: 11px;
+      border-radius: 4px;
+      padding: 1px 7px;
+      margin: 2px 3px 2px 0
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 16px;
+      text-align: center
+    }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px 24px;
+      margin-bottom: 22px
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px
+    }
+
+    .desc {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 18px
+    }
+
+    .note {
+      margin-top: 14px;
+      background: var(--db);
+      border: 1px solid #f0d9b5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--db-t)
+    }
+
+    .note b {
+      font-weight: 600
+    }
+
+    .note code {
+      background: #fff;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto
+    }
+
+    .node {
+      cursor: pointer
+    }
+
+    .node rect {
+      transition: stroke-width .12s
+    }
+
+    .node:hover rect {
+      stroke-width: 2
+    }
+
+    .node.sel rect {
+      stroke-width: 2.4
+    }
+
+    .edge {
+      fill: none;
+      stroke: #a8adb5;
+      stroke-width: 1.3
+    }
+
+    .edge.hot {
+      stroke: var(--accent);
+      stroke-width: 2.2
+    }
+
+    .lay-lbl {
+      font-size: 11px;
+      fill: #9aa0a8
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 26px
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        padding: 0
+      }
+
+      .tabs {
+        display: none
+      }
+
+      .pane {
+        display: block !important
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <h1>xianyu-auto-reply · 架构图合集</h1>
+    <div class="repo">github.com/xiejinhe/xianyu-auto-reply</div>
+    <div class="sub">三个视角：代码库结构 · 业务流程 · 订单发货链路。数据来自本地仓库实际扫描。</div>
+
+    <link class="tabs">
+      <button class="tab active" data-tab="codebase">代码库架构</button>
+      <button class="tab" data-tab="flow">业务流程</button>
+      <button class="tab" data-tab="delivery">订单与发货</button>
+      <button class="tab" data-tab="gitdiagram">GitDiagram 图</button>
+      
+    </div>
+
+    <!-- ===== Tab 1 代码库 ===== -->
+    <div class="pane" id="pane-codebase">
+      <div class="chips">
+        <div class="chip">Python <b>575</b> 文件</div>
+        <div class="chip">TS / TSX <b>405</b> 文件</div>
+        <div class="chip">数据模型 <b>72</b> 个</div>
+        <div class="chip">后端服务 <b>4</b> 个</div>
+        <div class="chip">前端页面 <b>40</b> 个</div>
+        <div class="chip">共享层引用 <b>1182</b> 次</div>
+      </div>
+      <div class="layout">
+        <div class="panel">
+          <svg viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" role="img">
+            <title>代码库分层架构图</title>
+            <defs>
+              <marker id="cbAr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+                orient="auto-start-reverse">
+                <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                  stroke-linejoin="round" />
+              </marker>
+            </defs>
+            <g font-family="-apple-system,PingFang SC,sans-serif">
+
+              <text class="lay-lbl" x="14" y="34">外部</text>
+              <text class="lay-lbl" x="14" y="128">客户端</text>
+              <text class="lay-lbl" x="14" y="228">服务层</text>
+              <text class="lay-lbl" x="14" y="368">共享层</text>
+              <text class="lay-lbl" x="14" y="470">数据层</text>
+
+              <!-- 外部 -->
+              <g class="node" data-id="xianyu">
+                <rect x="300" y="16" width="230" height="52" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                  stroke-width="0.9" />
+                <text x="415" y="37" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ext-t)">闲鱼平台
+                  Goofish</text>
+                <text x="415" y="55" text-anchor="middle" font-size="11" fill="var(--ext-s)">WS LWP + mtop HTTP</text>
+              </g>
+              <g class="node" data-id="playwright">
+                <rect x="570" y="16" width="220" height="52" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                  stroke-width="0.9" />
+                <text x="680" y="37" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--ext-t)">Playwright 浏览器</text>
+                <text x="680" y="55" text-anchor="middle" font-size="11" fill="var(--ext-s)">登录 / 滑块 / 续期</text>
+              </g>
+
+              <!-- 客户端 -->
+              <g class="node" data-id="frontend">
+                <rect x="60" y="106" width="215" height="58" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                  stroke-width="0.9" />
+                <text x="167" y="128" text-anchor="middle" font-size="13" font-weight="600" fill="var(--cli-t)">Frontend
+                  · 9000</text>
+                <text x="167" y="146" text-anchor="middle" font-size="11" fill="var(--cli-s)">React 18 + Vite</text>
+                <text x="167" y="158" text-anchor="middle" font-size="11" fill="var(--cli-s)">243 文件 · 40 页面</text>
+              </g>
+              <g class="node" data-id="mobile">
+                <rect x="300" y="106" width="215" height="58" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                  stroke-width="0.9" />
+                <text x="407" y="128" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--cli-t)">xianyu-mobile</text>
+                <text x="407" y="146" text-anchor="middle" font-size="11" fill="var(--cli-s)">Expo + React Native</text>
+                <text x="407" y="158" text-anchor="middle" font-size="11" fill="var(--cli-s)">122 文件 · 自托管</text>
+              </g>
+              <g class="node" data-id="launcher">
+                <rect x="540" y="106" width="215" height="58" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                  stroke-width="0.9" />
+                <text x="647" y="128" text-anchor="middle" font-size="13" font-weight="600" fill="var(--cli-t)">Launcher
+                  启动器</text>
+                <text x="647" y="146" text-anchor="middle" font-size="11" fill="var(--cli-s)">桌面 GUI + 服务管理</text>
+                <text x="647" y="158" text-anchor="middle" font-size="11" fill="var(--cli-s)">24 文件 · Nuitka 打包</text>
+              </g>
+
+              <!-- 服务层 -->
+              <g class="node" data-id="backend-web">
+                <rect x="40" y="204" width="215" height="62" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="147" y="226" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--svc-t)">Backend-Web · 8089</text>
+                <text x="147" y="245" text-anchor="middle" font-size="11" fill="var(--svc-s)">API 网关 · 183 文件</text>
+                <text x="147" y="258" text-anchor="middle" font-size="11" fill="var(--svc-s)">api 79 · services
+                  96</text>
+              </g>
+              <g class="node" data-id="websocket">
+                <rect x="272" y="204" width="215" height="62" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="379" y="226" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--svc-t)">WebSocket · 8090</text>
+                <text x="379" y="245" text-anchor="middle" font-size="11" fill="var(--svc-s)">闲鱼连接 · 56 文件</text>
+                <text x="379" y="258" text-anchor="middle" font-size="11" fill="var(--svc-s)">消息 · 回复 · 发货</text>
+              </g>
+              <g class="node" data-id="scheduler">
+                <rect x="504" y="204" width="215" height="62" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="611" y="226" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--svc-t)">Scheduler · 8091</text>
+                <text x="611" y="245" text-anchor="middle" font-size="11" fill="var(--svc-s)">定时任务 · 40 文件</text>
+                <text x="611" y="258" text-anchor="middle" font-size="11" fill="var(--svc-s)">30 个任务服务</text>
+              </g>
+              <g class="node" data-id="promotion">
+                <rect x="736" y="204" width="215" height="62" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="843" y="226" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--svc-t)">Promotion · 8092</text>
+                <text x="843" y="245" text-anchor="middle" font-size="11" fill="var(--svc-s)">返佣子系统 · 40 文件</text>
+                <text x="843" y="258" text-anchor="middle" font-size="11" fill="var(--svc-s)">选品 · 发布 · 删除</text>
+              </g>
+
+              <!-- 共享层 -->
+              <g class="node" data-id="common">
+                <rect x="272" y="342" width="456" height="72" rx="10" fill="var(--core)" stroke="var(--core-s)"
+                  stroke-width="1" />
+                <text x="500" y="366" text-anchor="middle" font-size="14" font-weight="600" fill="var(--core-t)">common
+                  · 共享内核</text>
+                <text x="500" y="386" text-anchor="middle" font-size="11.5" fill="var(--core-s)">228 文件 · 72 个数据模型 ·
+                  数据库会话 · 通用服务 · 工具</text>
+                <text x="500" y="403" text-anchor="middle" font-size="11.5"
+                  fill="var(--core-s)">被全部服务引用，是整个项目依赖的枢纽</text>
+              </g>
+
+              <!-- 数据层 -->
+              <g class="node" data-id="mysql">
+                <rect x="272" y="462" width="215" height="58" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                  stroke-width="0.9" />
+                <text x="379" y="484" text-anchor="middle" font-size="13" font-weight="600" fill="var(--db-t)">MySQL
+                  8</text>
+                <text x="379" y="502" text-anchor="middle" font-size="11" fill="var(--db-s)">主数据存储</text>
+              </g>
+              <g class="node" data-id="redis">
+                <rect x="513" y="462" width="215" height="58" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                  stroke-width="0.9" />
+                <text x="620" y="484" text-anchor="middle" font-size="13" font-weight="600" fill="var(--db-t)">Redis
+                  7</text>
+                <text x="620" y="502" text-anchor="middle" font-size="11" fill="var(--db-s)">分布式锁 · 缓存</text>
+              </g>
+
+              <!-- 边：外部 -->
+              <path class="edge" data-from="xianyu" data-to="websocket" d="M415 68 L415 200" marker-end="url(#cbAr)" />
+              <path class="edge" data-from="playwright" data-to="backend-web" d="M660 68 L560 120 L200 200"
+                marker-end="url(#cbAr)" />
+              <path class="edge" data-from="playwright" data-to="websocket" d="M680 68 L470 200"
+                marker-end="url(#cbAr)" />
+
+              <!-- 边：客户端 -> backend-web -->
+              <path class="edge" data-from="frontend" data-to="backend-web" d="M150 164 L140 200"
+                marker-end="url(#cbAr)" />
+              <path class="edge" data-from="mobile" data-to="backend-web" d="M390 164 L200 200"
+                marker-end="url(#cbAr)" />
+              <path class="edge" data-from="launcher" data-to="backend-web" d="M620 164 L220 200"
+                marker-end="url(#cbAr)" />
+
+              <!-- 边：服务 -> common（标注引用次数） -->
+              <path class="edge" data-from="backend-web" data-to="common" d="M147 266 L147 320 L420 340"
+                marker-end="url(#cbAr)" />
+              <path class="edge" data-from="websocket" data-to="common" d="M379 266 L379 338" marker-end="url(#cbAr)" />
+              <path class="edge" data-from="scheduler" data-to="common" d="M611 266 L611 320 L520 340"
+                marker-end="url(#cbAr)" />
+              <path class="edge" data-from="promotion" data-to="common" d="M843 266 L843 320 L600 340"
+                marker-end="url(#cbAr)" />
+
+              <text x="190" y="308" font-size="11" fill="#9aa0a8">603</text>
+              <text x="389" y="308" font-size="11" fill="#9aa0a8">290</text>
+              <text x="628" y="308" font-size="11" fill="#9aa0a8">181</text>
+              <text x="800" y="308" font-size="11" fill="#9aa0a8">108</text>
+
+              <!-- 边：common -> 存储 -->
+              <path class="edge" data-from="common" data-to="mysql" d="M420 414 L390 458" marker-end="url(#cbAr)" />
+              <path class="edge" data-from="common" data-to="redis" d="M580 414 L610 458" marker-end="url(#cbAr)" />
+            </g>
+          </svg>
+        </div>
+        <div class="panel" id="detail">
+          <div class="hint">点击左侧任意节点<br>查看职责、规模与依赖</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Tab 2 业务流程 ===== -->
+    <div class="pane" id="pane-flow" style="display:none">
+      <section>
+        <h2>1 · 系统架构</h2>
+        <div class="desc">四个后端服务各司其职，共享 MySQL 与 Redis。只有 WebSocket 服务直接连闲鱼。</div>
+        <svg viewBox="0 0 960 424" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>系统架构图</title>
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <!-- 闲鱼平台 -->
+            <rect x="330" y="24" width="300" height="58" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="480" y="45" text-anchor="middle" font-size="14" font-weight="600" fill="var(--c-ext-t)">闲鱼平台
+              Goofish</text>
+            <text x="480" y="64" text-anchor="middle" font-size="12" fill="var(--c-ext-s)">WebSocket LWP + mtop HTTP
+              API</text>
+            <path d="M480 82 L480 118" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+            <text x="490" y="104" font-size="11" fill="var(--muted)">收发消息</text>
+
+            <!-- WebSocket -->
+            <rect x="330" y="120" width="300" height="66" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="480" y="142" text-anchor="middle" font-size="14" font-weight="600" fill="var(--c-svc-t)">WebSocket
+              服务 · 8090</text>
+            <text x="480" y="162" text-anchor="middle" font-size="12" fill="var(--c-svc-s)">长连接 / 登录 / 自动回复 /
+              自动发货</text>
+
+            <!-- Playwright 右侧 -->
+            <rect x="740" y="120" width="190" height="66" rx="9" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="835" y="142" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-skip-t)">Playwright 浏览器</text>
+            <text x="835" y="162" text-anchor="middle" font-size="12" fill="var(--c-skip-s)">扫码登录 / Cookie 续期</text>
+            <path d="M630 152 L736 152" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+
+            <!-- frontend 左侧 -->
+            <rect x="30" y="120" width="190" height="66" rx="9" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="125" y="142" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-skip-t)">前端
+              Frontend · 9000</text>
+            <text x="125" y="162" text-anchor="middle" font-size="12" fill="var(--c-skip-s)">管理后台 / 在线聊天</text>
+
+            <!-- 三个服务 -->
+            <rect x="170" y="222" width="200" height="68" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="270" y="245" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-svc-t)">Backend-Web · 8089</text>
+            <text x="270" y="265" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">API 网关 / 业务接口</text>
+            <text x="270" y="280" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">商品 / 订单 / 卡券</text>
+
+            <rect x="390" y="222" width="200" height="68" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="490" y="245" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-svc-t)">Scheduler
+              · 8091</text>
+            <text x="490" y="265" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">定时任务执行器</text>
+            <text x="490" y="280" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">发货 / 评价 / 采集</text>
+
+            <rect x="610" y="222" width="200" height="68" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="710" y="245" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-svc-t)">Promotion
+              · 8092</text>
+            <text x="710" y="265" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">返佣子系统</text>
+            <text x="710" y="280" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">选品 / 发布 / 删除</text>
+
+            <path d="M220 186 L262 218" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+            <path d="M440 186 L462 218" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+            <path d="M125 186 L125 218 L168 218" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar)" />
+            <path d="M370 256 L386 256" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+            <path d="M590 256 L606 256" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar)" />
+
+            <!-- 存储 -->
+            <rect x="290" y="336" width="170" height="62" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="375" y="359" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-db-t)">MySQL</text>
+            <text x="375" y="379" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">账号 / 商品 / 订单</text>
+
+            <rect x="500" y="336" width="170" height="62" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="585" y="359" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-db-t)">Redis</text>
+            <text x="585" y="379" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">分布式锁 / 缓存</text>
+
+            <path d="M270 290 L270 320 L350 334" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar)" />
+            <path d="M490 290 L490 320 L560 334" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar)" />
+            <path d="M710 290 L710 320 L620 334" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar)" />
+            <path d="M480 186 L480 200" fill="none" stroke="#fff" stroke-width="0" />
+          </g>
+        </svg>
+        <div class="note"><b>要点：</b>只有 WebSocket 服务直接连闲鱼，其余服务通过内部 API 协作。
+          依赖顺序为 MySQL/Redis → Backend-Web → WebSocket → Scheduler。</div>
+      </section>
+      <section>
+        <h2>2 · 消息自动处理流程</h2>
+        <div class="desc">买家发来消息后，经过五道校验才决定回不回、怎么回。这是系统最核心的链路。</div>
+        <svg viewBox="0 0 960 820" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>消息自动处理流程图</title>
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <!-- 1 -->
+            <rect x="270" y="20" width="260" height="48" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="400" y="44" text-anchor="middle" font-size="13.5" font-weight="600"
+              fill="var(--c-ext-t)">买家在闲鱼发来消息</text>
+            <path d="M400 68 L400 96" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 2 -->
+            <rect x="270" y="98" width="260" height="48" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="400" y="122" text-anchor="middle" font-size="13.5" font-weight="600"
+              fill="var(--c-svc-t)">WebSocket 收到 LWP 消息</text>
+            <path d="M400 146 L400 174" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 3 判定 -->
+            <polygon points="400,176 550,208 400,240 250,208" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="400" y="204" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">商品属于本账号？</text>
+            <text x="400" y="220" text-anchor="middle" font-size="11" fill="var(--c-judge-s)">校验归属与商品 ID</text>
+            <path d="M556 208 L684 208" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+            <text x="612" y="200" text-anchor="middle" font-size="11" fill="var(--muted)">否</text>
+            <rect x="688" y="188" width="150" height="40" rx="7" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="763" y="208" text-anchor="middle" font-size="12" fill="var(--c-skip-t)">忽略该消息</text>
+            <path d="M400 240 L400 268" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 4 判定 -->
+            <polygon points="400,270 550,302 400,334 250,302" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="400" y="298" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">会话被人工介入暂停？</text>
+            <text x="400" y="314" text-anchor="middle" font-size="11" fill="var(--c-judge-s)">检测到真人回复则让位</text>
+            <path d="M556 302 L684 302" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+            <text x="612" y="294" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="688" y="282" width="150" height="40" rx="7" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="763" y="302" text-anchor="middle" font-size="12" fill="var(--c-skip-t)">跳过，交给人处理</text>
+            <path d="M400 334 L400 362" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 5 判定 -->
+            <polygon points="400,364 550,396 400,428 250,396" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="400" y="392" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">等待时间内重复消息？</text>
+            <text x="400" y="408" text-anchor="middle" font-size="11" fill="var(--c-judge-s)">默认 3600 秒去重窗口</text>
+            <path d="M556 396 L684 396" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+            <text x="612" y="388" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="688" y="376" width="150" height="40" rx="7" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="763" y="396" text-anchor="middle" font-size="12" fill="var(--c-skip-t)">去重，不重复回</text>
+            <path d="M400 428 L400 456" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 6 判定 -->
+            <polygon points="400,458 550,490 400,522 250,490" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="400" y="486" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">命中过滤关键词？</text>
+            <text x="400" y="502" text-anchor="middle" font-size="11" fill="var(--c-judge-s)">如广告、投诉类词</text>
+            <path d="M556 490 L684 490" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+            <text x="612" y="482" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="688" y="470" width="150" height="40" rx="7" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="763" y="490" text-anchor="middle" font-size="12" fill="var(--c-skip-t)">过滤，不回复</text>
+            <path d="M400 522 L400 550" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 7 匹配策略 -->
+            <rect x="250" y="552" width="300" height="80" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="400" y="575" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-svc-t)">按优先级匹配回复策略</text>
+            <text x="400" y="596" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">商品级关键词 → 通用关键词</text>
+            <text x="400" y="614" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">→ 默认回复 → AI 大模型回复</text>
+            <path d="M400 632 L400 660" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 8 延迟 -->
+            <rect x="250" y="662" width="300" height="52" rx="9" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="400" y="683" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-judge-t)">等待
+              reply_delay_seconds</text>
+            <text x="400" y="702" text-anchor="middle" font-size="11" fill="var(--c-judge-s)">伪装人工响应间隔</text>
+            <text x="618" y="683" font-size="12" font-weight="600" fill="var(--c-out-s)">默认值为 0 秒</text>
+            <text x="618" y="702" font-size="11.5" fill="var(--c-out-s)">即秒回，风控风险点</text>
+            <path d="M556 688 L608 688" fill="none" stroke="var(--c-out-s)" stroke-width="1.2" stroke-dasharray="4 3" />
+            <path d="M400 714 L400 742" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+
+            <!-- 9 发送 -->
+            <rect x="250" y="744" width="300" height="56" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="400" y="767" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-db-t)">发送消息 +
+              记录日志</text>
+            <text x="400" y="786" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">写入消息日志表 / 触发通知</text>
+            <path d="M556 772 L684 772" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar2)" />
+            <rect x="688" y="752" width="150" height="40" rx="7" fill="var(--c-out)" stroke="var(--c-out-s)"
+              stroke-width="0.8" />
+            <text x="763" y="772" text-anchor="middle" font-size="12" fill="var(--c-out-t)">检测 CSI_FORBID</text>
+          </g>
+        </svg>
+        <div class="note"><b>风控提示：</b><code>reply_delay_seconds</code> 字段默认为 <b>0</b>，即买家一发消息机器人立刻回。
+          这是最容易被判定为机器人的特征，建议改成 3~8 秒的随机值。</div>
+      </section>
+      <section>
+        <h2>3 · 账号登录与 Cookie 续期</h2>
+        <div class="desc">登录态是整套系统的地基。Cookie 失效时先走接口续期，失败再启动浏览器兜底。</div>
+        <svg viewBox="0 0 960 330" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>登录与续期流程图</title>
+          <defs>
+            <marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <rect x="30" y="30" width="190" height="62" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="125" y="53" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-ext-t)">扫码登录</text>
+            <text x="125" y="72" text-anchor="middle" font-size="11.5" fill="var(--c-ext-s)">推荐方式</text>
+
+            <rect x="30" y="112" width="190" height="62" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="125" y="135" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-ext-t)">账号密码登录</text>
+            <text x="125" y="154" text-anchor="middle" font-size="11.5" fill="var(--c-ext-s)">支持人脸认证</text>
+
+            <path d="M220 61 L268 100" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar4)" />
+            <path d="M220 143 L268 108" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar4)" />
+
+            <rect x="272" y="76" width="200" height="62" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="372" y="99" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-svc-t)">获取
+              Cookie</text>
+            <text x="372" y="118" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">unb / _m_h5_tk</text>
+
+            <path d="M472 107 L536 107" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar4)" />
+
+            <rect x="540" y="76" width="180" height="62" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="630" y="99" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-db-t)">存入
+              MySQL</text>
+            <text x="630" y="118" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">账号表持久化</text>
+
+            <path d="M630 138 L630 178" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar4)" />
+
+            <rect x="500" y="180" width="260" height="56" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="630" y="203" text-anchor="middle" font-size="13" font-weight="600" fill="var(--c-svc-t)">WebSocket
+              建立长连接</text>
+            <text x="630" y="221" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">维持在线接收消息</text>
+
+            <path d="M500 208 L420 208 L420 258" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar4)" />
+            <text x="452" y="200" font-size="11" fill="var(--muted)">Token 过期</text>
+
+            <rect x="272" y="260" width="190" height="56" rx="9" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="367" y="283" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-judge-t)">接口续期</text>
+            <text x="367" y="301" text-anchor="middle" font-size="11.5" fill="var(--c-judge-s)">mtop 签名请求换新</text>
+
+            <path d="M462 288 L520 288" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar4)" />
+            <text x="490" y="280" text-anchor="middle" font-size="11" fill="var(--muted)">失败</text>
+
+            <rect x="524" y="260" width="230" height="56" rx="9" fill="var(--c-skip)" stroke="var(--c-skip-s)"
+              stroke-width="0.8" />
+            <text x="639" y="283" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--c-skip-t)">Playwright 浏览器续期</text>
+            <text x="639" y="301" text-anchor="middle" font-size="11.5" fill="var(--c-skip-s)">访问 goofish.com/im 取
+              Cookie</text>
+
+            <path d="M754 288 L830 288 L830 220 L764 220" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#ar4)" />
+            <text x="800" y="252" font-size="11" fill="var(--muted)">回到连接</text>
+          </g>
+        </svg>
+        <div class="note"><b>要点：</b>Cookie 续期有两条路——先试轻量接口，失败才启动浏览器（开销大、易触发验证）。
+          续期时带随机抖动，避免多台账号在同一时刻刷新。</div>
+      </section>
+      <section>
+        <h2>4 · 定时任务链路</h2>
+        <div class="desc">Scheduler 服务按各自周期执行，是自动发货和返佣铺货的驱动来源。</div>
+        <svg viewBox="0 0 960 400" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>定时任务流程图</title>
+          <defs>
+            <marker id="ar5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <rect x="390" y="24" width="200" height="58" rx="9" fill="var(--c-svc)" stroke="var(--c-svc-s)"
+              stroke-width="0.8" />
+            <text x="490" y="46" text-anchor="middle" font-size="14" font-weight="600" fill="var(--c-svc-t)">Scheduler ·
+              8091</text>
+            <text x="490" y="66" text-anchor="middle" font-size="11.5" fill="var(--c-svc-s)">APScheduler 定时驱动</text>
+
+            <!-- 左列 -->
+            <rect x="40" y="132" width="230" height="58" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="155" y="155" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--c-ext-t)">Cookie /
+              Token 刷新</text>
+            <text x="155" y="174" text-anchor="middle" font-size="11.5" fill="var(--c-ext-s)">登录态保活</text>
+
+            <rect x="40" y="204" width="230" height="58" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="155" y="227" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-ext-t)">订单拉取</text>
+            <text x="155" y="246" text-anchor="middle" font-size="11.5" fill="var(--c-ext-s)">同步平台订单入库</text>
+
+            <rect x="40" y="276" width="230" height="58" rx="9" fill="var(--c-ext)" stroke="var(--c-ext-s)"
+              stroke-width="0.8" />
+            <text x="155" y="299" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--c-ext-t)">补发货 /
+              发货超时</text>
+            <text x="155" y="318" text-anchor="middle" font-size="11.5" fill="var(--c-ext-s)">抢 Redis 发货锁防重</text>
+
+            <!-- 中列 -->
+            <rect x="365" y="132" width="230" height="58" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="480" y="155" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--c-db-t)">自动评价 /
+              求小红花</text>
+            <text x="480" y="174" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">好评回写订单状态</text>
+
+            <rect x="365" y="204" width="230" height="58" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="480" y="227" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--c-db-t)">商品采集 /
+              库存同步</text>
+            <text x="480" y="246" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">Goofish 抓取与上架</text>
+
+            <rect x="365" y="276" width="230" height="58" rx="9" fill="var(--c-db)" stroke="var(--c-db-s)"
+              stroke-width="0.8" />
+            <text x="480" y="299" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--c-db-t)">日切 /
+              数据库备份</text>
+            <text x="480" y="318" text-anchor="middle" font-size="11.5" fill="var(--c-db-s)">重置每日计数</text>
+
+            <!-- 右列 -->
+            <rect x="690" y="132" width="230" height="58" rx="9" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="805" y="155" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">返佣选品入素材库</text>
+            <text x="805" y="174" text-anchor="middle" font-size="11.5" fill="var(--c-judge-s)">按规则抓候选商品</text>
+
+            <rect x="690" y="204" width="230" height="58" rx="9" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="805" y="227" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">定时发布商品</text>
+            <text x="805" y="246" text-anchor="middle" font-size="11.5" fill="var(--c-judge-s)">默认 5 条/天，间隔 5 秒</text>
+
+            <rect x="690" y="276" width="230" height="58" rx="9" fill="var(--c-judge)" stroke="var(--c-judge-s)"
+              stroke-width="0.8" />
+            <text x="805" y="299" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--c-judge-t)">定时删除商品</text>
+            <text x="805" y="318" text-anchor="middle" font-size="11.5" fill="var(--c-judge-s)">默认 5 条/天，间隔 2 秒</text>
+
+            <path d="M470 82 L180 128" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar5)" />
+            <path d="M490 82 L480 128" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar5)" />
+            <path d="M510 82 L800 128" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#ar5)" />
+          </g>
+        </svg>
+        <div class="note"><b>风控提示：</b>返佣的「定时发布 + 定时删除」是闲鱼重点打击的批量行为模式。
+          当前发布与删除的间隔是<b>固定值</b>（5 秒 / 2 秒），建议改成随机区间，降低被算法识别的概率。</div>
+      </section>
+    </div>
+
+    <!-- ===== Tab 3 订单发货 ===== -->
+    <div class="pane" id="pane-delivery" style="display:none">
+      <section>
+        <h2>订单与自动发货链路</h2>
+        <div class="desc">从订单触发到卡券送达的完整链路，含四道防重与拦截关卡。</div>
+        <svg viewBox="0 0 960 916" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>订单与自动发货链路</title>
+          <defs>
+            <marker id="dlAr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+            <rect x="260" y="16" width="280" height="62" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+              stroke-width="0.9" />
+            <text x="400" y="39" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ext-t)">订单触发</text>
+            <text x="400" y="57" text-anchor="middle" font-size="11" fill="var(--ext-s)">买家付款消息 / 订单同步</text>
+            <text x="400" y="71" text-anchor="middle" font-size="11" fill="var(--ext-s)">后台手动发货 / 定时补发扫描</text>
+            <path d="M400 78 L400 96" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <rect x="260" y="98" width="280" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+              stroke-width="0.9" />
+            <text x="400" y="119" text-anchor="middle" font-size="13" font-weight="600" fill="var(--svc-t)">统一入口
+              _handle_auto_delivery</text>
+            <text x="400" y="137" text-anchor="middle" font-size="11" fill="var(--svc-s)">所有发货路径的公共起点</text>
+            <path d="M400 150 L400 172" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <polygon points="400,174 550,206 400,238 250,206" fill="var(--j)" stroke="var(--j-s)" stroke-width="0.9" />
+            <text x="400" y="202" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--j-t)">同订单在冷却期内？</text>
+            <text x="400" y="218" text-anchor="middle" font-size="11" fill="var(--j-s)">can_auto_delivery</text>
+            <path d="M556 206 L676 206" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+            <text x="612" y="198" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="680" y="186" width="172" height="40" rx="7" fill="var(--sk)" stroke="var(--sk-s)"
+              stroke-width="0.9" />
+            <text x="766" y="206" text-anchor="middle" font-size="12" fill="var(--sk-t)">跳过本次发货</text>
+            <path d="M400 238 L400 260" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <polygon points="400,262 550,294 400,326 250,294" fill="var(--j)" stroke="var(--j-s)" stroke-width="0.9" />
+            <text x="400" y="290" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--j-t)">Redis
+              发货锁被占用？</text>
+            <text x="400" y="306" text-anchor="middle" font-size="11" fill="var(--j-s)">跨服务防重复发货</text>
+            <path d="M556 294 L676 294" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+            <text x="612" y="286" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="680" y="274" width="172" height="40" rx="7" fill="var(--sk)" stroke="var(--sk-s)"
+              stroke-width="0.9" />
+            <text x="766" y="294" text-anchor="middle" font-size="12" fill="var(--sk-t)">跳过，已被其他进程处理</text>
+            <path d="M400 326 L400 348" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <rect x="260" y="350" width="280" height="46" rx="9" fill="var(--sk)" stroke="var(--sk-s)"
+              stroke-width="0.9" />
+            <text x="400" y="369" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--sk-t)">本地订单锁</text>
+            <text x="400" y="386" text-anchor="middle" font-size="11" fill="var(--sk-s)">Redis 异常时的降级保护</text>
+            <path d="M400 396 L400 418" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <polygon points="400,420 550,452 400,484 250,452" fill="var(--j)" stroke="var(--j-s)" stroke-width="0.9" />
+            <text x="400" y="448" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--j-t)">命中禁止发货规则？</text>
+            <text x="400" y="464" text-anchor="middle" font-size="11" fill="var(--j-s)">规则引擎 5 类拦截</text>
+            <path d="M556 452 L676 452" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+            <text x="612" y="444" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="680" y="424" width="172" height="56" rx="7" fill="var(--sk)" stroke="var(--sk-s)"
+              stroke-width="0.9" />
+            <text x="766" y="445" text-anchor="middle" font-size="12" font-weight="600" fill="var(--sk-t)">禁止发货</text>
+            <text x="766" y="464" text-anchor="middle" font-size="11" fill="var(--sk-s)">关闭订单 · 仅发卡券</text>
+            <path d="M400 484 L400 506" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <rect x="260" y="508" width="280" height="64" rx="9" fill="var(--co)" stroke="var(--co-s)"
+              stroke-width="0.9" />
+            <text x="400" y="530" text-anchor="middle" font-size="13" font-weight="600" fill="var(--co-t)">获取卡券内容</text>
+            <text x="400" y="549" text-anchor="middle" font-size="11" fill="var(--co-s)">own 自有 / dock_l1 / dock_l2
+              对接货源</text>
+            <text x="400" y="566" text-anchor="middle" font-size="11" fill="var(--co-s)">多规格商品先取订单规格</text>
+            <path d="M400 572 L400 594" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <polygon points="400,596 550,628 400,660 250,628" fill="var(--j)" stroke="var(--j-s)" stroke-width="0.9" />
+            <text x="400" y="624" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--j-t)">账号开启只发卡券？</text>
+            <text x="400" y="640" text-anchor="middle" font-size="11" fill="var(--j-s)">跳过平台确认动作</text>
+            <path d="M556 628 L676 628" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+            <text x="612" y="620" text-anchor="middle" font-size="11" fill="var(--muted)">是</text>
+            <rect x="680" y="608" width="172" height="40" rx="7" fill="var(--sk)" stroke="var(--sk-s)"
+              stroke-width="0.9" />
+            <text x="766" y="628" text-anchor="middle" font-size="12" fill="var(--sk-t)">跳过确认发货接口</text>
+            <path d="M400 660 L400 682" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <rect x="260" y="684" width="280" height="48" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+              stroke-width="0.9" />
+            <text x="400" y="704" text-anchor="middle" font-size="13" font-weight="600"
+              fill="var(--svc-t)">调用平台确认发货接口</text>
+            <text x="400" y="721" text-anchor="middle" font-size="11" fill="var(--svc-s)">auto_confirm 确认发货</text>
+            <path d="M400 732 L400 754" fill="none" stroke="#8a8f98" stroke-width="1.4" marker-end="url(#dlAr)" />
+
+            <rect x="260" y="756" width="280" height="48" rx="9" fill="var(--co)" stroke="var(--co-s)"
+              stroke-width="0.9" />
+            <text x="400" y="776" text-anchor="middle" font-size="13" font-weight="600" fill="var(--co-t)">发送卡券内容</text>
+            <text x="400" y="793" text-anchor="middle" font-size="11" fill="var(--co-s)">文本 / 图片 / 卡密</text>
+
+            <path d="M400 804 L400 828 L245 828 L245 844" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#dlAr)" />
+            <path d="M400 804 L400 828 L565 828 L565 844" fill="none" stroke="#8a8f98" stroke-width="1.4"
+              marker-end="url(#dlAr)" />
+            <text x="318" y="822" font-size="11" fill="var(--muted)">成功</text>
+            <text x="486" y="822" font-size="11" fill="var(--muted)">失败</text>
+
+            <rect x="110" y="848" width="270" height="52" rx="9" fill="var(--co)" stroke="var(--co-s)"
+              stroke-width="0.9" />
+            <text x="245" y="868" text-anchor="middle" font-size="12.5" font-weight="600"
+              fill="var(--co-t)">标记已发货</text>
+            <text x="245" y="887" text-anchor="middle" font-size="11" fill="var(--co-s)">写发货日志 + 设置冷却期</text>
+
+            <rect x="430" y="848" width="270" height="52" rx="9" fill="var(--out)" stroke="var(--out-s)"
+              stroke-width="0.9" />
+            <text x="565" y="868" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--out-t)">通知 +
+              进入补发队列</text>
+            <text x="565" y="887" text-anchor="middle" font-size="11" fill="var(--out-s)">等待 scheduler 重试</text>
+
+            <path d="M700 874 L884 874 L884 124 L546 124" fill="none" stroke="#b9bec6" stroke-width="1.3"
+              stroke-dasharray="5 4" marker-end="url(#dlAr)" />
+            <text x="886" y="500" font-size="11" fill="var(--muted)" transform="rotate(90 886 500)">scheduler
+              定时补发，回到统一入口</text>
+          </g>
+        </svg>
+        <div class="note"><b>四道防重关卡：</b>冷却期检查 → Redis 分布式锁 → 本地锁（降级）→ 禁止发货规则引擎。
+          任何一道命中都会中止发货，目的都是避免同一订单把卡券重复发给买家。</div>
+        <div class="note" style="background:var(--out);border-color:#f0b8b8;color:var(--out-t)">
+          <b>5 类禁止发货规则</b>（命中则拒绝发货，并可能关闭订单仅发卡券）：
+          买家信用为零 · 买家已有订单 · 全局已下单 · 买家未确认收货 · 个人黑名单。
+          规则在 <code>delivery_rules/rule_registry.py</code> 中注册，新增规则只需在那里加一行。
+        </div>
+        <div class="note"><b>卡券三种来源：</b><code>own</code> 自有卡券 ·
+          <code>dock_l1</code> 对接货源一级 · <code>dock_l2</code> 对接货源二级。
+          多规格商品会先拉取订单的规格信息再匹配对应卡券。
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== Tab 4 GitDiagram ===== -->
+    <div class="pane" id="pane-gitdiagram" style="display:none">
+      <section>
+        <h2><a href="https://gitdiagram.com/xiejinhe/xianyu-auto-reply">GitDiagram 生成的架构图</a></h2>
+        <div class="desc">抓取自 gitdiagram.com/xiejinhe/xianyu-auto-reply · 2026-10-11 生成 · 23 个组件 / 27 条连接 · 点击节点可跳转到对应
+          GitHub 文件</div>
+
+        <div id="gd-render"
+          style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;overflow-x:auto">
+          <div class="hint">正在加载 Mermaid 渲染引擎…<br>（首次需要联网从 CDN 获取）</div>
+        </div>
+
+        <div class="note" style="background:var(--ext);border-color:#b5d4f4;color:var(--ext-t)">
+          <b>GitDiagram 自己的概述：</b>闲鱼自动回复系统由主 Web 前端、业务 API、实时消息服务和定时任务服务组成，并另有独立返佣子系统。
+          典型流程是用户在界面管理账号或业务配置，主 API 处理请求并使用共享数据；实时聊天和自动回复由 WebSocket 服务处理，
+          订单、发货及维护任务由调度服务执行。
+        </div>
+
+        <div class="note">
+          <b>与「代码库架构」标签的差异</b>（两者视角不同，可对照看）：
+          <ul class="list">
+            <li>GitDiagram 依据 <b>README + 文件树 + 部分源码采样</b>生成，它自己在输出的 Markdown 里声明「未采样的业务实现仅按 README
+              和文件树归纳」。本页另一张图是<b>全量扫描本地源码</b>得出的。</li>
+            <li>它把「闲鱼实时连接」归到 <code>backend-web/app/services/chat_new/im_client.py</code>。实际与闲鱼维持长连接的是 <b>websocket
+                服务（8090）</b>，backend-web 的 im_client 是另一条链路，按 README 归纳时容易混在一起。</li>
+            <li>它没有体现 <b>common 是依赖枢纽</b>——实际被引用 1182 次（backend-web 603 / websocket 290 / scheduler 181 / promotion
+              108）。</li>
+            <li>它不含端口、文件数、引用强度这类量化信息，但胜在<b>带源码文件级跳转</b>，想直接看某个文件点时更方便。</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+
+  </div>
+
+  <footer>依据本地仓库实际扫描生成 · 可打印为 PDF（打印时三个标签会全部展开）</footer>
+
+  <script>
+    document.querySelectorAll(".tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        document.querySelectorAll(".pane").forEach(p => p.style.display = "none");
+        document.getElementById("pane-" + btn.dataset.tab).style.display = "block";
+      });
+    });
+  </script>
+  <script>
+    const NODES = {
+      xianyu: {
+        t: "闲鱼平台 Goofish", p: "外部依赖", tech: "WebSocket LWP + mtop HTTP API",
+        role: "系统唯一对接的外部业务平台。所有消息收发、商品发布、订单同步都通过它完成。",
+        pts: ["WebSocket 走 LWP 协议收发聊天消息", "HTTP 走 mtop 签名接口（评价、发货、商品）", "需要账号 Cookie 与 _m_h5_tk 令牌"],
+        up: [], down: ["websocket"]
+      },
+      playwright: {
+        t: "Playwright 浏览器", p: "外部依赖", tech: "Playwright + patchright（反指纹）",
+        role: "负责一切需要真实浏览器完成的操作，主要是登录与过验证。",
+        pts: ["扫码登录 / 账号密码登录", "滑块验证码（28 个文件在 common/services/captcha）", "Cookie 接口续期失败时的浏览器兜底"],
+        up: [], down: ["backend-web", "websocket"]
+      },
+      frontend: {
+        t: "前端 Frontend", p: "frontend/ · 端口 9000", tech: "React 18 + TypeScript + Vite + TailwindCSS + Zustand",
+        role: "主系统管理后台，所有操作界面。",
+        size: "243 个 TS/TSX 文件，40 个页面目录",
+        pts: ["pages/ 40 个业务页面（账号/商品/订单/聊天/日志）", "api/ 类型安全接口层", "store/ Zustand 状态管理", "components/ 复用组件"],
+        up: [], down: ["backend-web"]
+      },
+      mobile: {
+        t: "xianyu-mobile", p: "xianyu-mobile/ · 移动端", tech: "Expo SDK 57 + React Native 0.86 + React 19",
+        role: "Android 移动端客户端，与后端完全解耦，用户自托管服务器即可使用。",
+        size: "122 个 TS/TSX 文件",
+        pts: ["4 大 Tab：消息 / 订单 / 商品 / 我的", "13 个自研 UI 组件", "多类型卡券、AI 上架、左滑操作", "OpenAPI 契约驱动的类型安全调用"],
+        up: [], down: ["backend-web"]
+      },
+      launcher: {
+        t: "Launcher 启动器", p: "launcher/ · Windows", tech: "Python GUI + Nuitka 打包 EXE",
+        role: "桌面启动器，帮非技术用户一键启停整套服务。",
+        size: "24 个 Python 文件",
+        pts: ["gui.py 图形界面", "service_manager.py 服务进程管理", "db_checker.py 数据库连接检查"],
+        up: [], down: ["backend-web"]
+      },
+      "backend-web": {
+        t: "Backend-Web", p: "backend-web/ · 端口 8089", tech: "FastAPI + SQLAlchemy 2.0",
+        role: "主 API 网关，承载绝大部分业务接口，是前端唯一直接对话的后端。",
+        size: "183 个 Python 文件（api 79 · services 96）",
+        pts: ["商品管理、订单、卡券、账号、采集分销", "对外公开 API（分销秘钥校验）", "调用 Playwright 完成发布等浏览器操作"],
+        up: ["frontend", "mobile", "launcher", "playwright"], down: ["common"]
+      },
+      websocket: {
+        t: "WebSocket 服务", p: "websocket/ · 端口 8090", tech: "FastAPI + websockets + aiohttp",
+        role: "唯一与闲鱼保持长连接的服务，消息收发与自动化决策的心脏。",
+        size: "56 个 Python 文件（services 39）",
+        pts: ["维持闲鱼 LWP 长连接与心跳", "自动回复（关键词 / 默认 / AI / 站外联系）", "自动发货、订单联动", "Cookie 与 Token 刷新、滑块验证"],
+        up: ["xianyu", "playwright"], down: ["common"]
+      },
+      scheduler: {
+        t: "Scheduler 定时任务", p: "scheduler/ · 端口 8091", tech: "FastAPI + APScheduler",
+        role: "所有周期性任务的执行器，驱动自动发货与返佣铺货。",
+        size: "40 个 Python 文件（services 30）",
+        pts: ["Cookie / Token 刷新、订单拉取、补发货", "自动评价、求小红花、自动重新上架", "商品采集、日切、数据库备份"],
+        up: [], down: ["common"]
+      },
+      promotion: {
+        t: "Promotion 返佣子系统", p: "promotion/ · 端口 8092 / 9001", tech: "独立 FastAPI + 独立前端",
+        role: "返佣业务：选品入素材库 → 定时发布 → 定时删除，独立于主系统。",
+        size: "40 个 Python 文件，表统一 fy_ 前缀",
+        pts: ["选品规则抓取候选商品", "素材库（标题/图片/淘口令/短链）", "发布规则（默认 5 条/天）与删除规则", "已发布商品 ID 回写、短链修复等补偿任务"],
+        up: [], down: ["common"]
+      },
+      common: {
+        t: "common 共享内核", p: "common/", tech: "SQLAlchemy 2.0 + Loguru + Pydantic",
+        role: "全部服务共享的模型层与服务层，是整个项目依赖的枢纽。",
+        size: "228 个 Python 文件，72 个数据模型",
+        pts: ["models/ 72 张表（xy_ 主系统 + fy_ 返佣）", "db/ 数据库会话与连接", "services/ 通用服务（含 captcha 28 个文件）", "utils/ 工具（签名、Cookie、通知）"],
+        up: ["backend-web", "websocket", "scheduler", "promotion"], down: ["mysql", "redis"]
+      },
+      mysql: {
+        t: "MySQL 8", p: "数据存储", tech: "关系型数据库",
+        role: "主数据存储，所有业务表都在这里。",
+        pts: ["72 张表，启动时自动建表与补字段", "主系统 xy_ 前缀，返佣 fy_ 前缀", "不依赖外键，关系由代码维护"],
+        up: ["common"], down: []
+      },
+      redis: {
+        t: "Redis 7", p: "数据存储", tech: "内存数据库",
+        role: "跨服务的并发协调者，主要是分布式锁。",
+        pts: ["发货锁：防同一订单重复发货", "Token 请求锁：防并发刷新登录态", "头像/用户信息缓存（24 小时）", "Redis 挂了会降级为本机内存锁"],
+        up: ["common"], down: []
+      }
+    };
+
+    const svg = document.querySelector("#pane-codebase svg");
+    const panel = document.getElementById("detail");
+
+    function render(id) {
+      const n = NODES[id]; if (!n) return;
+      const tag = (x, c) => `<span class="tagline" style="background:${c.bg};color:${c.fg}">${x}</span>`;
+      const cUp = { bg: "#E6F1FB", fg: "#0C447C" }, cDown = { bg: "#E1F5EE", fg: "#085041" };
+      let h = `<h3>${n.t}</h3><div class="path">${n.p}</div>`;
+      h += `<div class="kv"><span>技术栈</span><span>${n.tech}</span></div>`;
+      if (n.size) h += `<div class="kv"><span>规模</span><span>${n.size}</span></div>`;
+      h += `<div style="font-size:12.5px;margin:12px 0 6px;color:var(--muted)">职责</div>`;
+      h += `<div style="font-size:12.5px">${n.role}</div>`;
+      h += `<div style="font-size:12.5px;margin:12px 0 4px;color:var(--muted)">关键构成</div><ul class="list">`;
+      n.pts.forEach(p => h += `<li>${p}</li>`); h += `</ul>`;
+      if (n.up.length) {
+        h += `<div style="font-size:12.5px;margin:12px 0 4px;color:var(--muted)">被谁依赖</div><div>`;
+        n.up.forEach(u => h += tag(NODES[u] ? NODES[u].t : u, cUp)); h += `</div>`;
+      }
+      if (n.down.length) {
+        h += `<div style="font-size:12.5px;margin:10px 0 4px;color:var(--muted)">依赖什么</div><div>`;
+        n.down.forEach(d => h += tag(NODES[d] ? NODES[d].t : d, cDown)); h += `</div>`;
+      }
+      panel.innerHTML = h;
+    }
+
+    function highlight(id) {
+      svg.querySelectorAll(".edge").forEach(e => {
+        e.classList.toggle("hot", e.dataset.from === id || e.dataset.to === id);
+      });
+      svg.querySelectorAll(".node").forEach(n => n.classList.toggle("sel", n.dataset.id === id));
+    }
+
+    svg.querySelectorAll(".node").forEach(g => {
+      g.addEventListener("click", () => { render(g.dataset.id); highlight(g.dataset.id); });
+      g.addEventListener("mouseenter", () => highlight(g.dataset.id));
+      g.addEventListener("mouseleave", () => {
+        const sel = svg.querySelector(".node.sel");
+        if (sel) highlight(sel.dataset.id); else svg.querySelectorAll(".edge").forEach(e => e.classList.remove("hot"));
+      });
+    });
+  </script>
+  <!-- GitDiagram 原始 Mermaid 源码（存于 text/plain，避免 <br/> 被 HTML 解析） -->
+  <script type="text/plain" id="gd-src">
+flowchart TD
+
+subgraph group_ui["主系统界面"]
+  node_main_ui["管理界面<br/>[App.tsx]"]
+  node_chat_ui["在线聊天界面<br/>[ChatNew.tsx]"]
+  node_publish_ui["商品发布界面"]
+end
+
+subgraph group_api["主业务 API"]
+  node_api_routes["业务接口"]
+  node_account_mgmt["账号管理"]
+  node_listing["商品发布与采集"]
+  node_orders["订单与发货<br/>[order_service.py]"]
+  node_notifications["通知与风控"]
+end
+
+subgraph group_runtime["实时与调度"]
+  node_chat_service["闲鱼实时连接<br/>[im_client.py]"]
+  node_ai_reply["AI 自动回复<br/>[ai_reply_engine.py]"]
+  node_delivery_rules["发货规则检查<br/>[rule_engine.py]"]
+  node_scheduler["任务调度器"]
+  node_scheduled_tasks["定时业务任务"]
+end
+
+subgraph group_shared["共享数据与能力"]
+  node_mysql[("MySQL 数据")]
+  node_redis[("Redis")]
+  node_models["共享数据模型"]
+  node_common_services["共享业务能力"]
+end
+
+subgraph group_promotion["返佣子系统"]
+  node_promotion_ui["返佣管理界面<br/>[App.tsx]"]
+  node_promotion_api["返佣业务 API<br/>[main.py]"]
+  node_promotion_rules["选品与发布规则"]
+  node_promotion_data[("返佣素材与规则数据")]
+end
+
+node_operator(("运营用户"))
+node_xianyu(("闲鱼平台"))
+
+node_operator -->|"操作"| node_main_ui
+node_main_ui -->|"请求接口"| node_api_routes
+node_chat_ui -->|"请求聊天"| node_api_routes
+node_publish_ui -->|"提交发布"| node_api_routes
+node_api_routes -->|"管理账号"| node_account_mgmt
+node_api_routes -->|"处理发布采集"| node_listing
+node_api_routes -->|"处理订单"| node_orders
+node_api_routes -->|"管理通知风控"| node_notifications
+node_api_routes -.->|"调用实时服务"| node_chat_service
+node_chat_service -->|"收发消息"| node_xianyu
+node_ai_reply -.->|"生成回复"| node_xianyu
+node_scheduler -->|"调度任务"| node_scheduled_tasks
+node_scheduled_tasks -->|"执行自动发货"| node_orders
+node_scheduled_tasks -->|"刷新 Cookie"| node_account_mgmt
+node_scheduled_tasks -->|"执行订单与评价操作"| node_xianyu
+node_delivery_rules -->|"读取规则"| node_mysql
+node_api_routes -->|"读写业务数据"| node_mysql
+node_scheduler -->|"读取任务配置"| node_mysql
+node_api_routes -->|"使用缓存"| node_redis
+node_mysql -->|"持久化模型"| node_models
+node_common_services -.->|"提供平台能力"| node_xianyu
+node_operator -->|"管理返佣商品"| node_promotion_ui
+node_promotion_ui -->|"请求接口"| node_promotion_api
+node_promotion_api -->|"管理与执行规则"| node_promotion_rules
+node_promotion_rules -.->|"维护素材规则"| node_promotion_data
+node_promotion_rules -->|"抓取并发布"| node_xianyu
+node_promotion_rules -.->|"复用发布能力"| node_common_services
+
+click node_main_ui "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/frontend/src/App.tsx"
+click node_chat_ui "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/frontend/src/pages/chat-new/ChatNew.tsx"
+click node_publish_ui "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/frontend/src/pages"
+click node_api_routes "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/backend-web/app/api/routes"
+click node_account_mgmt "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/backend-web/app/api/routes"
+click node_listing "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/backend-web/app/services/product_publish_service.py"
+click node_orders "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/backend-web/app/services/order_service.py"
+click node_notifications "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/backend-web/app/services/notification_service.py"
+click node_chat_service "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/backend-web/app/services/chat_new/im_client.py"
+click node_ai_reply "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/websocket/app/services/xianyu/ai_reply_engine.py"
+click node_delivery_rules "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/websocket/app/services/xianyu/delivery_rules/rule_engine.py"
+click node_scheduler "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/scheduler/app/services/scheduler_service.py"
+click node_scheduled_tasks "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/scheduler/app/services/scheduler"
+click node_models "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/common/models"
+click node_common_services "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/common/services"
+click node_promotion_ui "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/promotion/frontend/src/App.tsx"
+click node_promotion_api "https://github.com/xiejinhe/xianyu-auto-reply/blob/main/promotion/backend/main.py"
+click node_promotion_rules "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/promotion/backend/app/services"
+click node_promotion_data "https://github.com/xiejinhe/xianyu-auto-reply/tree/main/common/models"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_main_ui,node_chat_ui,node_publish_ui toneBlue
+class node_api_routes,node_account_mgmt,node_listing,node_orders,node_notifications toneAmber
+class node_chat_service,node_ai_reply,node_delivery_rules,node_scheduler,node_scheduled_tasks toneMint
+class node_mysql,node_redis,node_models,node_common_services toneRose
+class node_promotion_ui,node_promotion_api,node_promotion_rules,node_promotion_data,node_operator,node_xianyu toneIndigo
+</script>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+    onerror="window.__gdMmdFailed=true"></script>
+  <script>
+    (function () {
+      var box = document.getElementById("gd-render");
+      var src = (document.getElementById("gd-src") || {}).textContent || "";
+      function fallback(msg) {
+        box.innerHTML = '<div style="font-size:13px;color:var(--muted);margin-bottom:10px">' + msg + '</div>'
+          + '<pre style="background:#f7f8fa;border:1px solid var(--border);border-radius:8px;'
+          + 'padding:14px;overflow-x:auto;font-size:12px;line-height:1.5;margin:0">'
+          + src.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+      }
+      if (window.__gdMmdFailed || typeof mermaid === "undefined") {
+        fallback("Mermaid 引擎未能加载（离线或 CDN 不可达）。下面是原始 Mermaid 源码，可复制到任意 Mermaid 编辑器查看：");
+        return;
+      }
+      try {
+        mermaid.initialize({
+          startOnLoad: false, securityLevel: "loose", theme: "base",
+          flowchart: { useMaxWidth: false, htmlLabels: true, curve: "basis" }
+        });
+        mermaid.render("gdSvg", src).then(function (res) {
+          box.innerHTML = res.svg;
+          var s = box.querySelector("svg");
+          if (s) { s.style.maxWidth = "100%"; s.style.height = "auto"; }
+        }).catch(function (e) {
+          fallback("渲染出错：" + (e && e.message ? e.message : e) + "。下面是原始 Mermaid 源码：");
+        });
+      } catch (e) {
+        fallback("初始化失败：" + e.message + "。下面是原始 Mermaid 源码：");
+      }
+    })();
+  </script>
+</body>
+
+</html>

@@ -23,9 +23,11 @@ def _get_data_dir() -> Path:
 
 
 # 需要自动生成的配置文件及其默认内容
+# github_repo：检查更新走 GitHub Releases（owner/repo）
+# update_url：备用更新服务器，配置了 github_repo 时该项不生效
 _CONFIG_TEMPLATES = {
     "update_config.json": {
-        "update_url": "https://xy-update.zhinianboke.com"
+        "github_repo": "xiejinhe/xianyu-auto-reply"
     },
 }
 

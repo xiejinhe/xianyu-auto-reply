@@ -347,6 +347,60 @@ export const updateProxySettings = async (settings?: Partial<SystemSettings> | n
   return { success: true, message: '代理设置已保存' }
 }
 
+// ========== 语音转文字（ASR）设置（独立保存） ==========
+
+export interface AsrSettingsPayload {
+  'asr.api_key': string
+  'asr.base_url': string
+  'asr.model': string
+}
+
+export const DEFAULT_ASR_SETTINGS: AsrSettingsPayload = {
+  'asr.api_key': '',
+  'asr.base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  'asr.model': 'qwen3-asr-flash',
+}
+
+export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null): AsrSettingsPayload => {
+  const apiKey = settings?.['asr.api_key']
+  const baseUrl = settings?.['asr.base_url']
+  const model = settings?.['asr.model']
+  return {
+    'asr.api_key': typeof apiKey === 'string' ? apiKey : '',
+    'asr.base_url':
+      typeof baseUrl === 'string' && baseUrl.trim()
+        ? baseUrl.trim()
+        : DEFAULT_ASR_SETTINGS['asr.base_url'],
+    'asr.model':
+      typeof model === 'string' && model.trim()
+        ? model.trim()
+        : DEFAULT_ASR_SETTINGS['asr.model'],
+  }
+}
+
+// 独立保存语音转文字设置：逐个 PUT，并检查每次返回的 success，便于把后端错误回传前端
+export const updateAsrSettings = async (settings?: Partial<SystemSettings> | null): Promise<ApiResponse> => {
+  const normalized = normalizeAsrSettings(settings)
+  const entries: Array<[keyof AsrSettingsPayload, string]> = [
+    ['asr.api_key', normalized['asr.api_key']],
+    ['asr.base_url', normalized['asr.base_url']],
+    ['asr.model', normalized['asr.model']],
+  ]
+
+  for (const [key, value] of entries) {
+    try {
+      const result = await put<ApiResponse>(`${SYSTEM_SETTINGS_PREFIX}/${key}`, { value })
+      if (!result?.success) {
+        return result || { success: false, message: '语音转文字设置保存失败' }
+      }
+    } catch (error) {
+      return { success: false, message: (error as Error)?.message || '语音转文字设置保存失败' }
+    }
+  }
+
+  return { success: true, message: '语音转文字设置已保存' }
+}
+
 // ========== 分销设置（独立保存） ==========
 
 // 独立保存分销设置：只提交 distribution.* 相关键，不触碰其他设置

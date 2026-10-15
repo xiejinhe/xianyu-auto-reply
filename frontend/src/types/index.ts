@@ -285,6 +285,10 @@ export interface SystemSettings {
   'theme.effect'?: ThemeEffect
   'theme.color_preset'?: ThemeColorPreset
   'theme.font_family'?: ThemeFontFamily
+  // 语音转文字（ASR）配置
+  'asr.api_key'?: string
+  'asr.base_url'?: string
+  'asr.model'?: string
   // SMTP邮件配置
   smtp_server?: string
   smtp_port?: number
