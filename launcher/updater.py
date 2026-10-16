@@ -28,8 +28,11 @@ from pathlib import Path
 
 from launcher.version import CURRENT_VERSION
 
-# 更新服务器地址（从 data/update_config.json 读取）
-_DEFAULT_UPDATE_URL = "https://xy-update.zhinianboke.com"
+# 更新服务器地址（从 data/update_config.json 的 update_url 读取）
+# 二开版本默认留空：原作者(zhinianboke)的更新服务器会下发完整程序包并覆盖本地文件，
+# 相当于一条远程代码执行通道，因此不再默认连接任何第三方更新源。
+# 需要使用在线更新时，在 data/update_config.json 里显式配置 update_url 即可。
+_DEFAULT_UPDATE_URL = ""
 
 
 def _get_update_url() -> str:
@@ -98,6 +101,9 @@ def check_update() -> dict:
     }
 
     update_url = _get_update_url()
+    if not update_url:
+        result["error"] = "未配置更新服务器，已跳过在线更新"
+        return result
     version_url = f"{update_url}/version.json"
 
     try:
@@ -144,6 +150,9 @@ def download_update(filename: str,
     result = {"success": False, "file_path": "", "error": ""}
 
     update_url = _get_update_url()
+    if not update_url:
+        result["error"] = "未配置更新服务器，已跳过下载"
+        return result
     download_url = f"{update_url}/{filename}"
 
     # 临时目录用于存放下载文件

@@ -245,8 +245,8 @@ class DatabaseInitializer:
         ),
         (
             "auth.footer_ad_html",
-            "© 2026 划算云服务器 ·<a href=\"http://www.hsykj.com\" target=\"_BLANK\">www.hsykj.com</a>",
-            "登录页和注册页底部广告 HTML",
+            "",
+            "登录页和注册页底部广告 HTML（原作者默认值为带返佣码的外链，二开版本留空）",
         ),
         (
             "theme.effect",

@@ -22,7 +22,7 @@
 
 | 微信群 | QQ群 | 微信公众号 | Telegram | 赞赏支持 |
 |:---:|:---:|:---:|:---:|:---:|
-| ![微信群](https://xy.zhinianboke.com/static/qrcode/wechat-group.png) | ![QQ群](https://xy.zhinianboke.com/static/qrcode/qq-group.jpg) | ![微信公众号](https://xy.zhinianboke.com/static/qrcode/wechat-official-group.jpg) | ![Telegram](https://xy.zhinianboke.com/static/qrcode/telegram-group.png) | ![赞赏支持](https://xy.zhinianboke.com/static/qrcode/reward-group.png) |
+<!-- 原作者的社群二维码与赞赏码已移除（二开版本不导流到上游） -->
 | 扫码加好友拉微信交流群 | 扫码加入QQ交流群 | 关注公众号发送"最新源码"获取最新代码 | 扫码加入Telegram群 | 如果觉得好用，请作者喝杯咖啡 |
 
 如群二维码过期，请关注公众号获取最新群链接。
@@ -163,7 +163,7 @@ xianyu-auto-reply/
 服务器已安装 Docker 与 Docker Compose 后，直接执行一键部署脚本即可：
 
 ```bash
-curl -fsSL https://xy-update.zhinianboke.com/deploy.sh | sed 's/\r$//' | bash
+curl -fsSL https://raw.githubusercontent.com/xiejinhe/xianyu-auto-reply/main/deploy.sh | sed 's/\r$//' | bash
 ```
 
 该脚本会自动完成部署所需的配置生成、镜像拉取、旧容器清理与服务启动。
@@ -171,13 +171,13 @@ curl -fsSL https://xy-update.zhinianboke.com/deploy.sh | sed 's/\r$//' | bash
 更新版本，直接执行一键更新脚本即可：
 
 ```bash
-curl -fsSL https://xy-update.zhinianboke.com/update.sh | sed 's/\r$//' | bash
+curl -fsSL https://raw.githubusercontent.com/xiejinhe/xianyu-auto-reply/main/update.sh | sed 's/\r$//' | bash
 ```
 
 ### 方式二：克隆仓库部署
 
 ```bash
-git clone https://github.com/zhinianboke/xianyu-auto-reply.git
+git clone https://github.com/xiejinhe/xianyu-auto-reply.git
 cd xianyu-auto-reply
 bash deploy.sh
 ```
@@ -204,14 +204,14 @@ bash update.sh
 
 ```bash
 # 1) 首次运行：自动生成 .env.remote 后退出，提示填写远程连接信息
-curl -fsSL https://xy-update.zhinianboke.com/deploy_remote.sh | sed 's/\r$//' | bash
+curl -fsSL https://raw.githubusercontent.com/xiejinhe/xianyu-auto-reply/main/deploy_remote.sh | sed 's/\r$//' | bash
 
 # 2) 编辑 .env.remote，填写真实的远程地址（勿填 localhost）
 #    MYSQL_HOST / REDIS_HOST 等
 vim .env.remote
 
 # 3) 再次运行：校验配置 → 自动生成 docker-compose.remote.yml → 拉取镜像 → 启动
-curl -fsSL https://xy-update.zhinianboke.com/deploy_remote.sh | sed 's/\r$//' | bash
+curl -fsSL https://raw.githubusercontent.com/xiejinhe/xianyu-auto-reply/main/deploy_remote.sh | sed 's/\r$//' | bash
 ```
 
 > 已克隆仓库的也可改用本地脚本：`bash deploy_remote.sh`（首次生成配置后退出，填好 `.env.remote` 再次执行）。
@@ -473,7 +473,7 @@ sed -i 's/\r$//' deploy.sh
 bash deploy.sh
 
 # 方法二：通过管道执行（推荐远程脚本使用）
-curl -fsSL https://xy-update.zhinianboke.com/deploy.sh | sed 's/\r$//' | bash
+curl -fsSL https://raw.githubusercontent.com/xiejinhe/xianyu-auto-reply/main/deploy.sh | sed 's/\r$//' | bash
 ```
 
 ## 许可证
@@ -1176,7 +1176,7 @@ GET /api/v1/external/message-logs?secret_key=your-secret-key&item_id=商品ID&me
 
 ## Star History
 
-[![Star History Chart](https://star-history.dera.page/svg?repos=zhinianboke/xianyu-auto-reply&type=Date)](https://star-history.dera.page/#zhinianboke/xianyu-auto-reply&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=xiejinhe/xianyu-auto-reply&type=Date)](https://star-history.dera.page/#xiejinhe/xianyu-auto-reply&Date)
 
 ## 移动端 App (xianyu-mobile)
 

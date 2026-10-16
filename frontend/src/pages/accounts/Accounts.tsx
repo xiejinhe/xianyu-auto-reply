@@ -3714,17 +3714,6 @@ export function Accounts() {
                           {aiProviderType === 'gemini' && '无需补全 /v1beta/models'}
                           {aiProviderType === 'dashscope_app' && '请填入完整的 .../apps/{app_id}/completion 地址'}
                         </p>
-                        <p className="text-xs text-red-500 dark:text-red-400 mt-1">
-                          推荐AI：{' '}
-                          <a
-                            href="https://api.momentsofus.cn/sign-up?aff=dAM9"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline hover:text-red-600 dark:hover:text-red-300"
-                          >
-                            https://api.momentsofus.cn/sign-up?aff=dAM9
-                          </a>
-                        </p>
                       </div>
                       <div className="input-group">
                         <label className="input-label">API Key</label>

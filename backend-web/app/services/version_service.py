@@ -22,7 +22,10 @@ from loguru import logger
 
 
 # 默认更新服务器地址（与 launcher/updater.py 保持一致）
-_DEFAULT_UPDATE_URL = "https://xy-update.zhinianboke.com"
+# 二开版本默认留空：不再默认连接原作者(zhinianboke)的更新服务器。
+# 配置了 data/update_config.json 的 update_url 时才走 version.json 方式，
+# 否则优先用 github_repo 走 GitHub Releases。
+_DEFAULT_UPDATE_URL = ""
 # GitHub Releases API 基础地址（配置了 github_repo 时作为更新来源）
 _GITHUB_API_BASE = "https://api.github.com"
 # 默认 GitHub 仓库：未配置 github_repo 时使用（Docker 镜像不打包 data/ 目录，
@@ -220,6 +223,9 @@ async def _check_from_version_json(
     update_url: str, current_version: str, result: dict[str, Any]
 ) -> dict[str, Any]:
     """通过远程 version.json 检查更新"""
+    if not update_url:
+        result["error"] = "未配置更新服务器，已跳过在线更新"
+        return result
     version_url = f"{update_url}/version.json"
 
     try:
