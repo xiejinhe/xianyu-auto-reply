@@ -63,7 +63,7 @@ EXCLUDE_FILE_EXACT = {
     "docker-compose.dev.yml",
     "docker-compose.deploy.yml",                     # 会拉到第三方镜像，必须排除
     "deploy.sh.bak",
-    "推荐云服务器CDN-www.hsykj.com.url",              # 广告链接
+    # 二开版本已移除原作者的云服务器推广/广告文件
     "codebase-diagram.html",
     "deploy_remote.sh",
 }
@@ -97,32 +97,25 @@ DIST_FILES = {
 # 目的：去掉分发包里对第三方（原作者）服务器和私有镜像仓库的依赖。
 CONTENT_PATCHES: dict[str, list[tuple[str, str]]] = {
     "docker-compose.yml": [
-        # MySQL / Redis 改用 Docker 官方镜像，不再依赖第三方私有仓库
-        (
-            "${MYSQL_IMAGE:-registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-mysql:8.0}",
-            "${MYSQL_IMAGE:-mysql:8.0}",
-        ),
-        (
-            "${REDIS_IMAGE:-registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-redis:7-alpine}",
-            "${REDIS_IMAGE:-redis:7-alpine}",
-        ),
+        # 注：MySQL/Redis 镜像与 IMAGE_REGISTRY 已在源码里直接改为官方镜像 / 必填，
+        # 这里不再重复打补丁。
         # 去掉第三方服务地址兜底，避免本机部署时向外请求
         (
-            "${CARD_DOCK_BASE_URL:-http://backend.zhinianboke.com}",
+            "${CARD_DOCK_BASE_URL:-}",
             "${CARD_DOCK_BASE_URL:-}",
         ),
         (
-            "${REMOTE_OFFICIAL_BASE_URL:-https://xy.zhinianboke.com}",
+            "${REMOTE_OFFICIAL_BASE_URL:-}",
             "${REMOTE_OFFICIAL_BASE_URL:-}",
         ),
     ],
     "backend-web/app/core/config.py": [
         (
-            'default="http://backend.zhinianboke.com",',
+            'default="",',
             'default="",',
         ),
         (
-            'default="https://xy.zhinianboke.com",',
+            'default="",',
             'default="",',
         ),
     ],
@@ -297,7 +290,7 @@ def main() -> int:
         unpatched = [k for k in CONTENT_PATCHES if k not in patched]
 
         # 品牌残留扫描：只查会真正被执行、或会向外发起请求的文件
-        brand_keys = ("zhinianboke", "zhinian-software", "xy-update")
+        brand_keys = ("xiejinhe", "zhinian-software", "xy-update")
         brand_hits: list[str] = []
         for rel_posix in ("docker-compose.yml", "backend-web/app/core/config.py", ".env"):
             arc = f"{ZIP_TOP}/{rel_posix}"

@@ -3,14 +3,14 @@
     
     environment {
         // GitHub 仓库配置（通过国内 GitHub 加速镜像拉取，公开仓库无需凭据）
-        GITHUB_REPO = 'https://github.com/zhinianboke/xianyu-auto-reply.git'
+        GITHUB_REPO = 'https://github.com/xiejinhe/xianyu-auto-reply.git'
         // 注：已改为多加速镜像拉取（ghfast.top 等），不再使用 github-token 凭据；
         //     若仓库为私有需走凭据，请改回 git 步骤并配置 GITHUB_CREDENTIALS
         GITHUB_CREDENTIALS = 'github-token'
         
         // 阿里云镜像仓库配置
         ALIYUN_REGISTRY = 'registry.cn-shanghai.aliyuncs.com'
-        ALIYUN_NAMESPACE = 'zhinian-software'
+        ALIYUN_NAMESPACE = ''  // 二开版本：填你自己的阿里云容器镜像服务命名空间
         ALIYUN_CREDENTIALS = 'aliyun-docker-credentials'  // 需要在 Jenkins 中配置
         
         // 镜像名称 - 4个服务

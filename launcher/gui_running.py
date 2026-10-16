@@ -262,17 +262,7 @@ def _render_status_content(app):
         tk.Label(url_frame, text=f"{name}：http://{addr}", font=("Consolas", 9),
                  fg=COLORS["text_secondary"], bg=COLORS["card_bg"]).pack(anchor=tk.W, pady=1)
 
-    # 在线版本提示
-    online_frame = tk.Frame(inner, bg="#EFF6FF", padx=12, pady=8)
-    online_frame.pack(fill=tk.X, padx=20, pady=(8, 0))
-    tk.Label(online_frame, text="🌐 在线版本：", font=("微软雅黑", 10),
-             fg=COLORS["text"], bg="#EFF6FF").pack(side=tk.LEFT)
-    online_url = "https://xy.zhinianboke.com"
-    online_lbl = tk.Label(online_frame, text=online_url, font=("Consolas", 10, "underline"),
-                          fg=COLORS["primary"], bg="#EFF6FF", cursor="hand2")
-    online_lbl.pack(side=tk.LEFT)
-    online_lbl.bind("<Button-1>", lambda e: __import__("webbrowser").open(online_url))
-
+    # 二开版本已移除原作者托管的「在线版本」入口，避免跳转到其站点
     # 分隔线
     tk.Frame(inner, bg=COLORS["border"], height=1).pack(fill=tk.X, padx=20, pady=8)
 

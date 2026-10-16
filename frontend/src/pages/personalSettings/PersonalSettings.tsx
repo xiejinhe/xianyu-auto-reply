@@ -45,7 +45,7 @@ const PAYMENT_TYPE_KEY = 'payment_type'
 const CARD_SECRET_KEY = 'distribution.card_secret_key'
 const LOCATION_CHAT_REMOTE_URL_KEY = 'location_chat.remote_url'
 const LOCATION_CHAT_REMOTE_SECRET_KEY = 'location_chat.remote_secret_key'
-const DEFAULT_LOCATION_CHAT_REMOTE_URL = 'https://api.xianyushop.shop/api/external/invoke'
+const DEFAULT_LOCATION_CHAT_REMOTE_URL = 'https://your-own-server.example/api/external/invoke'
 
 export function PersonalSettings() {
   const { addToast } = useUIStore()
@@ -986,8 +986,8 @@ export function PersonalSettings() {
               <div className="input-group">
                 <label className="input-label">秘钥</label>
                 <input type="password" value={locationRemoteSecretKey} onChange={(e) => setLocationRemoteSecretKey(e.target.value)} placeholder="请输入远程接口秘钥" className="input-ios" autoComplete="off" />
-                <p className="text-xs text-red-500 mt-2">
-                  秘钥请到 <a className="underline" href="https://api.xianyushop.shop" target="_blank" rel="noopener noreferrer">https://api.xianyushop.shop</a> 网站的接口列表 “通过定位进行聊天” 接口获取
+                <p className="text-xs text-gray-500 mt-2">
+                  地址与秘钥请使用你自己搭建或完全信任的服务；留空则不启用该功能
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">

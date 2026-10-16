@@ -116,7 +116,7 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'token.remote_url', label: '远程URL', type: 'input', category: 'Token获取方式', placeholder: '远程 Token 服务地址' },
   { key: 'token.remote_secret_key', label: '密钥', type: 'secret', category: 'Token获取方式', placeholder: '远程服务密钥' },
   // 密码登录远程配置（仅当 password_login.mode === 'protocol' 时展示）
-  { key: 'password_login.remote_url', label: '远程URL', type: 'input', category: '密码登录远程配置', placeholder: 'https://api.xianyushop.shop/api/external/invoke' },
+  { key: 'password_login.remote_url', label: '远程URL', type: 'input', category: '密码登录远程配置', placeholder: 'https://your-own-server.example/api/external/invoke' },
   { key: 'password_login.remote_secret_key', label: '秘钥', type: 'secret', category: '密码登录远程配置', placeholder: '远程服务密钥' },
   // 提现配置
   { key: 'withdraw.notify_email', label: '提现通知邮箱', type: 'input', category: '提现配置', placeholder: '接收提现通知的邮箱' },

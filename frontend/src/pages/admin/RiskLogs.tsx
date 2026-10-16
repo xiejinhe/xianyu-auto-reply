@@ -23,8 +23,9 @@ import { getApiErrorMessage } from '@/utils/request'
 import { getBeijingDateInputValue } from '@/utils/date'
 import type { Account } from '@/types'
 
-// Token获取方式专用域名：这些是取Token的远程接口地址，不是过滑块远程服务，禁止填到本页保存
-const TOKEN_API_ONLY_DOMAINS = ['api.xianyushop.shop', 'api.xianyusite.shop', 'api.zhinianblog.cn']
+// Token获取方式专用域名：这些是取Token的远程接口地址，不是过滑块远程服务，禁止填到本页保存。
+// 原作者在此硬编码了自己的三个域名用于锁定付费接口，二开版本已清空。
+const TOKEN_API_ONLY_DOMAINS: string[] = []
 
 /** 返回远程服务URL中命中的Token接口域名，未命中返回空字符串 */
 const findTokenApiDomain = (url: string): string => {

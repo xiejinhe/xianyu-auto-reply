@@ -16,7 +16,7 @@ import { initializeThemeMode, toggleThemeMode } from '@/utils/theme'
 
 /** 判断当前是否为线上正式环境 */
 const isOnlineEnv = () => {
-  return window.location.hostname === 'xy.zhinianboke.com'
+  return window.location.hostname === 'xy.xiejinhe.com'
 }
 
 /** 导航菜单项定义 */
@@ -101,7 +101,7 @@ export function AuthNavbar({ systemName }: AuthNavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const resolvedSystemName = usePublicSystemName(systemName)
   const online = isOnlineEnv()
-  /** 根据当前环境过滤菜单项：仅线上正式环境(xy.zhinianboke.com)显示受域名限制的菜单 */
+  /** 根据当前环境过滤菜单项：仅线上正式环境(xy.xiejinhe.com)显示受域名限制的菜单 */
   const filteredItems = NAV_ITEMS.filter(item => !item.hideOnLocal || online)
 
   // 主题切换（统一在 Navbar 内管理，避免各页面重复实现和遮挡手机端汉堡菜单）

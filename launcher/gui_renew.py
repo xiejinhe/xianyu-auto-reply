@@ -7,7 +7,6 @@ GUI激活码续期页面模块
 3. 输入续期码后叠加时长到原到期时间
 """
 import tkinter as tk
-import webbrowser
 import tkinter.messagebox as messagebox
 import tkinter.ttk as ttk
 
@@ -163,15 +162,7 @@ def render_renew_page(app):
              bd=0, cursor="hand2", padx=14, pady=6,
              command=_do_renew).pack(side=tk.LEFT, padx=(0, 12))
 
-    def _open_renew_page():
-        """在浏览器中打开获取续期码页面"""
-        webbrowser.open("https://xy.zhinianboke.com/renew-activation")
-
-    tk.Button(btn_frame, text="获取续期码", font=("微软雅黑", 9),
-             fg="#ffffff", bg=COLORS["success"],
-             activeforeground="#ffffff", activebackground="#15803d",
-             bd=0, cursor="hand2", padx=14, pady=6,
-             command=_open_renew_page).pack(side=tk.LEFT, padx=(0, 12))
+    # 二开版本已移除「获取续期码」按钮（原指向作者的在线发码页面）
 
     def _do_revoke():
         """注销激活：二次确认后删除激活状态"""

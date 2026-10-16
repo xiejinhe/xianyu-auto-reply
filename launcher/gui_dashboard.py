@@ -6,6 +6,8 @@ GUI仪表盘页面模块
 2. 左右两栏布局：左侧轮播图广告，右侧文字广告（一比一复刻前端Dashboard）
 3. 轮播图：自动轮播、指示器圆点、底部渐变标题覆盖、点击跳转
 4. 文字广告：标题+链接、可展开/折叠显示内容
+
+二开版本默认将 _SERVER_URL 置空，未配置远程服务器时不发起任何网络请求。
 """
 import gzip
 import io
@@ -20,7 +22,7 @@ from launcher.gui_theme import COLORS
 
 
 # 远程服务器API地址（公开接口，无需登录）
-_SERVER_URL = "https://xy.zhinianboke.com"
+_SERVER_URL = ""
 
 # 轮播间隔（毫秒）
 _CAROUSEL_INTERVAL = 4000
@@ -108,8 +110,20 @@ def render_dashboard_page(app):
 
 
 def _fetch_ads(app):
-    """在子线程中请求远程服务器获取广告数据"""
+    """
+    拉取远程广告数据
+
+    二开版本已将 _SERVER_URL 置空：未配置远程服务器时直接短路，
+    不发起任何外部网络请求。
+    """
     import json as json_mod
+
+    # 未配置远程服务器 → 完全跳过网络请求
+    if not _SERVER_URL:
+        app.root.after(0, lambda: _show_empty(
+            app, "本版本为本地部署版，未连接任何远程广告服务器"))
+        return
+
     try:
         url = f"{_SERVER_URL}/api/v1/advertisements/public"
         req = urllib_request.Request(url, method="GET")

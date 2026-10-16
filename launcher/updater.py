@@ -29,7 +29,7 @@ from pathlib import Path
 from launcher.version import CURRENT_VERSION
 
 # 更新服务器地址（从 data/update_config.json 的 update_url 读取）
-# 二开版本默认留空：原作者(zhinianboke)的更新服务器会下发完整程序包并覆盖本地文件，
+# 二开版本默认留空：原作者(xiejinhe)的更新服务器会下发完整程序包并覆盖本地文件，
 # 相当于一条远程代码执行通道，因此不再默认连接任何第三方更新源。
 # 需要使用在线更新时，在 data/update_config.json 里显式配置 update_url 即可。
 _DEFAULT_UPDATE_URL = ""

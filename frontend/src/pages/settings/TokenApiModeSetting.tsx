@@ -198,16 +198,7 @@ export function TokenApiModeSetting({
         <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-300">
           <p>无有效缓存时直接调用远程接口获取 Token</p>
           <p className="mt-1">
-            秘钥请到{' '}
-            <a
-              href="https://api.xianyushop.shop"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium underline underline-offset-2 hover:opacity-80"
-            >
-              https://api.xianyushop.shop
-            </a>{' '}
-            获取，使用接口列表中的“闲鱼获取Token”接口
+            远程接口与秘钥请使用你自己搭建或完全信任的服务；留空则使用网页接口方式
           </p>
         </div>
       )}
@@ -225,7 +216,7 @@ export function TokenApiModeSetting({
                 disabled={saving || testing}
                 required
                 onChange={(event) => setRemoteUrlValue(event.target.value)}
-                placeholder="https://api.xianyushop.shop/api/external/invoke"
+                placeholder="https://your-own-server.example/api/external/invoke"
                 className="input-ios"
               />
             </div>
