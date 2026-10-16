@@ -14,6 +14,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -70,6 +73,71 @@ def _ffmpeg_path() -> str | None:
     return shutil.which("ffmpeg")
 
 
+# 自建托管的语音存放目录（挂在 /static 下）与保留天数
+_HOSTED_AUDIO_SUBDIR = "uploads/audio"
+_HOSTED_AUDIO_TTL_DAYS = 7
+
+
+def _static_root() -> Path:
+    """静态文件根目录，与 _bootstrap 挂载 /static 时使用的目录保持一致"""
+    from app.core.config import get_settings
+
+    return Path(get_settings().static_dir)
+
+
+async def _get_public_base_url(db: AsyncSession) -> str:
+    """读取「语音消息公网地址前缀」设置；未配置返回空字符串（表示不自建托管）"""
+    try:
+        from app.services.system_setting_service import SystemSettingService
+
+        all_settings = await SystemSettingService(db).list_settings()
+    except Exception as e:
+        logger.warning(f"读取语音公网地址设置失败: {e}")
+        return ""
+    base = str(all_settings.get("media.public_base_url") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if not base.startswith(("http://", "https://")):
+        # 允许只填域名/IP（可能带端口），补全协议便于拼接
+        base = f"http://{base}"
+    return base
+
+
+def _host_audio_locally(src_path: str, public_base: str) -> str | None:
+    """把语音落盘到静态目录，返回可公网访问的 URL；失败返回 None。
+
+    IM 协议的 contentType=3 音频消息只要求一个可访问的音频地址，不强制闲鱼CDN，
+    因此部署在有公网 IP 的服务器上时，可以用自建托管的地址发送真语音。
+    """
+    try:
+        out_dir = _static_root() / _HOSTED_AUDIO_SUBDIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # 没有 ffmpeg 时音频保持原始编码（多为 webm/opus），后缀必须跟着实际格式，
+        # 否则 /static 会按 .mp3 发 Content-Type，对方手机上反而播不了。
+        suffix = os.path.splitext(src_path)[1] or ".mp3"
+        name = f"{uuid.uuid4().hex}{suffix}"
+        shutil.copyfile(src_path, out_dir / name)
+        _cleanup_hosted_audio(out_dir)
+        return f"{public_base}/static/{_HOSTED_AUDIO_SUBDIR}/{name}"
+    except Exception as e:
+        logger.warning(f"语音自建托管失败: {e}")
+        return None
+
+
+def _cleanup_hosted_audio(out_dir: Path) -> None:
+    """清掉超过保留天数的托管语音，避免目录无限增长"""
+    try:
+        cutoff = time.time() - _HOSTED_AUDIO_TTL_DAYS * 86400
+        for f in out_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 async def _get_owned_chat_account(
     account_id: str, current_user: User, db: AsyncSession
 ) -> XYAccount | None:
@@ -80,8 +148,8 @@ async def _get_owned_chat_account(
     return (await db.execute(query)).scalar_one_or_none()
 
 
-def _transcode_to_mp3(src_path: str, dst_path: str) -> bool:
-    """把任意音频转码成 mp3（闲鱼App对 webm/opus 支持不佳，mp3 兼容性最好）"""
+def _transcode_with_ffmpeg(src_path: str, dst_path: str) -> bool:
+    """用系统 ffmpeg 转码成 mp3（闲鱼App对 webm/opus 支持不佳，mp3 兼容性最好）"""
     ffmpeg = _ffmpeg_path()
     if not ffmpeg:
         return False
@@ -103,6 +171,41 @@ def _transcode_to_mp3(src_path: str, dst_path: str) -> bool:
     except Exception as e:
         logger.warning(f"ffmpeg转码异常: {e}")
         return False
+
+
+def _transcode_with_av(src_path: str, dst_path: str) -> bool:
+    """用 av（PyAV，自带 ffmpeg 库）转码成 mp3。
+
+    macOS 上 homebrew 装的 ffmpeg 常因动态库缺失（如 libunistring）直接崩，
+    而 av 静态打包了自己的 ffmpeg，可作为可靠后备，保证语音始终是 mp3。
+    """
+    try:
+        import av  # 可选依赖（asr extra），没装就跳过
+
+        with av.open(src_path) as inp:
+            stream = inp.streams.audio[0]
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=24000)
+            with av.open(dst_path, "w", format="mp3") as out:
+                ostream = out.add_stream("mp3", rate=24000)
+                ostream.layout = "mono"
+                ostream.bit_rate = 64000
+                for frame in inp.decode(stream):
+                    for resampled in resampler.resample(frame):
+                        for packet in ostream.encode(resampled):
+                            out.mux(packet)
+                for packet in ostream.encode(None):
+                    out.mux(packet)
+        return os.path.exists(dst_path) and os.path.getsize(dst_path) > 0
+    except Exception as e:
+        logger.warning(f"av转码失败: {e}")
+        return False
+
+
+def _transcode_to_mp3(src_path: str, dst_path: str) -> bool:
+    """转码成 mp3：先试系统 ffmpeg，失败再用 av 兜底"""
+    if _transcode_with_ffmpeg(src_path, dst_path):
+        return True
+    return _transcode_with_av(src_path, dst_path)
 
 
 @router.post("/send-audio/{account_id}")
@@ -176,9 +279,17 @@ async def send_audio(
             )
 
         if not cdn_url:
-            # 闲鱼PC网页端的上传通道（stream-upload.goofish.com）是图片通道，非图片会被
-            # 图片安全审核以 PICTURE_NOT_SAFE 拒绝。实测换 floderId/appkey/scene 均无效。
-            # 这里把不同失败原因翻译成人话，并带上 voiceUnsupported 标记，便于前端自动降级。
+            # 闲鱼网页端的上传通道（stream-upload.goofish.com）是图片通道，非图片会被
+            # 图片安全审核以 PICTURE_NOT_SAFE 拒绝（换 floderId/appkey/scene 均无效）。
+            # 但 IM 协议本身支持 contentType=3 的音频消息，audio.url 并不强制闲鱼CDN，
+            # 所以配置了公网地址时可以改由我们自己托管音频，照样能发出真语音。
+            public_base = await _get_public_base_url(db)
+            if public_base:
+                cdn_url = _host_audio_locally(upload_path, public_base)
+                if cdn_url:
+                    logger.info(f"【{account_id}】闲鱼CDN不接受音频，已改用自建托管: {cdn_url}")
+
+        if not cdn_url:
             reason = (uploader.last_error or "").strip()
             if "PICTURE_NOT_SAFE" in reason:
                 message = "闲鱼网页端的上传通道只收图片，正在改用「转文字」发送"

@@ -357,6 +357,7 @@ export interface AsrSettingsPayload {
   'asr.model': string
   'asr.provider': AsrProvider
   'asr.local_model': string
+  'media.public_base_url': string
 }
 
 /** 本地离线模型可选大小（体积从小到大，中文准确率从低到高） */
@@ -377,6 +378,7 @@ export const DEFAULT_ASR_SETTINGS: AsrSettingsPayload = {
   'asr.model': 'qwen3-asr-flash',
   'asr.provider': 'auto',
   'asr.local_model': 'small',
+  'media.public_base_url': '',
 }
 
 export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null): AsrSettingsPayload => {
@@ -385,6 +387,7 @@ export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null):
   const model = settings?.['asr.model']
   const provider = settings?.['asr.provider']
   const localModel = settings?.['asr.local_model']
+  const publicBase = settings?.['media.public_base_url']
   return {
     'asr.api_key': typeof apiKey === 'string' ? apiKey : '',
     'asr.base_url':
@@ -403,6 +406,7 @@ export const normalizeAsrSettings = (settings?: Partial<SystemSettings> | null):
       typeof localModel === 'string' && localModel.trim()
         ? localModel.trim()
         : DEFAULT_ASR_SETTINGS['asr.local_model'],
+    'media.public_base_url': typeof publicBase === 'string' ? publicBase.trim() : '',
   }
 }
 
@@ -415,6 +419,7 @@ export const updateAsrSettings = async (settings?: Partial<SystemSettings> | nul
     ['asr.model', normalized['asr.model']],
     ['asr.provider', normalized['asr.provider']],
     ['asr.local_model', normalized['asr.local_model']],
+    ['media.public_base_url', normalized['media.public_base_url']],
   ]
 
   for (const [key, value] of entries) {

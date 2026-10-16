@@ -294,6 +294,8 @@ export interface SystemSettings {
   'asr.model'?: string
   'asr.provider'?: AsrProvider
   'asr.local_model'?: string
+  /** 语音消息公网地址前缀；留空则发语音时自动转成文字 */
+  'media.public_base_url'?: string
   // SMTP邮件配置
   smtp_server?: string
   smtp_port?: number

@@ -43,6 +43,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
   const [apiKey, setApiKey] = useState(normalized['asr.api_key'])
   const [baseUrl, setBaseUrl] = useState(normalized['asr.base_url'])
   const [model, setModel] = useState(normalized['asr.model'])
+  const [publicBase, setPublicBase] = useState(normalized['media.public_base_url'])
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [status, setStatus] = useState<AsrStatus | null>(null)
@@ -55,6 +56,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
     setApiKey(next['asr.api_key'])
     setBaseUrl(next['asr.base_url'])
     setModel(next['asr.model'])
+    setPublicBase(next['media.public_base_url'])
   }, [settings])
 
   useEffect(() => {
@@ -79,6 +81,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
       'asr.api_key': apiKey.trim(),
       'asr.base_url': baseUrl.trim() || DEFAULT_ASR_SETTINGS['asr.base_url'],
       'asr.model': model.trim() || DEFAULT_ASR_SETTINGS['asr.model'],
+      'media.public_base_url': publicBase.trim(),
     }
     try {
       setSaving(true)
@@ -88,7 +91,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
         return
       }
       onSaved(payload)
-      addToast({ type: 'success', message: '语音转文字设置已保存，聊天页立即可用' })
+      addToast({ type: 'success', message: '语音设置已保存，聊天页立即可用' })
     } catch (error) {
       addToast({ type: 'error', message: getApiErrorMessage(error, '语音转文字设置保存失败') })
     } finally {
@@ -121,7 +124,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
       <div className="flex items-center gap-2">
         <Mic className="h-4 w-4 text-[rgb(var(--color-primary))]" />
         <div className="min-w-0">
-          <p className="font-medium text-slate-900 dark:text-slate-100">语音转文字</p>
+          <p className="font-medium text-slate-900 dark:text-slate-100">语音（转文字 / 发送）</p>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             在线聊天里把说的语音转成文字发出去；默认走本地模型，不需要任何 Key
           </p>
@@ -247,6 +250,27 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
           </div>
         )}
 
+        {/* 发真语音：自建音频托管 */}
+        <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-800">
+          <div className="input-group">
+            <label className="input-label">语音消息公网地址（发真语音用，可留空）</label>
+            <input
+              type="text"
+              value={publicBase}
+              disabled={saving}
+              onChange={(event) => setPublicBase(event.target.value)}
+              placeholder="例如 http://1.2.3.4:8089"
+              className="input-ios"
+            />
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            闲鱼网页端的上传通道只收图片，所以语音只能由我们自己托管，再把地址放进消息里。
+            <br />
+            这里填<b>服务器的外网地址</b>（部署到云服务器后必填），留空则点「发送语音」会自动转成文字发送。
+            只在本机或局域网用就保持为空——对方手机访问不到你的电脑，发了也播不了。
+          </p>
+        </div>
+
         <div className="mt-4 flex justify-end">
           <button
             type="button"
@@ -255,7 +279,7 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
             className="btn-ios-primary"
           >
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            保存语音转文字设置
+            保存语音设置
           </button>
         </div>
       </div>

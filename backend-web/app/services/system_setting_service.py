@@ -108,6 +108,9 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
     "asr.model": ("qwen3-asr-flash", "语音转文字模型名"),
     # 实测 small 的中文准确率和标点明显优于 base（base 会输出繁体且丢问号），故默认 small
     "asr.local_model": ("small", "本地离线模型大小：tiny/base/small/medium/large-v3"),
+    # 发真语音用：闲鱼网页端上传通道只收图片，语音只能由我们自己托管。
+    # 留空表示不托管（点「发送语音」会自动转成文字）；填上服务器公网地址后才会真发语音。
+    "media.public_base_url": ("", "语音消息公网地址前缀（如 http://1.2.3.4:8089），留空则发语音时自动转文字"),
 }
 
 # 不需要XSS转义的键（布尔值、数字等）
@@ -172,6 +175,8 @@ NO_ESCAPE_KEYS = {
     "asr.model",
     "asr.provider",
     "asr.local_model",
+    # 语音消息公网地址：URL 含 :// 等字符，不能被 XSS 转义
+    "media.public_base_url",
     # 协议登录远程接口配置：URL 和秘钥不能被 XSS 转义
     "password_login.remote_url",
     "password_login.remote_secret_key",
