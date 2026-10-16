@@ -115,6 +115,7 @@ export function ChatNew() {
   const recStartTsRef = useRef(0)
   // 本次会话内是否已确认闲鱼网页端不支持发语音（避免每次点发送都白等一次上传）
   const voiceUnsupportedRef = useRef(false)
+  const [voiceUnsupported, setVoiceUnsupported] = useState(false)
   // 录完待处理的语音：可以「发送语音」或「转成文字」
   const [pendingAudio, setPendingAudio] = useState<{ blob: Blob; url: string; durationMs: number } | null>(null)
   // 语音转文字中
@@ -217,6 +218,9 @@ export function ChatNew() {
   const selectCid = useCallback((cid: string) => {
     activeCidRef.current = cid
     setActiveCid(cid)
+    // 切换会话时清掉「发语音不可用」的标记：用户可能刚在设置页配好了公网地址
+    voiceUnsupportedRef.current = false
+    setVoiceUnsupported(false)
   }, [])
 
   // ==================== 按账号缓存：切换账号时保留数据 ====================
@@ -1300,6 +1304,7 @@ export function ChatNew() {
       // 闲鱼网页端上传通道只收图片，一旦确认不支持就记住，后续直接走转文字，不再白等
       if (!res.success && (res as any)?.data?.voiceUnsupported === true) {
         voiceUnsupportedRef.current = true
+        setVoiceUnsupported(true)
       }
       const localUrl = URL.createObjectURL(blob)
       const sentMsg: ChatMessage = {
@@ -2120,9 +2125,16 @@ export function ChatNew() {
                   <button
                     type="button"
                     onClick={sendPendingAudio}
-                    disabled={transcribing || sending}
-                    title="直接发送语音消息。闲鱼网页端上传通道目前只收图片，失败会自动转成文字"
-                    className="inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    disabled={transcribing || sending || voiceUnsupported}
+                    title={
+                      voiceUnsupported
+                        ? '闲鱼网页端的上传通道只收图片，发不了真语音。想发真语音：系统设置 → 语音（转文字/发送）→ 填「语音消息公网地址」（需要公网服务器或内网穿透）'
+                        : '直接发送语音消息。闲鱼网页端上传通道目前只收图片，失败会自动转成文字'
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-1 px-2.5 h-7 text-xs rounded-md border border-gray-300 dark:border-gray-500 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors',
+                      voiceUnsupported && 'line-through decoration-gray-400',
+                    )}
                   >
                     <Send className="w-3.5 h-3.5" />
                     发送语音
