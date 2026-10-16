@@ -279,11 +279,13 @@ async def send_audio(
             )
 
         if not cdn_url:
-            # 闲鱼网页端的上传通道（stream-upload.goofish.com）是图片通道，非图片会被
-            # 图片安全审核以 PICTURE_NOT_SAFE 拒绝（换 floderId/appkey/scene 均无效）。
+            # 闲鱼网页端的上传通道（stream-upload.goofish.com）是图片通道：
+            # 文件类型白名单里没有音频，mp3 直接报 TYPE_NOT_ALLOWED；
+            # wav 能过类型识别但会被图片安全审核以 PICTURE_NOT_SAFE 拒绝。
             # 但 IM 协议本身支持 contentType=3 的音频消息，audio.url 并不强制闲鱼CDN，
             # 所以配置了公网地址时可以改由我们自己托管音频，照样能发出真语音。
             public_base = await _get_public_base_url(db)
+            host_attempted = bool(public_base)
             if public_base:
                 cdn_url = _host_audio_locally(upload_path, public_base)
                 if cdn_url:
@@ -291,16 +293,24 @@ async def send_audio(
 
         if not cdn_url:
             reason = (uploader.last_error or "").strip()
-            if "PICTURE_NOT_SAFE" in reason:
-                message = "闲鱼网页端的上传通道只收图片，正在改用「转文字」发送"
+            logger.warning(f"【{account_id}】语音上传闲鱼通道被拒: {reason[:200]}")
+            if host_attempted:
+                # 配了公网地址说明用户想发真语音，这里失败多半是地址填错或后端不可达
+                message = "语音托管失败，请确认「语音消息公网地址」能从外网访问，并查看后端日志"
+            elif "TYPE_NOT_ALLOWED" in reason:
+                message = "闲鱼网页端不接受音频文件（该通道只允许图片），正在改用「转文字」发送"
+            elif "PICTURE_NOT_SAFE" in reason:
+                message = "闲鱼把语音当图片做了安全审核并拒绝，正在改用「转文字」发送"
             elif "TYPE_NOT_CONFIRMED" in reason:
-                message = "闲鱼无法识别这段录音的格式（建议转成 wav/mp3 再试）"
+                message = "闲鱼无法识别这段录音的格式，正在改用「转文字」发送"
             elif "timed out" in reason.lower() or "TimeoutError" in reason:
-                message = "语音上传超时，请检查网络后重试，或改用「转文字」发送"
+                message = "语音上传超时（网络不稳），正在改用「转文字」发送"
             elif "Cannot connect" in reason:
-                message = "连不上闲鱼上传服务，请检查网络后重试，或改用「转文字」发送"
+                message = "连不上闲鱼上传服务（网络不通），正在改用「转文字」发送"
+            elif not reason:
+                message = "语音无法通过闲鱼网页端上传，正在改用「转文字」发送"
             else:
-                message = "语音上传失败，请检查账号Cookie是否有效或稍后重试"
+                message = "语音上传被闲鱼拒绝，正在改用「转文字」发送"
             return ApiResponse(
                 success=False,
                 message=message,
