@@ -1087,6 +1087,20 @@ export function ChatNew() {
     }
   }, [imageMenu])
 
+  /** 图片预览大图：按 Esc 或点空白处关闭 */
+  useEffect(() => {
+    if (!previewImage) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPreviewImage('')
+        // 预览图上开的右键菜单跟着一起关，避免 Esc 后留个孤立菜单
+        setImageMenu(null)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [previewImage])
+
   const handleRecallMessage = async (msg: ChatMessage) => {
     if (!activeAccountId || !msg.messageId || recallingMessageId) return
     if (!canRecallMessage(msg)) {

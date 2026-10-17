@@ -3,6 +3,7 @@
  * 
  * 用于替代系统自带的 confirm 弹窗，提供更好的视觉效果
  */
+import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AlertTriangle, Info, Loader2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
@@ -42,11 +43,23 @@ export function ConfirmModal({
     info: 'bg-blue-500 hover:bg-blue-600 text-white',
   }
 
+  // Esc 等同点击「取消」：只会取消、不会执行 confirm，所以即便用在删除类操作上也安全。
+  // 注意这与「禁止点击遮罩关闭」不冲突 —— 遮罩可能被误触，键盘 Esc 是明确意图。
+  // 正在提交中时按 Esc 无效，避免操作执行到一半被关掉。
+  useEffect(() => {
+    if (!isOpen || loading) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, loading, onCancel])
+
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
-          {/* 遮罩层（按规范禁止点击遮罩关闭，仅可通过按钮关闭） */}
+          {/* 遮罩层（按规范禁止点击遮罩关闭，避免误触；键盘 Esc 可关闭） */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

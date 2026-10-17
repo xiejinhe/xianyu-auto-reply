@@ -2,8 +2,9 @@
  * 在线聊天工作台 - 订单详情弹窗
  *
  * 展示单个订单的商品、金额、买家与收货信息。
- * 按项目规范：弹窗仅可通过右上角关闭按钮关闭，禁止点击遮罩关闭。
+ * 关闭方式：右上角按钮，或键盘 Esc（遮罩本身不响应点击，避免误触关掉）。
  */
+import { useEffect } from 'react'
 import { X } from 'lucide-react'
 import type { OrderDetail } from '@/api/orders'
 import { getOrderStatusMeta, getDeliveryMethodLabel } from './orderStatus'
@@ -18,6 +19,16 @@ interface OrderDetailModalProps {
 }
 
 export function OrderDetailModal({ order, fallbackBuyerNick, onClose }: OrderDetailModalProps) {
+  // Esc 关闭（hook 必须在下面的提前 return 之前声明）
+  useEffect(() => {
+    if (!order) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [order, onClose])
+
   if (!order) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
