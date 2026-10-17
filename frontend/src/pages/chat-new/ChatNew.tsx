@@ -48,6 +48,31 @@ import { useChatNewWs } from './useChatNewWs'
  *  不做归一化时，正打开的会话会被推送误判成「非当前会话」——列表红点 +1、
  *  消息却不进聊天窗口，只能等 30 秒兜底轮询补上（用户实测延迟约 20 秒）。 */
 const normCid = (cid: string) => (cid || '').split('@')[0].trim()
+
+/** 已读水位持久化：不落盘的话刷新页面水位就丢，服务端旧未读又会把红点亮一次 */
+const READ_MARKS_KEY = 'chat_conv_read_marks'
+const loadReadMarks = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem(READ_MARKS_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+const saveReadMarks = (marks: Record<string, number>) => {
+  try {
+    const keys = Object.keys(marks)
+    // 控制体积：超过 800 个会话时丢弃最旧的水位
+    if (keys.length > 800) {
+      keys.sort((a, b) => (marks[a] ?? 0) - (marks[b] ?? 0))
+      for (const k of keys.slice(0, keys.length - 800)) delete marks[k]
+    }
+    localStorage.setItem(READ_MARKS_KEY, JSON.stringify(marks))
+  } catch {
+    // 存不了（隐私模式等）就算了，水位退化为仅本次页面会话有效
+  }
+}
 import { playNewMessageSound } from '@/utils/notificationSound'
 import { appendMsg, mergeConversations, mergeMessages, toTimestampMs } from './chat_history_merge'
 import { ChatHistoryRecovery, recoverConversations, recoverMessages,
@@ -329,7 +354,7 @@ export function ChatNew() {
   // (redPoint) 没有「标记已读」接口可调（系统从未清过它），重新拉会话列表会按
   // 服务端旧未读把已经看过的红点复活——这是小红点不准的根源。合并服务端数据时
   // 按水位把已看过的会话红点归零；新消息时间大于水位时红点照常显示，不影响真未读。
-  const readMarkRef = useRef<Record<string, number>>({})
+  const readMarkRef = useRef<Record<string, number>>(loadReadMarks())
 
   const markConvReadByKey = useCallback((accountId: string, cid: string, time?: number) => {
     if (!accountId || !cid) return
@@ -337,7 +362,10 @@ export function ChatNew() {
     const list = convsCacheRef.current[accountId]?.convs ?? []
     const conv = list.find((c) => normCid(c.cid) === normCid(cid))
     const t = time ?? conv?.lastMessageTime ?? Date.now()
-    if (t > (readMarkRef.current[key] ?? 0)) readMarkRef.current[key] = t
+    if (t > (readMarkRef.current[key] ?? 0)) {
+      readMarkRef.current[key] = t
+      saveReadMarks(readMarkRef.current)
+    }
   }, [])
 
   // 合并服务端会话数据时套用已读水位
