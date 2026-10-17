@@ -2301,18 +2301,16 @@ export function ChatNew() {
                 <ImagePlus className="w-4 h-4" />
               </button>
               <button
-                type="button"
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={sending && !isRecording}
-                title={isRecording ? '点击停止录音' : '点击开始录音，再点一次结束，然后选择转文字或发送语音'}
-                className={cn(
-                  'flex-shrink-0 flex items-center justify-center w-9 h-9 border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
-                  isRecording
-                    ? 'text-white bg-red-500 border-red-500 hover:bg-red-600'
-                    : 'text-gray-500 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
-                )}
+                onClick={handleSendMessage}
+                disabled={sending || (!inputText.trim() && !pendingImage)}
+                className="flex-shrink-0 flex items-center gap-1 px-4 h-9 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                {sending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+                发送
               </button>
               <textarea
                 ref={inputRef}
@@ -2333,16 +2331,18 @@ export function ChatNew() {
                 className="flex-1 px-3 py-2 text-sm leading-5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 resize-none max-h-32 overflow-y-auto whitespace-pre-wrap"
               />
               <button
-                onClick={handleSendMessage}
-                disabled={sending || (!inputText.trim() && !pendingImage)}
-                className="flex-shrink-0 flex items-center gap-1 px-4 h-9 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {sending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
+                type="button"
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={sending && !isRecording}
+                title={isRecording ? '点击停止录音' : '点击开始录音，再点一次结束，然后选择转文字或发送语音'}
+                className={cn(
+                  'flex-shrink-0 flex items-center justify-center w-9 h-9 border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                  isRecording
+                    ? 'text-white bg-red-500 border-red-500 hover:bg-red-600'
+                    : 'text-gray-500 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
                 )}
-                发送
+              >
+                {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
               </button>
             </div>
           </div>
