@@ -43,6 +43,11 @@ import {
 } from '@/api/chatNew'
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
 import { useChatNewWs } from './useChatNewWs'
+
+/** cid 统一比较：推送与会话列表两条来源的 cid 偶有 @goofish 后缀差异，去掉再比。
+ *  不做归一化时，正打开的会话会被推送误判成「非当前会话」——列表红点 +1、
+ *  消息却不进聊天窗口，只能等 30 秒兜底轮询补上（用户实测延迟约 20 秒）。 */
+const normCid = (cid: string) => (cid || '').split('@')[0].trim()
 import { playNewMessageSound } from '@/utils/notificationSound'
 import { appendMsg, mergeConversations, mergeMessages, toTimestampMs } from './chat_history_merge'
 import { ChatHistoryRecovery, recoverConversations, recoverMessages,
@@ -319,16 +324,59 @@ export function ChatNew() {
   }, [activeCid, activeAccountId])
 
   // ==================== WebSocket 实时推送（多账号） ====================
+
+  // 已读水位：打开/正在查看会话时记录其 lastMessageTime。闲鱼服务端的会话未读
+  // (redPoint) 没有「标记已读」接口可调（系统从未清过它），重新拉会话列表会按
+  // 服务端旧未读把已经看过的红点复活——这是小红点不准的根源。合并服务端数据时
+  // 按水位把已看过的会话红点归零；新消息时间大于水位时红点照常显示，不影响真未读。
+  const readMarkRef = useRef<Record<string, number>>({})
+
+  const markConvReadByKey = useCallback((accountId: string, cid: string, time?: number) => {
+    if (!accountId || !cid) return
+    const key = `${accountId}:${normCid(cid)}`
+    const list = convsCacheRef.current[accountId]?.convs ?? []
+    const conv = list.find((c) => normCid(c.cid) === normCid(cid))
+    const t = time ?? conv?.lastMessageTime ?? Date.now()
+    if (t > (readMarkRef.current[key] ?? 0)) readMarkRef.current[key] = t
+  }, [])
+
+  // 合并服务端会话数据时套用已读水位
+  const applyReadMarks = useCallback((accountId: string, convs: Conversation[]): Conversation[] => {
+    if (!accountId) return convs
+    return convs.map((c) => {
+      const mark = readMarkRef.current[`${accountId}:${normCid(c.cid)}`] ?? 0
+      return c.unreadCount > 0 && mark >= (c.lastMessageTime || 0)
+        ? { ...c, unreadCount: 0 }
+        : c
+    })
+  }, [])
+
+  // 清掉某个会话的红点（正在看的会话 = 已读），同步缓存与界面
+  const clearConvUnread = useCallback((accountId: string, cid: string) => {
+    if (!accountId || !cid) return
+    markConvReadByKey(accountId, cid)
+    const key = normCid(cid)
+    const zero = (c: Conversation) => (normCid(c.cid) === key ? { ...c, unreadCount: 0 } : c)
+    const cache = convsCacheRef.current[accountId]
+    if (cache) cache.convs = cache.convs.map(zero)
+    if (accountId === activeAccountIdRef.current) {
+      conversationsRef.current = conversationsRef.current.map(zero)
+      setConversations(conversationsRef.current)
+    }
+  }, [markConvReadByKey])
+
   /** 更新会话列表的通用逻辑（可作用于 state 数组或缓存数组） */
   const updateConvList = (convs: Conversation[], cid: string, summary: string, msg: ChatMessage, isViewing: boolean): Conversation[] => {
-    const exists = convs.some((c) => c.cid === cid)
+    const key = normCid(cid)
+    const sameConv = (c: Conversation) => normCid(c.cid) === key
+    const exists = convs.some(sameConv)
     if (exists) {
       const updated = convs.map((c) => {
-        if (c.cid !== cid) return c
+        if (!sameConv(c)) return c
         return { ...c, lastMessageSummary: summary, lastMessageTime: msg.time, unreadCount: isViewing ? 0 : c.unreadCount + 1 }
       })
-      const target = updated.find((c) => c.cid === cid)!
-      return [target, ...updated.filter((c) => c.cid !== cid)]
+      const target = updated.find(sameConv)!
+      return [target, ...updated.filter((c) => !sameConv(c))]
     }
     // 新会话
     const newConv: Conversation = {
@@ -379,7 +427,9 @@ export function ChatNew() {
       setAccountUnread((prev) => ({ ...prev, [accountId]: (prev[accountId] || 0) + 1 }))
     }
 
-    const isViewingConv = isActiveAccount && cid === activeCidRef.current
+    // cid 归一化后比较：正打开的会话来了消息 = 已读，记水位防止服务端旧未读复活
+    const isViewingConv = isActiveAccount && normCid(cid) === normCid(activeCidRef.current)
+    if (isViewingConv) markConvReadByKey(accountId, cid, msg.time)
     const conversationCache = convsCacheRef.current[accountId]
     if (conversationCache) {
       conversationCache.convs = updateConvList(conversationCache.convs, cid, summary, msg, isViewingConv)
@@ -404,7 +454,7 @@ export function ChatNew() {
         window.setTimeout(() => reloadOrdersRef.current(), 900)
       }
     }
-  }, [])
+  }, [markConvReadByKey])
 
   // WebSocket 断连时刷新账号状态，保留订阅以等待 IM 临时离线后恢复
   // （节流：最多每 5 秒刷一次，避免网络抖动时请求风暴）
@@ -625,6 +675,9 @@ export function ChatNew() {
         convs: append || compensating ? mergeConversations(latest, cached?.convs ?? []) : latest,
         hasMore: result.hasMore, cursor: result.cursor,
       }
+      // 套用已读水位：服务端 redPoint 从未被清过，不套水位的话重拉一次列表，
+      // 已经看过、红点已消的会话会按服务端旧未读重新亮起来
+      next.convs = applyReadMarks(accountId, next.convs)
       convsCacheRef.current[accountId] = next
       if (result.complete) recoveryRef.current.conversations.delete(accountId)
       else if (boundary) boundary.nextCursor = result.cursor
@@ -650,7 +703,7 @@ export function ChatNew() {
     }).finally(() => {
       if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
     })
-  }, [addToast])
+  }, [addToast, applyReadMarks])
 
   // 用 ref 保持 accounts 最新引用，避免 effect 闭包取到旧值
   const accountsRef = useRef(accounts)
@@ -806,12 +859,17 @@ export function ChatNew() {
         setMessages(next.msgs)
         setMsgHasMore(next.hasMore)
         setMsgCursor(next.cursor)
+        // 正在看的消息拉取成功 = 已读：顺手清掉该会话红点，
+        // 同时兜住「推送误标的红点」和「服务端旧未读」两类残留
+        if (accountId === activeAccountIdRef.current && normCid(cid) === normCid(activeCidRef.current)) {
+          clearConvUnread(accountId, cid)
+        }
       }).catch((error: Error) => {
         if (!silent && isCurrent()) addToast({ message: error.message, type: 'error' })
       }).finally(() => {
         if (!silent && requestId === msgRequestIdRef.current) setLoadingMsgs(false)
       })
-  }, [addToast, catchUpActiveConversation])
+  }, [addToast, catchUpActiveConversation, clearConvUnread])
 
   // 边界已在断线时冻结，等待会话补偿期间收到的实时消息不会推进消息补偿终点。
   const reloadCurrentChat = useCallback(async (accountId: string) => {
@@ -835,7 +893,7 @@ export function ChatNew() {
       // 页面切到后台时没必要拉，回来后下一轮自然补上
       if (document.hidden) return
       void loadMessages(activeAccountId, activeCid, false, true)
-    }, 30000)
+    }, 15000)
     return () => clearInterval(timer)
   }, [activeAccountId, activeCid, loadMessages])
 
@@ -877,14 +935,14 @@ export function ChatNew() {
     const cid = activeConvPerAccountRef.current[accountId] || ''
     selectCid(cid)
     restoreConversation(accountId, cid)
+    // 自动恢复打开的会话对用户可见 = 已读，记水位防服务端旧未读复活
+    if (cid) markConvReadByKey(accountId, cid)
   }, [activeAccountId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectConversation = (cid: string) => {
     selectCid(cid)
     setMobileTab('chat')
-    setConversations((prev) => prev.map((conversation) =>
-      conversation.cid === cid ? { ...conversation, unreadCount: 0 } : conversation,
-    ))
+    clearConvUnread(activeAccountId, cid)
     restoreConversation(activeAccountId, cid)
   }
 
@@ -2040,8 +2098,8 @@ export function ChatNew() {
                 <div
                   key={conv.cid || `conv-${idx}`}
                   className={`group relative px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700/50 transition-colors ${
-                    activeCid === conv.cid
-                      ? 'bg-blue-50 dark:bg-blue-900/20'
+                    normCid(activeCid) === normCid(conv.cid)
+                      ? 'bg-blue-100 dark:bg-blue-900/40 shadow-[inset_3px_0_0_0_#3b82f6,0_1px_3px_rgba(0,0,0,0.08)]'
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/30'
                   }`}
                   onClick={() => handleSelectConversation(conv.cid)}
@@ -2093,7 +2151,8 @@ export function ChatNew() {
                             ? <ChatText text={conv.lastMessageSummary || '暂无消息'} />
                             : (conv.lastMessageSummary || '暂无消息')}
                         </span>
-                        {conv.unreadCount > 0 && (
+                        {/* 正在看的会话不显示红点（看见即已读），双保险 */}
+                        {normCid(conv.cid) !== normCid(activeCid) && conv.unreadCount > 0 && (
                           <span className="ml-2 flex-shrink-0 bg-red-500 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">
                             {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
                           </span>
