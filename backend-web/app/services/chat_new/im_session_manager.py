@@ -61,8 +61,10 @@ class ImSessionManager:
                 client = self.clients[account_id]
                 if client.is_connected:
                     return client
-                # 已断开，清理后重建
-                await client.disconnect()
+                # 已断开，清理后重建。
+                # 必须关掉旧对象的自动恢复：这个 client 马上要被丢弃，
+                # 若看门狗还活着会把它重连上线，与新连接互踢。
+                await client.disconnect(keep_auto_recover=False)
                 del self.clients[account_id]
 
             # 从数据库获取账号行 ID 和 Cookie，供滑块成功后精准持久化。
@@ -96,7 +98,8 @@ class ImSessionManager:
         async with self._lock:
             client = self.clients.pop(account_id, None)
             if client:
-                await client.disconnect()
+                # 用户主动断开：连自动恢复一起停掉，否则会被看门狗重连回来
+                await client.disconnect(keep_auto_recover=False)
                 logger.info(f"【{account_id}】IM会话已断开并移除")
 
     async def disconnect_all(self):
@@ -104,7 +107,7 @@ class ImSessionManager:
         async with self._lock:
             for account_id, client in list(self.clients.items()):
                 try:
-                    await client.disconnect()
+                    await client.disconnect(keep_auto_recover=False)
                 except Exception as e:
                     logger.warning(f"【{account_id}】断开连接异常: {e}")
             self.clients.clear()
@@ -179,9 +182,34 @@ class ImSessionManager:
             if not ws_set and account_id in self._ws_clients:
                 del self._ws_clients[account_id]
 
+        async def _broadcast_reconnected(aid: str):
+            """IM 断线重连后广播给前端（断线期间的消息不会补推，需前端自行补拉）"""
+            await self._broadcast_event(aid, {
+                "event": "reconnected",
+                "account_id": aid,
+            })
+
         client.add_push_callback(_forward_to_frontend)
+        client.add_reconnected_callback(_broadcast_reconnected)
         client._push_cb_registered = True
         logger.info(f"【{account_id}】IM推送回调已挂载")
+
+    async def _broadcast_event(self, account_id: str, payload_dict: dict):
+        """向某账号的所有前端 WebSocket 广播一条事件，顺带清理已断开的连接"""
+        ws_set = self._ws_clients.get(account_id)
+        if not ws_set:
+            return
+        payload = json.dumps(payload_dict, ensure_ascii=False)
+        dead: List[WebSocket] = []
+        for ws in ws_set:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            ws_set.discard(ws)
+        if not ws_set and account_id in self._ws_clients:
+            del self._ws_clients[account_id]
 
     async def _setup_push_callback_after_connect(
         self, account_id: str, client: GoofishImClient

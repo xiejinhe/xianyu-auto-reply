@@ -375,12 +375,22 @@ export function ChatNew() {
     }
   }, [prepareAccountRecovery])
 
+  // 后端 IM 长连接掉线后自愈：掉线期间的消息服务端不补推，这里主动补拉一次
+  const handleWsReconnected = useCallback((accountId: string) => {
+    setAccounts((prev) => prev.map((account) => (
+      account.account_id === accountId ? { ...account, connected: true } : account
+    )))
+    prepareAccountRecovery(accountId)
+    void reloadCurrentChatRef.current(accountId)
+  }, [prepareAccountRecovery])
+
   // 为当前页面需要实时接收消息的账号建立独立 WebSocket
   useChatNewWs({
     accountIds: wsAccountIds,
     onNewMessage: handleWsNewMessage,
     onConnected: handleWsConnected,
     onDisconnect: handleWsDisconnect,
+    onReconnected: handleWsReconnected,
   })
 
   // ==================== 加载账号列表（分页） ====================

@@ -31,6 +31,8 @@ interface UseChatNewWsOptions {
   onConnected?: (accountId: string, isReconnect: boolean) => void
   /** WebSocket 断连时的回调 */
   onDisconnect?: (accountId: string) => void
+  /** 后端 IM 断线自动重连成功时的回调（断线期间的消息不补推，前端需自行补拉） */
+  onReconnected?: (accountId: string) => void
 }
 
 /**
@@ -39,16 +41,24 @@ interface UseChatNewWsOptions {
  * 根据 accountIds 列表自动管理每个账号的 WebSocket 连接。
  * 新增账号自动建连，移除的账号自动断开，已有账号保持不变。
  */
-export function useChatNewWs({ accountIds, onNewMessage, onConnected, onDisconnect }: UseChatNewWsOptions) {
+export function useChatNewWs({
+  accountIds,
+  onNewMessage,
+  onConnected,
+  onDisconnect,
+  onReconnected,
+}: UseChatNewWsOptions) {
   const connectionsRef = useRef<Map<string, WsConnection>>(new Map())
   const onNewMessageRef = useRef(onNewMessage)
   const onConnectedRef = useRef(onConnected)
   const onDisconnectRef = useRef(onDisconnect)
+  const onReconnectedRef = useRef(onReconnected)
 
   // 保持回调引用最新
   useEffect(() => { onNewMessageRef.current = onNewMessage }, [onNewMessage])
   useEffect(() => { onConnectedRef.current = onConnected }, [onConnected])
   useEffect(() => { onDisconnectRef.current = onDisconnect }, [onDisconnect])
+  useEffect(() => { onReconnectedRef.current = onReconnected }, [onReconnected])
 
   /** 清理单个账号的连接 */
   const cleanupAccount = useCallback((aid: string) => {
@@ -92,6 +102,10 @@ export function useChatNewWs({ accountIds, onNewMessage, onConnected, onDisconne
           // 只有 IM 订阅确认成功才重置退避；握手成功后仍可能收到 4404。
           retryAttempt = 0
           onConnectedRef.current?.(aid, isReconnect)
+        } else if (data.event === 'reconnected') {
+          // 后端 IM 长连接掉过线又自动连回来了。掉线期间到达的消息服务端不补推，
+          // 这里主动补拉一次，否则这些消息要等下次刷新页面才可见。
+          onReconnectedRef.current?.(aid)
         }
       } catch {
         // 解析失败，忽略

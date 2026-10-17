@@ -490,7 +490,7 @@ export const copyImageToClipboard = async (
 
 /** WebSocket 推送消息（新消息事件） */
 export interface WsPushMessage {
-  event: 'new_message' | 'connected' | 'pong'
+  event: 'new_message' | 'connected' | 'pong' | 'reconnected'
   cid?: string
   account_id?: string
   message?: ChatMessage

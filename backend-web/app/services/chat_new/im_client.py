@@ -73,6 +73,12 @@ CAPTCHA_KEYWORDS = (
 )
 # 过滑块重试上限（防止无限递归）
 CAPTCHA_MAX_RETRY = 1
+# 断线自动恢复（IM 长连接被网络抖动/NAT 超时/服务端踢下线后的自愈）
+# 没有这段逻辑时，连接一断就永久离线：实时推送静默停止，只有刷新页面
+# （走 HTTP 拉历史）才能看到新消息，表现为「消息要刷新才出来」。
+AUTO_RECOVER_CHECK_INTERVAL = 20  # 健康巡检间隔（秒）
+AUTO_RECOVER_MIN_DELAY = 5        # 首次重试前的等待（秒）
+AUTO_RECOVER_MAX_DELAY = 300      # 退避上限（秒），避免账号已失效时空转
 # 被判定为「连接/Token 失效」的 LWP 响应码：此类响应无 body，仅有 code。
 # 闲鱼对 token 过期或注册态失效的请求统一返回 400，需要换新 token 重连才能恢复。
 TOKEN_INVALID_LWP_CODES = (400,)
@@ -137,9 +143,14 @@ class GoofishImClient:
         # 后台任务
         self._recv_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        # 断线自动恢复任务：网络掉线时自动重建连接（用户主动断开时不启用）
+        self._auto_recover_task: Optional[asyncio.Task] = None
+        self._auto_recover_enabled: bool = False
 
         # 推送消息回调列表（用于向前端 WebSocket 转发实时消息）
         self._push_callbacks: List = []
+        # 自动重连成功回调列表：断线期间的消息不会补推，由订阅方（前端）自行补拉
+        self._reconnected_callbacks: List = []
 
     # ==================== 连接管理 ====================
 
@@ -209,6 +220,10 @@ class GoofishImClient:
             # 6. 启动心跳
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
+            # 7. 启动断线自动恢复：网络抖动/NAT 超时/被服务端踢下线后能自愈，
+            #    否则连接一断就永久离线，实时推送静默停摆
+            self._start_auto_recover()
+
             return True
 
         except Exception as e:
@@ -216,10 +231,20 @@ class GoofishImClient:
             await self.disconnect()
             return False
 
-    async def disconnect(self):
-        """断开连接，释放资源"""
+    async def disconnect(self, keep_auto_recover: bool = True):
+        """
+        断开连接，释放资源
+
+        Args:
+            keep_auto_recover: 是否保留断线自动恢复看门狗。
+                True（默认）：内部重连（换 Token / 网络自愈）时保留，让看门狗继续守护；
+                False：用户主动断开账号时关闭，否则刚断开就被自动重连回来。
+        """
         self._connected = False
         self._registered = False
+
+        if not keep_auto_recover:
+            self._stop_auto_recover()
 
         # 取消后台任务
         for task in [self._heartbeat_task, self._recv_task]:
@@ -1064,6 +1089,115 @@ class GoofishImClient:
             raise Exception(f"请求超时: {msg.get('lwp', 'unknown')}")
         finally:
             self._pending.pop(mid, None)
+
+    # ==================== 断线自动恢复 ====================
+
+    def _start_auto_recover(self):
+        """启动断线自动恢复看门狗（同一账号只保留一个，重连时不会重复创建）"""
+        self._auto_recover_enabled = True
+        if self._auto_recover_task is None or self._auto_recover_task.done():
+            self._auto_recover_task = asyncio.create_task(self._auto_recover_loop())
+
+    def _stop_auto_recover(self):
+        """停止断线自动恢复（用户主动断开账号时调用）"""
+        self._auto_recover_enabled = False
+        task = self._auto_recover_task
+        self._auto_recover_task = None
+        if task and not task.done():
+            task.cancel()
+
+    async def _auto_recover_loop(self):
+        """
+        断线自动恢复循环
+
+        每隔 AUTO_RECOVER_CHECK_INTERVAL 秒巡检一次连接健康度，发现断开就重建。
+        没有它的话，一次网络抖动就能让实时推送永久停摆（只能刷新页面才看得到新消息）。
+        重连失败按指数退避，避免在 Cookie 已失效的账号上空转。
+        """
+        delay = AUTO_RECOVER_MIN_DELAY
+        try:
+            while self._auto_recover_enabled:
+                await asyncio.sleep(AUTO_RECOVER_CHECK_INTERVAL)
+                if not self._auto_recover_enabled:
+                    break
+                if self.is_connected:
+                    delay = AUTO_RECOVER_MIN_DELAY
+                    continue
+
+                logger.warning(f"【{self.account_id}】检测到 IM 连接已断开，尝试自动重连")
+                if await self._reconnect_after_drop():
+                    delay = AUTO_RECOVER_MIN_DELAY
+                    logger.info(f"【{self.account_id}】IM 自动重连成功")
+                else:
+                    logger.warning(
+                        f"【{self.account_id}】IM 自动重连失败，{delay} 秒后重试"
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, AUTO_RECOVER_MAX_DELAY)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"【{self.account_id}】断线自动恢复循环异常: {e}")
+
+    async def reconnect_now(self) -> bool:
+        """
+        立即重建连接（供上层在发现掉线时主动调用，不等自动恢复巡检）
+
+        Returns:
+            重连后是否已可用（原本就在线时也返回 True）
+        """
+        return await self._reconnect_after_drop()
+
+    async def _reconnect_after_drop(self) -> bool:
+        """
+        网络掉线后的重连
+
+        与 _reconnect_with_new_token 的区别：那个是「Token 失效」专用，必须先换 Token；
+        这里是网络断开，Token 大概率还有效，直接复用省一次 API 调用（还能避开通流控）。
+        复用失败才退化成换新 Token 再试一次。
+        """
+        async with self._reconnect_lock:
+            if self.is_connected:
+                return True
+
+            # 第一次尝试：复用现有 Token 直接重连
+            await self.disconnect(keep_auto_recover=True)
+            if await self.connect():
+                self._conn_generation += 1
+                await self._fire_reconnected()
+                return True
+
+            # 第二次尝试：连不上大概率是 Token 也失效了，换新 Token 再连
+            logger.warning(f"【{self.account_id}】复用 Token 重连失败，改为换新 Token 重连")
+            try:
+                await self._mark_cached_token_expired()
+            except Exception as e:
+                logger.warning(f"【{self.account_id}】标记 Token 缓存过期失败: {e}")
+
+            self.token = ""
+            await self.disconnect(keep_auto_recover=True)
+            if await self.connect():
+                self._conn_generation += 1
+                await self._fire_reconnected()
+                return True
+
+            return False
+
+    def add_reconnected_callback(self, callback):
+        """注册「自动重连成功」回调（供上层通知前端补拉断线期间的消息）"""
+        if callback not in self._reconnected_callbacks:
+            self._reconnected_callbacks.append(callback)
+
+    async def _fire_reconnected(self):
+        """触发自动重连成功通知
+
+        断线期间到达的消息不会补推，只能由订阅方（前端）重新拉一次来补齐。
+        """
+        for callback in list(self._reconnected_callbacks):
+            try:
+                await callback(self.account_id)
+            except Exception as e:
+                logger.warning(f"【{self.account_id}】重连通知回调异常: {e}")
 
     async def _reconnect_with_new_token(self, seen_generation: int) -> bool:
         """Token/连接失效时：标记 Token 缓存过期 → 断开 → 用新 Token 重新连接并注册

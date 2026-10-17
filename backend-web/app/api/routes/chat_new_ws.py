@@ -139,10 +139,19 @@ async def chat_new_websocket(
 
     manager = get_im_session_manager()
     client = manager.clients.get(account_id)
-    if not client or not client.is_connected:
+    if not client:
         logger.warning(f"【{account_id}】IM 客户端未连接，拒绝注册前端实时消息订阅")
         await websocket.close(code=WS_CLOSE_IM_OFFLINE)
         return
+
+    if not client.is_connected:
+        # IM 长连接掉线了。与其让前端在 4404 上反复重连（退避最高 30s 一轮），
+        # 不如在这里顺手把 IM 拉起来，本次订阅就能直接成功。
+        logger.warning(f"【{account_id}】IM 客户端已掉线，订阅前先尝试立即重连")
+        if not await client.reconnect_now():
+            logger.warning(f"【{account_id}】IM 重连失败，拒绝注册前端实时消息订阅")
+            await websocket.close(code=WS_CLOSE_IM_OFFLINE)
+            return
 
     try:
         # 注册到管理器，开始接收推送
