@@ -75,7 +75,8 @@ const saveReadMarks = (marks: Record<string, number>) => {
 }
 
 /** 会话列表的最后一条摘要：发送者前缀按人着色，
- *  自己发的「你：」用蓝色、对方发的「他：」用琥珀色，一眼分清谁说的。
+ *  自己发的「你：」用翠绿色、对方发的「他：」用琥珀色，一眼分清谁说的。
+ *  注意别用蓝色——摘要里的商品标题就是蓝色，会撞色（2026-10-17 用户反馈）。
  *  系统消息没有前缀，按普通灰色文本渲染。 */
 function ConversationSummary({ text }: { text: string }) {
   const raw = text || '暂无消息'
@@ -83,7 +84,7 @@ function ConversationSummary({ text }: { text: string }) {
   const prefix = matched ? matched[1] : ''
   const body = matched ? raw.slice(matched[0].length) : raw
   const prefixClass = prefix === '你'
-    ? 'text-blue-500 dark:text-blue-400'
+    ? 'text-emerald-600 dark:text-emerald-400'
     : 'text-amber-600 dark:text-amber-400'
   return (
     <>
