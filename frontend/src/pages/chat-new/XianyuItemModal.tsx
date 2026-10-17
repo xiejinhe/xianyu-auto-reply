@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ExternalLink, ImageIcon, Package, RotateCw, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { InteractiveFrame } from './InteractiveFrame'
 
 const VIEW_STORAGE_KEY = 'chat_item_detail_view'
 
@@ -195,11 +196,11 @@ export function XianyuItemModal({
                 </div>
 
                 <div className="flex-1 min-h-0">
-                  <iframe
-                    key={reloadKey}
+                  <InteractiveFrame
                     src={itemUrl}
                     title="闲鱼商品详情"
-                    className="w-full h-full border-0 rounded-b-2xl bg-white"
+                    frameClass="w-full h-full border-0 rounded-b-2xl bg-white"
+                    reloadKey={reloadKey}
                     referrerPolicy="no-referrer"
                   />
                 </div>

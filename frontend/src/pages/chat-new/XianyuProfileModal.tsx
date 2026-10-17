@@ -11,6 +11,7 @@ import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ExternalLink, User, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { InteractiveFrame } from './InteractiveFrame'
 
 export interface XianyuProfileModalProps {
   isOpen: boolean
@@ -97,14 +98,15 @@ export function XianyuProfileModal({
             {/* 登录态说明 */}
             <div className="px-4 py-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border-b border-slate-200 dark:border-slate-700">
               下方为闲鱼网页，登录状态取决于你的浏览器是否已登录闲鱼；未登录会显示登录页，可点右上角「在闲鱼打开」。
+              按 Esc 关闭弹窗；点进页面操作后 Esc 暂时失效，点一下顶部即可恢复。
             </div>
 
-            {/* 闲鱼页面 */}
+            {/* 闲鱼页面：默认拦截交互保证 Esc 可用，点击遮罩后才放行 */}
             <div className="flex-1 min-h-0">
-              <iframe
+              <InteractiveFrame
                 src={profileUrl}
                 title="闲鱼个人主页"
-                className="w-full h-full border-0 rounded-b-2xl bg-white"
+                frameClass="w-full h-full border-0 rounded-b-2xl bg-white"
                 referrerPolicy="no-referrer"
               />
             </div>
