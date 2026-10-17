@@ -155,6 +155,10 @@ export function ChatNew() {
 
   // 用户信息缓存（otherUserId -> {avatar, nick}）
   const userInfoCacheRef = useRef<Record<string, { avatar: string; nick: string }>>({})
+  // 头像/昵称查询失败记忆（otherUserId -> 失败时间戳）：
+  // 后端主页接口被风控时返回空，若不做记忆，列表每次刷新都会重新发起
+  // 一轮全量查询，把风控越养越死。5 分钟内不再重试同一用户。
+  const userInfoFailAtRef = useRef<Record<string, number>>({})
 
   // 当前用户（卖家）头像缓存，accountId -> 头像URL，用于消息气泡右侧头像
   const [selfAvatars, setSelfAvatars] = useState<Record<string, string>>({})
@@ -769,6 +773,9 @@ export function ChatNew() {
       // 缓存中已有完整信息则跳过
       const cached = userInfoCacheRef.current[c.otherUserId]
       if (cached && cached.avatar && cached.nick) return false
+      // 最近查询失败过（多半是接口被风控），冷却期内不重试
+      const failedAt = userInfoFailAtRef.current[c.otherUserId] || 0
+      if (Date.now() - failedAt < 5 * 60 * 1000) return false
       return true
     },
   )
@@ -830,11 +837,20 @@ export function ChatNew() {
         const batch = queries.slice(i, i + BATCH_SIZE)
         try {
           const infos = await queryUserInfos(activeAccountId, batch)
+          // 记录失败记忆：批次里没拿到信息的用户进入 5 分钟冷却期；
+          // 拿到了则清掉旧记忆，允许以后刷新
+          const now = Date.now()
+          for (const q of batch) {
+            if (infos && infos[q.userId]) delete userInfoFailAtRef.current[q.userId]
+            else userInfoFailAtRef.current[q.userId] = now
+          }
           if (!cancelled && infos && Object.keys(infos).length > 0) {
             applyInfos(infos)
           }
         } catch {
-          // 单批失败不影响后续批次
+          // 单批失败不影响后续批次；本批用户也记入冷却期，避免立刻重试
+          const now = Date.now()
+          for (const q of batch) userInfoFailAtRef.current[q.userId] = now
         }
       }
     })()

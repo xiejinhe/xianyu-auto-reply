@@ -828,9 +828,10 @@ async def query_avatars(
 
         user_infos = {}
         for idx, item in enumerate(req.queries):
-            # 每次请求间隔 0.3 秒，防止 mtop API 限流
+            # 每次请求间隔 0.8 秒：主页接口对突发频率敏感（0.3s 实测会触发
+            # x5sec 风控挑战），宁可慢一点也别把账号查进黑名单
             if idx > 0:
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.8)
             # 头像只走主页接口（按 userId 缓存 30 分钟，不查活跃信息）：
             # user.query 返回的 logo 实测是查询账号自己的头像——同一条会话查
             # 对方和自己，返回同一张错误头像。宁可不显示，也不显示成自己的。

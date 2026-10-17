@@ -31,8 +31,10 @@ from .avatar_service import _handle_response_cookies, _update_account_cookies
 
 # Redis缓存键前缀（按被查询的用户ID，与账号无关）
 PROFILE_CACHE_PREFIX = "chat:user_profile:"
-# 主页信息变化慢，缓存 30 分钟
-PROFILE_CACHE_TTL = 1800
+# 主页信息（昵称/头像/属地等）变化很慢，缓存 24 小时。
+# 曾用 30 分钟：缓存一过期，第一波列表加载就要全量重查主页接口，
+# 一口气十几个请求直接把接口打进风控（FAIL_SYS_USER_VALIDATE）。
+PROFILE_CACHE_TTL = 86400
 
 # 「最近来过」是相对时间文案（"12分钟前来过"），缓存久了会越显示越失真，
 # 而且它要额外绕一跳商品详情，所以单独存一份短缓存，不跟主页信息混在一起。
@@ -56,6 +58,22 @@ ACTIVITY_FALLBACK_ACCOUNTS = 3
 
 # 最大令牌过期重试次数
 MAX_TOKEN_RETRY = 1
+
+# ==================== 主页接口账号级熔断 ====================
+# 主页接口被闲鱼风控后，会对整个账号持续返回 FAIL_SYS_USER_VALIDATE
+# （响应 set-cookie 里带 x5secdata/x5sectag 验证挑战标记）。此时继续重试
+# 毫无意义且会把风控越养越死（实测 2 分钟内连打 382 次全部失败）。
+# 因此：连续 VALIDATE 失败达阈值 → 该账号熔断一段时间，期间所有主页查询
+# 直接返回 None（前端走缓存或留灰占位）；任何一次成功即解除熔断并清零。
+VALIDATE_FAIL_TRIP = 3
+CIRCUIT_OPEN_SECONDS = 600
+_PROFILE_CIRCUIT: dict = {}        # account_id -> 熔断截止时间戳（time.time()）
+_PROFILE_VALIDATE_FAILS: dict = {} # account_id -> 连续 VALIDATE 失败次数
+
+# 单个用户查询失败后的负缓存（Redis）：短时间内同一用户不再出网重试，
+# 挡住前端列表轮询/页面刷新造成的反复重查。
+PROFILE_FAIL_CACHE_PREFIX = "chat:user_profile_fail:"
+PROFILE_FAIL_CACHE_TTL = 600
 
 # 认证标签：tag 字段 -> 展示文案
 _CERT_TAG_LABELS = (
@@ -106,6 +124,15 @@ async def get_user_profile(
     except Exception as e:
         logger.warning(f"【{account_id}】Redis读取主页信息缓存失败: {e}")
 
+    # 1.5 失败负缓存：该用户刚查失败（多为主页接口被风控），短时间内
+    # 不再为它出网，避免列表轮询/页面刷新反复重查
+    try:
+        redis = await get_redis_client()
+        if await redis.get(f"{PROFILE_FAIL_CACHE_PREFIX}{user_id}"):
+            return None
+    except Exception:
+        pass
+
     # 2. 调用 mtop API
     profile = await _fetch_profile_from_api(
         account_id=account_id,
@@ -151,6 +178,15 @@ async def _fetch_profile_from_api(
     retry_count: int = 0,
 ) -> Optional[dict]:
     """调用 mtop.idle.web.user.page.head 查询对方主页信息"""
+    # 账号熔断中：直接放弃本次出网（上层自然落到缓存或留灰占位）
+    circuit_until = _PROFILE_CIRCUIT.get(account_id, 0)
+    if circuit_until > time.time():
+        logger.debug(
+            f"【{account_id}】主页接口熔断中（剩 {int(circuit_until - time.time())} 秒），"
+            f"跳过 {user_id} 的查询"
+        )
+        return None
+
     try:
         cookies = trans_cookies(cookies_str)
         timestamp = str(int(time.time() * 1000))
@@ -209,6 +245,16 @@ async def _fetch_profile_from_api(
 
                 if "SUCCESS" in ret_str:
                     profile = _parse_profile(user_id, res_json.get("data", {}))
+                    if _PROFILE_VALIDATE_FAILS.get(account_id):
+                        logger.info(f"【{account_id}】主页接口已从风控中恢复")
+                    _PROFILE_VALIDATE_FAILS[account_id] = 0
+                    _PROFILE_CIRCUIT.pop(account_id, None)
+                    # 该用户若在负缓存中，成功后移除，允许后续刷新
+                    try:
+                        redis = await get_redis_client()
+                        await redis.delete(f"{PROFILE_FAIL_CACHE_PREFIX}{user_id}")
+                    except Exception:
+                        pass
                     if profile:
                         logger.info(
                             f"【{account_id}】获取对方主页信息成功: "
@@ -230,6 +276,30 @@ async def _fetch_profile_from_api(
                         db=db,
                         retry_count=retry_count + 1,
                     )
+
+                # 风控挑战：账号级封锁该接口，重试无效。记负缓存 + 连续失败
+                # 计数，达到阈值即熔断，避免 382 连击式地把风控养死
+                if "FAIL_SYS_USER_VALIDATE" in ret_str:
+                    fails = _PROFILE_VALIDATE_FAILS.get(account_id, 0) + 1
+                    _PROFILE_VALIDATE_FAILS[account_id] = fails
+                    try:
+                        redis = await get_redis_client()
+                        await redis.set(
+                            f"{PROFILE_FAIL_CACHE_PREFIX}{user_id}",
+                            "1",
+                            ex=PROFILE_FAIL_CACHE_TTL,
+                        )
+                    except Exception:
+                        pass
+                    if fails >= VALIDATE_FAIL_TRIP:
+                        _PROFILE_CIRCUIT[account_id] = time.time() + CIRCUIT_OPEN_SECONDS
+                        _PROFILE_VALIDATE_FAILS[account_id] = 0
+                        logger.warning(
+                            f"【{account_id}】主页接口连续 {fails} 次被风控"
+                            f"(FAIL_SYS_USER_VALIDATE)，熔断 {CIRCUIT_OPEN_SECONDS // 60} 分钟；"
+                            f"期间头像/名片走缓存或留空，等风控自行放行"
+                        )
+                    return None
 
                 logger.warning(f"【{account_id}】查询主页信息失败: {ret_str}")
                 return None
