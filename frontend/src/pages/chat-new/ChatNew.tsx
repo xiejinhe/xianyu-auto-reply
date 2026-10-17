@@ -1925,9 +1925,9 @@ export function ChatNew() {
           )}
         </div>
 
-        {/* 名片 + 会话商品：桌面端左右各占一半，窄屏自动回退上下堆叠。
-            左边信息放不下的部分直接裁掉，完整内容悬停可见（title） */}
-        <div className="flex flex-col md:grid md:grid-cols-2 items-stretch border-b border-gray-200 dark:border-gray-700">
+        {/* 名片 + 会话商品：各占一整行（改回上下堆叠，信息能完整铺开）。
+            悬停任一条可看完整资料 */}
+        <div className="flex flex-col items-stretch border-b border-gray-200 dark:border-gray-700">
           {/* 对方名片条：闲鱼主页信息直接摆在会话里，点开可看完整主页 */}
           {activeConversation?.otherUserId && peerProfile && (
             <button
@@ -1950,7 +1950,7 @@ export function ChatNew() {
                 peerProfile.introduction,
                 '——点击查看闲鱼个人主页',
               ].filter(Boolean).join('\n')}
-              className="min-w-0 flex items-center gap-3 px-3 py-2 md:border-r border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
+              className="w-full flex items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
             >
               {peerProfile.avatar ? (
                 <img
@@ -1989,21 +1989,26 @@ export function ChatNew() {
                     </span>
                   )}
                 </div>
-                {/* 次要信息一行放不下就裁掉，完整内容悬停按钮可见 */}
-                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0 overflow-hidden whitespace-nowrap">
-                  {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0 overflow-hidden">
                   {peerProfile.replyRatio24h && (
-                    <span className="flex-shrink-0">回复{peerProfile.replyRatio24h}</span>
+                    <span className="flex-shrink-0">24h回复{peerProfile.replyRatio24h}</span>
                   )}
+                  {peerProfile.replyInterval && (
+                    <span className="flex-shrink-0">平均{peerProfile.replyInterval}回复</span>
+                  )}
+                  {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
+                  {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
                   {typeof peerProfile.itemCount === 'number' && (
                     <span className="flex-shrink-0">宝贝{peerProfile.itemCount}</span>
                   )}
-                  {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
                   {peerProfile.certifications.slice(0, 2).map((cert) => (
                     <span key={cert} className="flex-shrink-0 px-1 rounded bg-gray-100 dark:bg-gray-700">
                       {cert}
                     </span>
                   ))}
+                  {peerProfile.introduction && (
+                    <span className="truncate">· {peerProfile.introduction}</span>
+                  )}
                 </div>
               </div>
               <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -2020,10 +2025,7 @@ export function ChatNew() {
                 `商品ID ${activeConversation.itemId}`,
                 '——点击查看闲鱼商品页',
               ].filter(Boolean).join('\n')}
-              className={cn(
-                'min-w-0 flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left',
-                !(activeConversation?.otherUserId && peerProfile) && 'md:col-span-2',
-              )}
+              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
             >
               {activeConversation.itemMainPic ? (
                 <img
