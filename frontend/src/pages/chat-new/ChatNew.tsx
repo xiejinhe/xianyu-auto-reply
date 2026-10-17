@@ -711,7 +711,7 @@ export function ChatNew() {
     })
   }, [addToast])
 
-  const loadMessages = useCallback(async (accountId: string, cid: string, append = false) => {
+  const loadMessages = useCallback(async (accountId: string, cid: string, append = false, silent = false) => {
     if (!accountId || !cid) return
     if (recoveryRef.current.message(accountId, cid)) {
       await catchUpActiveConversation(accountId, cid)
@@ -722,7 +722,8 @@ export function ChatNew() {
     const isCurrent = () => requestId === msgRequestIdRef.current &&
       generation === recoveryRef.current.generation(accountId) &&
       accountId === activeAccountIdRef.current && cid === activeCidRef.current
-    setLoadingMsgs(true)
+    // silent 供定时兜底拉取使用：不闪 loading、失败不弹 toast
+    if (!silent) setLoadingMsgs(true)
     await getMessages(accountId, cid, append ? msgCursorRef.current ?? undefined : undefined)
       .then((result) => {
         if (!isCurrent()) return
@@ -737,9 +738,9 @@ export function ChatNew() {
         setMsgHasMore(next.hasMore)
         setMsgCursor(next.cursor)
       }).catch((error: Error) => {
-        if (isCurrent()) addToast({ message: error.message, type: 'error' })
+        if (!silent && isCurrent()) addToast({ message: error.message, type: 'error' })
       }).finally(() => {
-        if (requestId === msgRequestIdRef.current) setLoadingMsgs(false)
+        if (!silent && requestId === msgRequestIdRef.current) setLoadingMsgs(false)
       })
   }, [addToast, catchUpActiveConversation])
 
@@ -754,6 +755,20 @@ export function ChatNew() {
   useEffect(() => {
     reloadCurrentChatRef.current = reloadCurrentChat
   }, [reloadCurrentChat])
+
+  // 推送缺失兜底：闲鱼不给网页 IM 稳定推送对方消息（服务端行为，实测长期如此，
+  // 见提交 67e6348 的排查）。推送和断线补偿任何一环没接到，聊天窗口就会一直
+  // 停在旧消息上。这里给当前打开的会话定时增量拉最新一页兜底，消息按 ID 去重，
+  // 重复拉取无害。静默模式：不闪 loading、失败不弹 toast。
+  useEffect(() => {
+    if (!activeAccountId || !activeCid) return
+    const timer = setInterval(() => {
+      // 页面切到后台时没必要拉，回来后下一轮自然补上
+      if (document.hidden) return
+      void loadMessages(activeAccountId, activeCid, false, true)
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [activeAccountId, activeCid, loadMessages])
 
   /** 账号和会话切换共用恢复入口，后台缓存待补偿时立即拉取缺失消息。 */
   const restoreConversation = useCallback((accountId: string, cid: string) => {
