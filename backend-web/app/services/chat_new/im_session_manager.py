@@ -23,7 +23,7 @@ from common.models import XYAccount
 
 from .im_client import GoofishImClient
 
-# 同一条消息的可能被投递两次：系统内互发补偿（notify_peer_account 合成）
+# 同一条消息可能被投递两次：系统内互发补偿（notify_peer_account 合成）
 # 与闲鱼真实推送各来一次。前端虽按 messageId 去重只显示一条，但会话未读数
 # 会被重复 +1（发 3 条显示 6 条）。这里在投递侧做短时去重，保证一条消息
 # 只投递一次；即便误判，30 秒增量拉取仍会从历史补齐，不会漏消息。
