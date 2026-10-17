@@ -1,9 +1,13 @@
 """
 对方闲鱼主页信息查询服务（在线聊天）
 
-数据来源：mtop.idle.web.user.page.head（闲鱼网页版个人主页头部接口）
-返回昵称/头像/属地/简介/店铺等级/好评率/粉丝数/认证标签等，
-用于在会话窗口直接展示"买家名片"，省掉打开主页逐个看的步骤。
+数据来源：
+1. mtop.idle.web.user.page.head（闲鱼网页版个人主页头部接口）
+   返回昵称/头像/属地/简介/店铺等级/好评率/粉丝数/认证标签等，
+   用于在会话窗口直接展示"买家名片"，省掉打开主页逐个看的步骤。
+2. mtop.taobao.idle.pc.detail（商品详情，需先用 xyh.item.list 取商品ID）
+   sellerDO 里带"最近来过"、24h 回复率、平均回复间隔——这三个字段
+   网页版主页接口不返回，只有商品详情挂了，所以要额外绕一跳。
 
 调用方式与头像服务（avatar_service）一致：账号 Cookie + mtop 签名，
 结果按用户ID缓存到 Redis。
@@ -12,12 +16,15 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import aiohttp
 from loguru import logger
+from sqlalchemy import select
 
 from common.db.redis_client import get_redis_client
+from common.models.xy_account import XYAccount
+from common.services.xianyu_detail_client import XianyuItemDetailClient
 from common.utils.xianyu_utils import generate_sign, trans_cookies
 
 from .avatar_service import _handle_response_cookies, _update_account_cookies
@@ -27,9 +34,25 @@ PROFILE_CACHE_PREFIX = "chat:user_profile:"
 # 主页信息变化慢，缓存 30 分钟
 PROFILE_CACHE_TTL = 1800
 
+# 「最近来过」是相对时间文案（"12分钟前来过"），缓存久了会越显示越失真，
+# 而且它要额外绕一跳商品详情，所以单独存一份短缓存，不跟主页信息混在一起。
+ACTIVITY_CACHE_PREFIX = "chat:user_activity:"
+ACTIVITY_CACHE_TTL = 300
+# 查不到时的空占位缓存：避免每次进会话都重试一遍风控中的接口
+ACTIVITY_MISS_TTL = 120
+
 # mtop API 配置
 USER_HEAD_API = "mtop.idle.web.user.page.head"
 USER_HEAD_URL = f"https://h5api.m.goofish.com/h5/{USER_HEAD_API}/1.0/"
+# 对方在售商品列表接口（拿一个商品ID，再借商品详情查卖家的"最近来过"）
+USER_ITEM_LIST_API = "mtop.idle.web.xyh.item.list"
+USER_ITEM_LIST_URL = f"https://h5api.m.goofish.com/h5/{USER_ITEM_LIST_API}/1.0/"
+
+# 查「最近来过」时最多尝试的商品数与备用账号数
+# 商品详情是闲鱼风控较严的接口，单个账号可能整体被拦（FAIL_SYS_USER_VALIDATE），
+# 所以多备几个商品、并在必要时借用同一用户名下的其它账号兜底。
+ACTIVITY_ITEM_LIMIT = 3
+ACTIVITY_FALLBACK_ACCOUNTS = 3
 
 # 最大令牌过期重试次数
 MAX_TOKEN_RETRY = 1
@@ -88,7 +111,7 @@ async def get_user_profile(
         retry_count=0,
     )
 
-    # 3. 写入缓存
+    # 3. 写入缓存（只存主页信息本身，不含下面的活跃信息）
     if profile:
         try:
             redis = await get_redis_client()
@@ -97,6 +120,21 @@ async def get_user_profile(
             )
         except Exception as e:
             logger.warning(f"【{account_id}】Redis写入主页信息缓存失败: {e}")
+
+    # 4. 对方有在售商品时，借商品详情补「最近来过 / 回复速度」。
+    #    闲鱼把活跃状态挂在商品详情的 sellerDO 上（APP 主页的"X分钟前来过"
+    #    就是它），主页接口本身没有这个字段。单独短缓存，失败静默跳过，
+    #    不影响名片主体。
+    if profile and profile.get("itemCount"):
+        activity = await _get_activity_cached(
+            account_id=account_id,
+            user_id=user_id,
+            cookies_str=cookies_str,
+            db=db,
+            expected_nick=profile.get("nick", ""),
+        )
+        if activity:
+            profile.update(activity)
 
     return profile
 
@@ -206,6 +244,265 @@ def _to_int(value) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+async def _get_activity_cached(
+    account_id: str,
+    user_id: str,
+    cookies_str: str,
+    db,
+    expected_nick: str = "",
+) -> Optional[dict]:
+    """
+    带短缓存的活跃信息查询
+
+    「最近来过」是相对时间文案，必须比主页信息更快过期；同时这一项要
+    多花一跳商品详情，不能每次进会话都真查。查不到时缓存一个空标记，
+    免得对正在风控的账号反复无效重试。
+    """
+    cache_key = f"{ACTIVITY_CACHE_PREFIX}{user_id}"
+    try:
+        redis = await get_redis_client()
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            return json.loads(cached) or None
+    except Exception:
+        pass
+
+    activity = await _fetch_activity(
+        account_id=account_id,
+        user_id=user_id,
+        cookies_str=cookies_str,
+        db=db,
+        expected_nick=expected_nick,
+    )
+    try:
+        redis = await get_redis_client()
+        await redis.set(
+            cache_key,
+            json.dumps(activity, ensure_ascii=False),
+            ex=ACTIVITY_CACHE_TTL if activity else ACTIVITY_MISS_TTL,
+        )
+    except Exception as e:
+        logger.warning(f"【{account_id}】Redis写入活跃信息缓存失败: {e}")
+    return activity
+
+
+async def _fetch_activity(
+    account_id: str,
+    user_id: str,
+    cookies_str: str,
+    db,
+    expected_nick: str = "",
+) -> Optional[dict]:
+    """
+    查对方的「最近来过 / 回复速度」
+
+    链路：主页商品列表接口拿对方的在售商品 → 商品详情接口的 sellerDO
+    里带 lastVisitTime（如"12分钟前来过"）、24h 回复率、平均回复间隔。
+    闲鱼网页版主页本身不返回这两个字段，只有商品详情有，所以必须绕这一跳。
+
+    商品详情是风控较严的接口，实测会出现整个账号被拦的情况
+    （ret=FAIL_SYS_USER_VALIDATE，换商品也一样），因此这里做两级兜底：
+    多试几个商品；账号被拦时借用同一用户名下的其它账号再查。
+    查不到就返回 None，名片主体照常展示。
+    """
+    try:
+        item_ids = await _fetch_item_ids(
+            account_id=account_id,
+            user_id=user_id,
+            cookies_str=cookies_str,
+            db=db,
+            size=ACTIVITY_ITEM_LIMIT,
+        )
+        if not item_ids:
+            return None
+
+        candidates: List[Tuple[str, str]] = [(account_id, cookies_str)]
+        candidates.extend(
+            await _load_sibling_accounts(account_id, db, limit=ACTIVITY_FALLBACK_ACCOUNTS)
+        )
+
+        for idx, (query_account, query_cookies) in enumerate(candidates):
+            activity = await _try_activity_on_items(
+                account_id=query_account,
+                cookies_str=query_cookies,
+                item_ids=item_ids,
+                user_id=user_id,
+                expected_nick=expected_nick,
+            )
+            if activity:
+                if idx:
+                    logger.info(
+                        f"【{account_id}】对方活跃信息由备用账号 {query_account} 查到: "
+                        f"{activity.get('lastVisitTime', '')}"
+                    )
+                return activity
+        return None
+    except Exception as e:
+        logger.warning(f"【{account_id}】查询对方活跃信息失败: {e}")
+        return None
+
+
+async def _try_activity_on_items(
+    account_id: str,
+    cookies_str: str,
+    item_ids: List[str],
+    user_id: str,
+    expected_nick: str = "",
+) -> Optional[dict]:
+    """用一个账号依次查几个商品的详情，取第一个能用的卖家活跃信息"""
+    for item_id in item_ids:
+        try:
+            client = XianyuItemDetailClient(account_id, cookies_str)
+            result = await client.get_detail(item_id)
+        except Exception as e:
+            logger.warning(f"【{account_id}】商品详情请求异常({item_id}): {e}")
+            return None
+
+        if not result.get("success"):
+            # 账号在本接口上不可用（风控/登录态失效），换商品没意义，交给上层换账号
+            if result.get("account_invalid"):
+                logger.info(
+                    f"【{account_id}】商品详情接口不可用({result.get('error', '')})，换账号重试"
+                )
+                return None
+            continue
+
+        seller = (result.get("detail") or {}).get("sellerDO") or {}
+        # 商品列表理论上只返回对方的在售商品，但保险起见校验一下卖家昵称，
+        # 避免拿错人的活跃信息显示在会话里
+        nick = str(seller.get("nick") or "")
+        if expected_nick and nick and nick != expected_nick:
+            continue
+
+        activity: dict = {}
+        if seller.get("lastVisitTime"):
+            activity["lastVisitTime"] = str(seller["lastVisitTime"])
+        if seller.get("replyRatio24h"):
+            activity["replyRatio24h"] = str(seller["replyRatio24h"])
+        if seller.get("replyInterval"):
+            activity["replyInterval"] = str(seller["replyInterval"])
+        if activity:
+            logger.info(
+                f"【{account_id}】对方活跃信息: user={user_id}, "
+                f"{activity.get('lastVisitTime', '')}"
+            )
+            return activity
+    return None
+
+
+async def _load_sibling_accounts(
+    account_id: str, db, limit: int = ACTIVITY_FALLBACK_ACCOUNTS
+) -> List[Tuple[str, str]]:
+    """取同一用户名下其它活跃账号，作为商品详情风控时的备用查询账号"""
+    try:
+        owner_id = await db.scalar(
+            select(XYAccount.owner_id).where(XYAccount.account_id == account_id)
+        )
+        if owner_id is None:
+            return []
+        rows = (
+            await db.execute(
+                select(XYAccount.account_id, XYAccount.cookie).where(
+                    XYAccount.owner_id == owner_id,
+                    XYAccount.account_id != account_id,
+                    XYAccount.status == "active",
+                    XYAccount.cookie.isnot(None),
+                    XYAccount.cookie != "",
+                ).limit(limit)
+            )
+        ).all()
+        return [(row[0], row[1]) for row in rows if row[0] and row[1]]
+    except Exception as e:
+        logger.warning(f"【{account_id}】读取备用账号失败: {e}")
+        return []
+
+
+async def _fetch_item_ids(
+    account_id: str,
+    user_id: str,
+    cookies_str: str,
+    db,
+    size: int = 1,
+) -> List[str]:
+    """查对方在售商品列表，返回前 size 个商品ID；没有在售商品返回空列表"""
+    try:
+        cookies = trans_cookies(cookies_str)
+        timestamp = str(int(time.time() * 1000))
+        data_val = json.dumps(
+            {
+                "userId": str(user_id),
+                "pageNumber": 1,
+                "pageSize": max(1, size),
+            },
+            separators=(",", ":"),
+        )
+
+        token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
+        sign = generate_sign(timestamp, token, data_val)
+
+        params = {
+            "jsv": "2.7.2",
+            "appKey": "34839810",
+            "t": timestamp,
+            "sign": sign,
+            "v": "1.0",
+            "type": "originaljson",
+            "accountSite": "xianyu",
+            "dataType": "json",
+            "timeout": "20000",
+            "api": USER_ITEM_LIST_API,
+            "sessionOption": "AutoLoginOnly",
+            "spm_cnt": "a21ybx.im.0.0",
+        }
+
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded",
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/146.0.0.0 Safari/537.36"
+            ),
+            "referer": "https://www.goofish.com/",
+            "origin": "https://www.goofish.com",
+            "cookie": cookies_str.replace("\n", "").replace("\r", ""),
+        }
+
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                USER_ITEM_LIST_URL,
+                params=params,
+                data={"data": data_val},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                res_json = await response.json()
+
+                new_cookies_str = _handle_response_cookies(response, cookies_str)
+                if new_cookies_str and new_cookies_str != cookies_str:
+                    await _update_account_cookies(db, account_id, new_cookies_str)
+
+                ret = res_json.get("ret", [])
+                if "SUCCESS" not in (ret[0] if ret else ""):
+                    logger.warning(
+                        f"【{account_id}】查询对方在售商品失败: {(ret[0] if ret else '')[:80]}"
+                    )
+                    return []
+
+                item_ids: List[str] = []
+                for card in (res_json.get("data") or {}).get("cardList") or []:
+                    detail_params = (card.get("cardData") or {}).get("detailParams") or {}
+                    if detail_params.get("itemId"):
+                        item_ids.append(str(detail_params["itemId"]))
+                    if len(item_ids) >= size:
+                        break
+                return item_ids
+
+    except Exception as e:
+        logger.warning(f"【{account_id}】查询对方在售商品异常: {e}")
+        return []
 
 
 def _parse_profile(user_id: str, data: dict) -> Optional[dict]:

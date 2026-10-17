@@ -86,6 +86,12 @@ export interface XianyuUserProfile {
   rateCount: number | null
   /** 认证标签：实名认证/真人认证/芝麻信用/闲鱼老用户 */
   certifications: string[]
+  /** 最近活跃，如"3分钟前来过"（对方有在售商品时才有） */
+  lastVisitTime?: string
+  /** 24h 回复率，如"77%" */
+  replyRatio24h?: string
+  /** 平均回复间隔，如"1小时" */
+  replyInterval?: string
 }
 
 /** 聊天消息 */

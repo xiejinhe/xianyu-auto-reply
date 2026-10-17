@@ -1923,6 +1923,11 @@ export function ChatNew() {
                 <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
                   {peerProfile.nick || activeConversation.otherUserName || '未知用户'}
                 </span>
+                {peerProfile.lastVisitTime && (
+                  <span className="flex-shrink-0 px-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-[10px] text-emerald-700 dark:text-emerald-300">
+                    {peerProfile.lastVisitTime}
+                  </span>
+                )}
                 {peerProfile.shopLevel && (
                   <span className="flex-shrink-0 px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-[10px] text-amber-700 dark:text-amber-300">
                     {peerProfile.shopLevel}
@@ -1940,6 +1945,12 @@ export function ChatNew() {
                 )}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0">
+                {peerProfile.replyRatio24h && (
+                  <span className="flex-shrink-0">24h回复{peerProfile.replyRatio24h}</span>
+                )}
+                {peerProfile.replyInterval && (
+                  <span className="flex-shrink-0">平均{peerProfile.replyInterval}回复</span>
+                )}
                 {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
                 {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
                 {typeof peerProfile.itemCount === 'number' && (
