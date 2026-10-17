@@ -11,7 +11,8 @@ IM会话管理器
 import asyncio
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections import deque
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 from sqlalchemy import select
@@ -21,6 +22,16 @@ from common.db.session import async_session_maker
 from common.models import XYAccount
 
 from .im_client import GoofishImClient
+
+# 同一条消息的可能被投递两次：系统内互发补偿（notify_peer_account 合成）
+# 与闲鱼真实推送各来一次。前端虽按 messageId 去重只显示一条，但会话未读数
+# 会被重复 +1（发 3 条显示 6 条）。这里在投递侧做短时去重，保证一条消息
+# 只投递一次；即便误判，30 秒增量拉取仍会从历史补齐，不会漏消息。
+_DELIVERY_DEDUPE_WINDOW_MS = 10_000  # 同一消息两次投递的时间容差
+_DELIVERY_DEDUPE_TTL = 60.0  # 去重记录保留时长（秒）
+_DELIVERY_DEDUPE_MAX = 100  # 单账号保留的去重记录条数
+# 合成补偿前给真实推送的等待时间（秒）：真实推送带真昵称和服务端时间，优先让它送达
+PEER_NOTIFY_WAIT = 1.2
 
 
 class ImSessionManager:
@@ -34,6 +45,10 @@ class ImSessionManager:
         self._lock = asyncio.Lock()
         # 前端 WebSocket 客户端: account_id -> Set[WebSocket]
         self._ws_clients: Dict[str, Set[WebSocket]] = {}
+        # 已投递消息去重：account_id -> deque[(内容键, messageId, 消息时间ms, 记录时刻)]
+        self._recent_deliveries: Dict[str, Deque[Tuple[str, str, float, float]]] = {}
+        # 延迟补偿任务集合（保活，避免被 GC 中途回收）
+        self._pending_tasks: Set[asyncio.Task] = set()
 
     @classmethod
     def get_instance(cls) -> "ImSessionManager":
@@ -159,6 +174,52 @@ class ImSessionManager:
             f"剩余连接数: {len(self._ws_clients.get(account_id, set()))}"
         )
 
+    # ==================== 投递去重 ====================
+    # 一条消息只应向某账号的前端投递一次，重复投递会让未读数翻倍。
+
+    @staticmethod
+    def _delivery_key(cid: str, message: Dict[str, Any]) -> str:
+        """消息内容键：无 messageId（或两侧 ID 体系不一致）时按内容比对"""
+        images = message.get("images") or []
+        return "|".join([
+            str(cid),
+            str(message.get("senderId", "") or ""),
+            str(message.get("type", "") or ""),
+            str(message.get("text", "") or ""),
+            ",".join(str(url) for url in images),
+            str(message.get("audioUrl", "") or ""),
+        ])
+
+    def _is_duplicate_delivery(self, account_id: str, cid: str, message: Dict[str, Any]) -> bool:
+        """判断该消息最近是否已向该账号的前端投递过"""
+        now = time.monotonic()
+        records = self._recent_deliveries.setdefault(account_id, deque())
+        while records and now - records[0][3] > _DELIVERY_DEDUPE_TTL:
+            records.popleft()
+        key = self._delivery_key(cid, message)
+        msg_id = str(message.get("messageId", "") or "")
+        msg_time = float(message.get("time", 0) or 0)
+        for r_key, r_id, r_time, _created in records:
+            # ID 一致必定是同一条消息
+            if msg_id and r_id and msg_id == r_id:
+                return True
+            # 无 ID 或 ID 不一致时退化为内容 + 时间窗口比对
+            if r_key == key and abs(msg_time - r_time) <= _DELIVERY_DEDUPE_WINDOW_MS:
+                return True
+        return False
+
+    def _mark_delivered(self, account_id: str, cid: str, message: Dict[str, Any]) -> None:
+        """记录已投递，供后续重复事件识别"""
+        records = self._recent_deliveries.setdefault(account_id, deque())
+        records.append((
+            self._delivery_key(cid, message),
+            str(message.get("messageId", "") or ""),
+            float(message.get("time", 0) or 0),
+            time.monotonic(),
+        ))
+        while len(records) > _DELIVERY_DEDUPE_MAX:
+            records.popleft()
+
     def _ensure_push_callback(self, account_id: str, client: GoofishImClient):
         """确保 IM 客户端上已挂载推送回调（避免重复注册）"""
         # 用属性标记是否已挂载
@@ -170,6 +231,17 @@ class ImSessionManager:
             ws_set = self._ws_clients.get(account_id)
             if not ws_set:
                 return
+            # 已被系统内互发补偿投递过的消息，真实推送不再重复下发（反之亦然）
+            if parsed_msg.get("event") == "new_message":
+                cid = str(parsed_msg.get("cid", "") or "")
+                message = parsed_msg.get("message") or {}
+                if self._is_duplicate_delivery(account_id, cid, message):
+                    logger.info(
+                        f"【{account_id}】推送与已投递内容重复，跳过转发 "
+                        f"(cid={cid}, id={message.get('messageId', '')})"
+                    )
+                    return
+                self._mark_delivered(account_id, cid, message)
             payload = json.dumps(parsed_msg, ensure_ascii=False)
             dead: List[WebSocket] = []
             for ws in ws_set:
@@ -234,8 +306,11 @@ class ImSessionManager:
         的账号互发时，接收方界面毫无动静，刷新页面才能看到。
 
         这里在发送成功后，向接收账号的前端 WebSocket 合成一条与真实推送
-        同构的 new_message 事件。若服务端之后真的补推了同一条消息，前端按
-        messageId 去重（chat_history_merge.mergeMessages），不会重复显示。
+        同构的 new_message 事件。
+
+        真实推送优先：它带的是闲鱼真实昵称和服务端时间，而合成事件只能取到
+        数据库里脱敏的昵称（如 x***1）。所以合成事件延迟 PEER_NOTIFY_WAIT
+        秒再发，期间真实推送到达就跳过合成。
 
         Args:
             sender_account_id: 发送方账号ID（用于查昵称与日志）
@@ -249,11 +324,66 @@ class ImSessionManager:
             audio_duration: 语音时长（毫秒，与前端 ChatMessage.audioDuration 一致）
 
         Returns:
-            是否有前端客户端接收到了该事件
+            是否已安排向该账号的前端补偿投递
         """
         if not self._ws_clients.get(to_user_id):
             return False
+        try:
+            task = asyncio.create_task(self._peer_notify_after_push(
+                sender_account_id, cid, to_user_id,
+                message_id=message_id, msg_type=msg_type, text=text,
+                images=images, audio_url=audio_url, audio_duration=audio_duration,
+            ))
+            # 事件循环只持有弱引用，必须自己留住任务，否则可能被中途回收
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+            return True
+        except RuntimeError as e:
+            # 事件循环已关闭（服务停机中），跳过补偿即可
+            logger.warning(f"【{sender_account_id}】系统内互发补偿未安排: {e}")
+            return False
 
+    async def _peer_notify_after_push(
+        self,
+        sender_account_id: str,
+        cid: str,
+        to_user_id: str,
+        *,
+        message_id: str,
+        msg_type: str,
+        text: str = "",
+        images: Optional[List[str]] = None,
+        audio_url: str = "",
+        audio_duration: int = 0,
+    ) -> bool:
+        """等待真实推送一小会儿；推送没来才合成补偿事件（保证一条消息只投递一次）"""
+        try:
+            await asyncio.sleep(PEER_NOTIFY_WAIT)
+            if not self._ws_clients.get(to_user_id):
+                return False
+            return await self._deliver_peer_notify(
+                sender_account_id, cid, to_user_id,
+                message_id=message_id, msg_type=msg_type, text=text,
+                images=images, audio_url=audio_url, audio_duration=audio_duration,
+            )
+        except Exception as e:
+            logger.warning(f"【{sender_account_id}】系统内互发补偿异常: {e}")
+            return False
+
+    async def _deliver_peer_notify(
+        self,
+        sender_account_id: str,
+        cid: str,
+        to_user_id: str,
+        *,
+        message_id: str,
+        msg_type: str,
+        text: str = "",
+        images: Optional[List[str]] = None,
+        audio_url: str = "",
+        audio_duration: int = 0,
+    ) -> bool:
+        """合成并向接收账号的前端投递一条 new_message 事件"""
         sender_id = sender_account_id
         sender_client = self.clients.get(sender_account_id)
         if sender_client:
@@ -286,6 +416,15 @@ class ImSessionManager:
         if audio_url:
             message["audioUrl"] = audio_url
             message["audioDuration"] = audio_duration
+
+        # 真实推送先到时不再重复合成，避免一条消息投递两次
+        if self._is_duplicate_delivery(to_user_id, cid, message):
+            logger.info(
+                f"【{sender_account_id}】系统内互发补偿跳过：{to_user_id} 已收到该消息"
+                f" (cid={cid}, id={message_id})"
+            )
+            return False
+        self._mark_delivered(to_user_id, cid, message)
 
         await self._broadcast_event(to_user_id, {
             "event": "new_message",
