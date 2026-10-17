@@ -217,6 +217,68 @@ async def list_connected_accounts(
         return ApiResponse(success=False, message=f"获取已连接账号列表失败: {str(e)}")
 
 
+# 「连接过就该在线」清单：记录用户手动连接过哪些账号的 IM，后端重启后自动恢复。
+# 否则每次重启后端，IM 客户端全部消失（manager.clients 在进程内存里），
+# 所有账号掉线且无人重建，必须手动挨个点「连接」——用户实测踩过的坑。
+AUTO_CONNECT_IDS_KEY = "chat_new.auto_connect_accounts"
+
+
+async def _load_auto_connect_ids(db: AsyncSession) -> list[str]:
+    from app.services.system_setting_service import SystemSettingService
+    try:
+        settings = await SystemSettingService(db).list_settings()
+        raw = str(settings.get(AUTO_CONNECT_IDS_KEY) or "[]")
+        ids = json.loads(raw)
+        if isinstance(ids, list):
+            return [str(i) for i in ids if i]
+    except Exception as e:
+        logger.warning(f"读取IM自动连接清单失败: {e}")
+    return []
+
+
+async def _save_auto_connect_id(db: AsyncSession, account_id: str, connected: bool) -> None:
+    """连接成功 -> 加入清单；手动断开 -> 移出清单（尊重用户意愿，不再自动连）"""
+    from app.services.system_setting_service import SystemSettingService
+    try:
+        ids = await _load_auto_connect_ids(db)
+        if connected and account_id not in ids:
+            ids.append(account_id)
+        elif not connected and account_id in ids:
+            ids.remove(account_id)
+        else:
+            return
+        await SystemSettingService(db).set_setting(
+            AUTO_CONNECT_IDS_KEY, json.dumps(ids), "在线聊天重启后自动重连的账号清单"
+        )
+    except Exception as e:
+        logger.warning(f"更新IM自动连接清单失败: {e}")
+
+
+async def auto_reconnect_chat_accounts() -> None:
+    """重启后自动恢复「用户连接过」的账号 IM 连接。
+
+    放在启动后台任务里跑：先等几秒让 DB/Redis 就绪，再逐个重连，
+    单个失败（如 Cookie 失效）只记日志不阻塞其它账号。
+    """
+    await asyncio.sleep(5)
+    from common.db.session import async_session_maker
+    manager = get_im_session_manager()
+    async with async_session_maker() as db:
+        ids = await _load_auto_connect_ids(db)
+    if not ids:
+        return
+    logger.info(f"开始自动恢复在线聊天IM连接，共 {len(ids)} 个账号: {ids}")
+    ok = 0
+    for account_id in ids:
+        try:
+            await manager.get_or_connect(account_id)
+            ok += 1
+        except Exception as e:
+            logger.warning(f"自动恢复IM连接失败（跳过）: {account_id}: {e}")
+        await asyncio.sleep(1)
+    logger.info(f"在线聊天IM连接自动恢复完成: {ok}/{len(ids)}")
+
+
 @router.post("/connect/{account_id}")
 async def connect_account(
     account_id: str,
@@ -238,6 +300,8 @@ async def connect_account(
 
         manager = get_im_session_manager()
         await manager.get_or_connect(account_id)
+        # 连接成功记入「重启后自动恢复」清单
+        await _save_auto_connect_id(db, account_id, True)
         return ApiResponse(success=True, message="连接成功")
 
     except ValueError as e:
@@ -251,6 +315,7 @@ async def connect_account(
 async def disconnect_account(
     account_id: str,
     current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     断开指定账号的IM WebSocket
@@ -258,6 +323,8 @@ async def disconnect_account(
     try:
         manager = get_im_session_manager()
         await manager.disconnect(account_id)
+        # 手动断开 = 用户不想让它在线，移出「重启后自动恢复」清单
+        await _save_auto_connect_id(db, account_id, False)
         return ApiResponse(success=True, message="已断开连接")
 
     except Exception as e:

@@ -146,7 +146,16 @@ async def lifespan(app: FastAPI):
             logger.error(f"启动 Goofish 定时采集任务失败: {e}")
     else:
         logger.info("已禁用自动启动Goofish定时采集任务（AUTO_START_CRAWL_JOBS=false）")
-    
+
+    # 重启后自动恢复在线聊天 IM 连接：按「用户连接过」的账号清单逐个重连，
+    # 否则每次重启后端所有账号掉线且无人重建，必须手动挨个点连接。
+    # 放后台任务跑（内部先等几秒让 DB/Redis 就绪），单个失败只记日志。
+    try:
+        from app.api.routes.chat_new import auto_reconnect_chat_accounts
+        asyncio.create_task(auto_reconnect_chat_accounts())
+    except Exception as e:
+        logger.error(f"自动恢复在线聊天IM连接失败: {e}")
+
     yield
     
     logger.info(f"{settings.project_name} 关闭中...")
