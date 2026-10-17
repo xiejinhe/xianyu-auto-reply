@@ -1925,8 +1925,9 @@ export function ChatNew() {
           )}
         </div>
 
-        {/* 名片 + 会话商品：桌面端左右并排省一行高度，窄屏自动回退上下堆叠 */}
-        <div className="flex flex-col md:flex-row items-stretch border-b border-gray-200 dark:border-gray-700">
+        {/* 名片 + 会话商品：桌面端左右各占一半，窄屏自动回退上下堆叠。
+            左边信息放不下的部分直接裁掉，完整内容悬停可见（title） */}
+        <div className="flex flex-col md:grid md:grid-cols-2 items-stretch border-b border-gray-200 dark:border-gray-700">
           {/* 对方名片条：闲鱼主页信息直接摆在会话里，点开可看完整主页 */}
           {activeConversation?.otherUserId && peerProfile && (
             <button
@@ -1935,8 +1936,21 @@ export function ChatNew() {
                 peerProfile.nick || activeConversation.otherUserName,
                 peerProfile.avatar || activeConversation.otherUserAvatar,
               )}
-              title="点击查看闲鱼个人主页"
-              className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 md:border-r border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
+              title={[
+                peerProfile.nick || activeConversation.otherUserName,
+                peerProfile.lastVisitTime,
+                peerProfile.shopLevel && `店铺等级 ${peerProfile.shopLevel}`,
+                typeof peerProfile.praiseRatio === 'number' && `好评率 ${peerProfile.praiseRatio}%`,
+                peerProfile.replyRatio24h && `24h回复 ${peerProfile.replyRatio24h}`,
+                peerProfile.replyInterval && `平均 ${peerProfile.replyInterval} 回复`,
+                peerProfile.ipLocation,
+                peerProfile.followers && `粉丝 ${peerProfile.followers}`,
+                typeof peerProfile.itemCount === 'number' && `在售宝贝 ${peerProfile.itemCount}`,
+                peerProfile.certifications.length > 0 && `认证：${peerProfile.certifications.join('、')}`,
+                peerProfile.introduction,
+                '——点击查看闲鱼个人主页',
+              ].filter(Boolean).join('\n')}
+              className="min-w-0 flex items-center gap-3 px-3 py-2 md:border-r border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
             >
               {peerProfile.avatar ? (
                 <img
@@ -1975,26 +1989,21 @@ export function ChatNew() {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0">
-                  {peerProfile.replyRatio24h && (
-                    <span className="flex-shrink-0">24h回复{peerProfile.replyRatio24h}</span>
-                  )}
-                  {peerProfile.replyInterval && (
-                    <span className="flex-shrink-0">平均{peerProfile.replyInterval}回复</span>
-                  )}
+                {/* 次要信息一行放不下就裁掉，完整内容悬停按钮可见 */}
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0 overflow-hidden whitespace-nowrap">
                   {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
-                  {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
+                  {peerProfile.replyRatio24h && (
+                    <span className="flex-shrink-0">回复{peerProfile.replyRatio24h}</span>
+                  )}
                   {typeof peerProfile.itemCount === 'number' && (
                     <span className="flex-shrink-0">宝贝{peerProfile.itemCount}</span>
                   )}
+                  {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
                   {peerProfile.certifications.slice(0, 2).map((cert) => (
                     <span key={cert} className="flex-shrink-0 px-1 rounded bg-gray-100 dark:bg-gray-700">
                       {cert}
                     </span>
                   ))}
-                  {peerProfile.introduction && (
-                    <span className="truncate">· {peerProfile.introduction}</span>
-                  )}
                 </div>
               </div>
               <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -2005,10 +2014,15 @@ export function ChatNew() {
           {activeConversation?.itemId && (
             <button
               onClick={() => setItemModalOpen(true)}
-              title="点击查看闲鱼商品页"
+              title={[
+                activeConversation.itemTitle || itemInfo?.title || '商品',
+                itemInfo?.price && `价格 ¥${itemInfo.price}`,
+                `商品ID ${activeConversation.itemId}`,
+                '——点击查看闲鱼商品页',
+              ].filter(Boolean).join('\n')}
               className={cn(
-                'flex-shrink-0 md:w-64 flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left',
-                !(activeConversation?.otherUserId && peerProfile) && 'flex-1 md:w-auto',
+                'min-w-0 flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left',
+                !(activeConversation?.otherUserId && peerProfile) && 'md:col-span-2',
               )}
             >
               {activeConversation.itemMainPic ? (
