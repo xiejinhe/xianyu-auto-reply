@@ -86,6 +86,17 @@ def unavailable_reason() -> str:
     return _IMPORT_ERROR or "未安装 faster-whisper"
 
 
+def reset_availability() -> None:
+    """清空「是否可用」与导入错误的缓存，下次 is_available() 重新探测。
+
+    一键安装依赖后必须调用：pip 把 faster-whisper 装进当前 venv 之后，
+    缓存里的 _AVAILABLE=False 会一直生效，不重置就得重启后端才认新装的包。
+    """
+    global _AVAILABLE, _IMPORT_ERROR
+    _AVAILABLE = None
+    _IMPORT_ERROR = ""
+
+
 def is_model_ready(size: str) -> bool:
     """模型是否已加载到内存（不触发下载）"""
     return size in _MODELS

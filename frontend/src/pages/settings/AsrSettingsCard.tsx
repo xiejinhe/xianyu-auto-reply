@@ -14,7 +14,9 @@ import {
   ASR_LOCAL_MODEL_HINTS,
   ASR_LOCAL_MODEL_SIZES,
   DEFAULT_ASR_SETTINGS,
+  getAsrInstallStatus,
   getAsrStatus,
+  installAsrDeps,
   normalizeAsrSettings,
   updateAsrSettings,
   warmupAsrModel,
@@ -48,6 +50,12 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
   const [showKey, setShowKey] = useState(false)
   const [status, setStatus] = useState<AsrStatus | null>(null)
   const [warming, setWarming] = useState(false)
+  // 一键安装本地依赖：installing=进行中，installMsg=进度文案，installLog=pip 输出
+  const [installing, setInstalling] = useState(false)
+  const [installMsg, setInstallMsg] = useState('')
+  const [installLog, setInstallLog] = useState('')
+  // 装完后展示「接下来怎么用」的指引
+  const [showGuide, setShowGuide] = useState(false)
 
   useEffect(() => {
     const next = normalizeAsrSettings(settings)
@@ -116,6 +124,63 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
       addToast({ type: 'error', message: getApiErrorMessage(error, '模型下载失败') })
     } finally {
       setWarming(false)
+    }
+  }
+
+  /** 一键安装本地识别依赖（[asr]：faster-whisper + av==14.0.1） */
+  const handleInstallDeps = async () => {
+    if (installing) return
+    try {
+      setInstalling(true)
+      setInstallLog('')
+      setInstallMsg('正在安装依赖（首次会下载 torch，约几百 MB，可能需要几分钟）…')
+
+      const start = await installAsrDeps()
+      if (!start.success) {
+        addToast({ type: 'error', message: start.message || '启动安装失败' })
+        setInstalling(false)
+        return
+      }
+      // 本来就已经装好了（例如手动装过）：直接给指引，不用再装一遍
+      if (start.data?.already) {
+        setInstallMsg('本地识别依赖已安装，无需重复安装')
+        setShowGuide(true)
+        const res = await getAsrStatus()
+        if (res.success && res.data) setStatus(res.data)
+        addToast({ type: 'success', message: start.message || '本地识别依赖已安装' })
+        setInstalling(false)
+        return
+      }
+
+      // 后台安装中：轮询进度，直到 done
+      const poll = async (): Promise<void> => {
+        try {
+          const s = await getAsrInstallStatus()
+          const d = s.data
+          if (!d) return
+          setInstallMsg(d.message || '')
+          setInstallLog(d.log || '')
+          if (d.done && !d.running) {
+            const fresh = await getAsrStatus()
+            if (fresh.success && fresh.data) setStatus(fresh.data)
+            if (d.success) {
+              addToast({ type: 'success', message: d.message || '依赖安装完成' })
+              setShowGuide(true)
+            } else {
+              addToast({ type: 'error', message: d.message || '安装失败' })
+            }
+            setInstalling(false)
+            return
+          }
+        } catch {
+          // 单次轮询失败不打断，继续等下一轮
+        }
+        window.setTimeout(poll, 2000)
+      }
+      window.setTimeout(poll, 1500)
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '安装失败') })
+      setInstalling(false)
     }
   }
 
@@ -188,15 +253,63 @@ export function AsrSettingsCard({ settings, onSaved }: AsrSettingsCardProps) {
                   {status.localModelReady ? '（模型已加载，可直接转写）' : '（点「下载模型」提前准备，首次转写也会自动下载）'}
                 </>
               ) : (
-                <>
-                  未安装本地识别依赖，请在后端目录执行：
-                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 dark:bg-slate-700">
-                    {status.installCommand || 'pip install faster-whisper'}
-                  </code>
-                  后重启后端
-                </>
+                <div className="space-y-2">
+                  <div>
+                    未安装本地识别依赖。可以点下面按钮一键安装（自动装
+                    <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 dark:bg-slate-700">
+                      faster-whisper
+                    </code>
+                    和
+                    <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 dark:bg-slate-700">
+                      av==14.0.1
+                    </code>
+                    ，版本已锁好不会冲突），或手动在后端目录执行：
+                    <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 dark:bg-slate-700">
+                      {status.installCommand || 'pip install -e ".[asr]"'}
+                    </code>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={installing}
+                      onClick={() => void handleInstallDeps()}
+                      className="btn-ios-secondary"
+                    >
+                      {installing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      {installing ? '安装中…' : '一键安装依赖'}
+                    </button>
+                    {installing && <span>别关页面，装完会自动提示</span>}
+                  </div>
+                  {installMsg && <p className="text-slate-600 dark:text-slate-300">{installMsg}</p>}
+                  {installLog && (
+                    <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-slate-100 p-2 text-[11px] leading-relaxed text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                      {installLog.slice(-1500)}
+                    </pre>
+                  )}
+                </div>
               )}
             </div>
+
+            {/* 依赖装好之后的下一步指引 */}
+            {showGuide && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200">
+                <p className="font-medium">依赖已装好，接下来三步就能用：</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                  <li>
+                    点上面的「下载模型」先把模型准备好（也可以不点，首次转写时会自动下载，需联网）
+                  </li>
+                  <li>「识别方式」选「本地离线模型」或「自动」，然后点「保存语音设置」</li>
+                  <li>回到聊天页，点输入框旁的麦克风说话，说完自动转成文字发出去</li>
+                </ol>
+                <p className="mt-1.5">
+                  依赖已自动生效，<b>不需要重启后端</b>；若页面仍提示未安装，重启一次后端即可。
+                </p>
+              </div>
+            )}
           </div>
         )}
 

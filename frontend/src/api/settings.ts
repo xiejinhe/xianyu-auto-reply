@@ -457,6 +457,33 @@ export const warmupAsrModel = async (model?: string): Promise<ApiResponse> => {
   return post(`${CHAT_NEW_PREFIX}/asr/warmup${model ? `?model=${encodeURIComponent(model)}` : ''}`)
 }
 
+/** 一键安装本地语音转文字依赖（项目的 [asr] 可选依赖）。
+ *  后台执行（要下载 torch，较慢），用 getAsrInstallStatus 轮询进度。 */
+export interface AsrInstallResult {
+  /** true=本来就装好了，无需再装 */
+  already?: boolean
+  running?: boolean
+  localAvailable?: boolean
+}
+
+export const installAsrDeps = (): Promise<{ success: boolean; message: string; data?: AsrInstallResult }> => {
+  return post(`${CHAT_NEW_PREFIX}/asr/install-deps`)
+}
+
+/** 一键安装依赖的进度；success 为 null 表示还没结果 */
+export interface AsrInstallStatus {
+  running: boolean
+  done: boolean
+  success: boolean | null
+  message: string
+  log: string
+  localAvailable: boolean
+}
+
+export const getAsrInstallStatus = (): Promise<{ success: boolean; message: string; data?: AsrInstallStatus }> => {
+  return get(`${CHAT_NEW_PREFIX}/asr/install-status`)
+}
+
 // ========== 分销设置（独立保存） ==========
 
 // 独立保存分销设置：只提交 distribution.* 相关键，不触碰其他设置

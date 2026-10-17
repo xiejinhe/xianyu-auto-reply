@@ -9,10 +9,12 @@
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -36,6 +38,7 @@ from common.utils.local_asr import (
     MODEL_SIZES,
     is_available as local_asr_available,
     is_model_ready,
+    reset_availability as local_asr_reset,
     transcribe as local_transcribe,
     unavailable_reason,
     warmup as local_warmup,
@@ -762,3 +765,153 @@ async def asr_warmup(
         return ApiResponse(success=False, message=f"模型下载失败：{str(e)[:200]}")
 
     return ApiResponse(success=True, message=f"模型 {size} 已就绪", data={"model": size})
+
+
+# 一键安装 [asr] 依赖的任务状态（同一时刻只允许一个安装任务）
+# faster-whisper 会连带拉 torch，首次安装要下几百 MB，所以走后台任务 + 前端轮询，
+# 不用一个 HTTP 请求干等（否则容易被反向代理 / 网关按 60s 掐断）。
+_ASR_INSTALL_STATE: dict[str, object] = {
+    "running": False,
+    "done": False,
+    "success": None,  # None=还没结果 / True / False
+    "message": "",
+    "log": "",
+}
+
+
+def _find_backend_dir() -> str:
+    """定位 pyproject.toml 所在目录（backend-web）。
+
+    pip install -e ".[asr]" 必须在有 pyproject.toml 的目录里执行，
+    不能依赖进程的 cwd（部署方式不同 cwd 可能不是 backend-web）。
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").is_file():
+            return str(parent)
+    return str(here.parents[3])
+
+
+async def _run_asr_install() -> None:
+    """后台执行 pip install -e ".[asr]"（在 backend-web 目录、用当前解释器的 pip）"""
+    backend_dir = _find_backend_dir()
+    cmd = [sys.executable, "-m", "pip", "install", "-e", ".[asr]"]
+    _ASR_INSTALL_STATE.update(
+        {
+            "running": True,
+            "done": False,
+            "success": None,
+            "message": "正在安装依赖（首次会下载 torch，约几百 MB，可能需要几分钟）…",
+            "log": f"$ {' '.join(cmd)}  (cwd={backend_dir})\n",
+        }
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=backend_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
+        log = (out or b"").decode("utf-8", errors="replace")
+        returncode = proc.returncode
+    except asyncio.TimeoutError:
+        _ASR_INSTALL_STATE.update(
+            {
+                "running": False,
+                "done": True,
+                "success": False,
+                "message": "安装超时（超过 30 分钟），请改用手动命令安装",
+                "log": "安装超时，未拿到 pip 输出",
+            }
+        )
+        return
+    except Exception as e:  # noqa: BLE001 - 安装失败要把原因回传前端
+        _ASR_INSTALL_STATE.update(
+            {
+                "running": False,
+                "done": True,
+                "success": False,
+                "message": f"安装启动失败：{str(e)[:200]}",
+                "log": "",
+            }
+        )
+        return
+
+    ok = returncode == 0
+    if ok:
+        # 清掉「是否可用」的缓存，让当前进程立刻能 import 新装的包 —— 免重启后端
+        local_asr_reset()
+        ok = local_asr_available()
+        message = (
+            "依赖安装完成，本地识别已可用"
+            if ok
+            else "依赖已装上，但当前进程仍导入失败，重启一次后端即可生效"
+        )
+    else:
+        message = f"安装失败（pip 退出码 {returncode}），可改用手动命令安装"
+
+    _ASR_INSTALL_STATE.update(
+        {
+            "running": False,
+            "done": True,
+            "success": ok,
+            "message": message,
+            # 日志只留最后一段，避免几百 KB 的 pip 输出撑爆响应
+            "log": (_ASR_INSTALL_STATE["log"] or "") + log[-4000:],
+        }
+    )
+
+
+@router.post("/asr/install-deps")
+async def asr_install_deps(
+    current_user: User = Depends(get_current_active_user),
+):
+    """一键安装本地语音转文字依赖（[asr] 可选依赖：faster-whisper + av==14.0.1）
+
+    装的是 pyproject 里锁好版本的组合，比手写 pip install faster-whisper 稳
+    （不会装到与 faster-whisper 1.2.x 冲突的 av>=15）。装完无需重启后端。
+    """
+    # 装依赖是机器级操作，只允许管理员触发
+    if not is_admin_user(current_user):
+        return ApiResponse(success=False, message="只有管理员可以安装后端依赖")
+
+    if local_asr_available():
+        return ApiResponse(
+            success=True,
+            message="本地识别依赖已安装，无需重复安装",
+            data={"already": True, "running": False, "localAvailable": True},
+        )
+    if _ASR_INSTALL_STATE["running"]:
+        return ApiResponse(
+            success=True,
+            message="安装正在进行中",
+            data={"already": False, "running": True, "localAvailable": False},
+        )
+
+    asyncio.create_task(_run_asr_install())
+    return ApiResponse(
+        success=True,
+        message="已开始安装，请稍候（首次较慢）",
+        data={"already": False, "running": True, "localAvailable": False},
+    )
+
+
+@router.get("/asr/install-status")
+async def asr_install_status(
+    current_user: User = Depends(get_current_active_user),
+):
+    """查询一键安装依赖的进度（前端轮询）"""
+    available = local_asr_available()
+    return ApiResponse(
+        success=True,
+        message="ok",
+        data={
+            "running": bool(_ASR_INSTALL_STATE["running"]),
+            "done": bool(_ASR_INSTALL_STATE["done"]),
+            "success": _ASR_INSTALL_STATE["success"],
+            "message": _ASR_INSTALL_STATE["message"],
+            "log": _ASR_INSTALL_STATE["log"],
+            "localAvailable": available,
+        },
+    )
