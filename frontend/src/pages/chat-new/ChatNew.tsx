@@ -73,6 +73,25 @@ const saveReadMarks = (marks: Record<string, number>) => {
     // 存不了（隐私模式等）就算了，水位退化为仅本次页面会话有效
   }
 }
+
+/** 会话列表的最后一条摘要：发送者前缀按人着色，
+ *  自己发的「你：」用蓝色、对方发的「他：」用琥珀色，一眼分清谁说的。
+ *  系统消息没有前缀，按普通灰色文本渲染。 */
+function ConversationSummary({ text }: { text: string }) {
+  const raw = text || '暂无消息'
+  const matched = /^(你|他)：/.exec(raw)
+  const prefix = matched ? matched[1] : ''
+  const body = matched ? raw.slice(matched[0].length) : raw
+  const prefixClass = prefix === '你'
+    ? 'text-blue-500 dark:text-blue-400'
+    : 'text-amber-600 dark:text-amber-400'
+  return (
+    <>
+      {prefix && <span className={`font-medium ${prefixClass}`}>{prefix}：</span>}
+      {body.includes('[') ? <ChatText text={body} /> : body}
+    </>
+  )
+}
 import { playNewMessageSound } from '@/utils/notificationSound'
 import { appendMsg, mergeConversations, mergeMessages, toTimestampMs } from './chat_history_merge'
 import { ChatHistoryRecovery, recoverConversations, recoverMessages,
@@ -2177,9 +2196,7 @@ export function ChatNew() {
                       )}
                       <div className="flex items-center justify-between mt-0.5">
                         <span className="text-xs text-gray-400 truncate">
-                          {(conv.lastMessageSummary || '暂无消息').includes('[')
-                            ? <ChatText text={conv.lastMessageSummary || '暂无消息'} />
-                            : (conv.lastMessageSummary || '暂无消息')}
+                          <ConversationSummary text={conv.lastMessageSummary} />
                         </span>
                         {/* 正在看的会话不显示红点（看见即已读），双保险 */}
                         {normCid(conv.cid) !== normCid(activeCid) && conv.unreadCount > 0 && (

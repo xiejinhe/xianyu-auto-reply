@@ -223,24 +223,52 @@ async def list_connected_accounts(
 AUTO_CONNECT_IDS_KEY = "chat_new.auto_connect_accounts"
 
 
-async def _load_auto_connect_ids(db: AsyncSession) -> list[str]:
+async def _load_auto_connect_ids(db: AsyncSession) -> tuple[list[str], bool]:
+    """读取自动连接清单，返回 (账号ID列表, 清单是否已存在)。
+
+    「不存在」与「存在但为空」必须区分：前者是首次启用，需要从数据库推导
+    初始清单（这样新装环境、后来新增的账号都能自动纳入，不用写死任何ID）；
+    后者说明用户手动断开过，必须尊重、不再自动连。
+    """
     from app.services.system_setting_service import SystemSettingService
     try:
         settings = await SystemSettingService(db).list_settings()
-        raw = str(settings.get(AUTO_CONNECT_IDS_KEY) or "[]")
-        ids = json.loads(raw)
-        if isinstance(ids, list):
-            return [str(i) for i in ids if i]
     except Exception as e:
         logger.warning(f"读取IM自动连接清单失败: {e}")
-    return []
+        return [], False
+    if AUTO_CONNECT_IDS_KEY not in settings:
+        return [], False
+    # 存成逗号分隔，不存 JSON：set_setting 会对值做 XSS 转义，
+    # JSON 的引号会被转成 &quot;，存进去就解析不回来了
+    raw = str(settings.get(AUTO_CONNECT_IDS_KEY) or "")
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    return ids, True
+
+
+async def _bootstrap_auto_connect_ids(db: AsyncSession) -> list[str]:
+    """首次启用：从数据库推导初始清单（活跃且填了 Cookie 的账号）并落盘"""
+    from app.services.system_setting_service import SystemSettingService
+    try:
+        result = await db.execute(
+            select(XYAccount.account_id, XYAccount.cookie).where(XYAccount.status == "active")
+        )
+        ids = [str(aid) for aid, cookie in result.all() if aid and (cookie or "").strip()]
+        if ids:
+            await SystemSettingService(db).set_setting(
+                AUTO_CONNECT_IDS_KEY, ",".join(ids), "在线聊天重启后自动重连的账号清单"
+            )
+            logger.info(f"IM自动连接清单首次初始化（来自数据库）: {len(ids)} 个账号")
+        return ids
+    except Exception as e:
+        logger.warning(f"初始化IM自动连接清单失败: {e}")
+        return []
 
 
 async def _save_auto_connect_id(db: AsyncSession, account_id: str, connected: bool) -> None:
     """连接成功 -> 加入清单；手动断开 -> 移出清单（尊重用户意愿，不再自动连）"""
     from app.services.system_setting_service import SystemSettingService
     try:
-        ids = await _load_auto_connect_ids(db)
+        ids, _ = await _load_auto_connect_ids(db)
         if connected and account_id not in ids:
             ids.append(account_id)
         elif not connected and account_id in ids:
@@ -248,7 +276,7 @@ async def _save_auto_connect_id(db: AsyncSession, account_id: str, connected: bo
         else:
             return
         await SystemSettingService(db).set_setting(
-            AUTO_CONNECT_IDS_KEY, json.dumps(ids), "在线聊天重启后自动重连的账号清单"
+            AUTO_CONNECT_IDS_KEY, ",".join(ids), "在线聊天重启后自动重连的账号清单"
         )
     except Exception as e:
         logger.warning(f"更新IM自动连接清单失败: {e}")
@@ -264,7 +292,10 @@ async def auto_reconnect_chat_accounts() -> None:
     from common.db.session import async_session_maker
     manager = get_im_session_manager()
     async with async_session_maker() as db:
-        ids = await _load_auto_connect_ids(db)
+        ids, exists = await _load_auto_connect_ids(db)
+        if not exists:
+            # 清单还没建过：从数据库推导（新装的、后来新增的账号都会自动纳入）
+            ids = await _bootstrap_auto_connect_ids(db)
     if not ids:
         return
     logger.info(f"开始自动恢复在线聊天IM连接，共 {len(ids)} 个账号: {ids}")
