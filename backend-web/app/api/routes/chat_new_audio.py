@@ -701,7 +701,9 @@ async def asr_status(
             "localModelReady": is_model_ready(local_model),
             "modelSizes": list(MODEL_SIZES),
             "cloudConfigured": bool(str(settings.get("asr.api_key") or "").strip()),
-            "installCommand": "pip install faster-whisper av==14.0.1",
+            # 用项目自带的 [asr] 可选依赖，版本（faster-whisper / av==14.0.1）由 pyproject 锁定，
+            # 比手写 pip install faster-whisper 更稳，不会装到与 faster-whisper 1.2.x 冲突的 av>=15
+            "installCommand": 'pip install -e ".[asr]"',
         },
     )
 

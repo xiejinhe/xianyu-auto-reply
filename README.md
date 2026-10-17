@@ -324,7 +324,9 @@ cd backend-web
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
-pip install -e .
+# [asr] 是语音转文字的可选依赖（faster-whisper + av==14.0.1），
+# 不装它本地离线转文字会不可用，只能走云端 API Key。
+pip install -e ".[asr]"
 python -m playwright install chromium
 python -m patchright install chromium
 python main.py
