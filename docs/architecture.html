@@ -86,7 +86,41 @@
   .mini h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
   .mini p { font-size: 12px; color: var(--text-2); margin: 0; }
   footer { color: var(--text-3); font-size: 12px; text-align: center; margin-top: 30px; }
-  @media print { body { background: #fff; } section { break-inside: avoid; } }
+  /* 顶部目录导航 */
+  .toc {
+    position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 10px 0 12px; margin: 0 0 16px;
+    background: linear-gradient(var(--bg) 78%, rgba(246,247,249,0));
+  }
+  .toc a {
+    font-size: 12.5px; color: var(--text-2); text-decoration: none;
+    padding: 5px 11px; border: 1px solid var(--border); border-radius: 20px;
+    background: var(--card); white-space: nowrap;
+  }
+  .toc a:hover { color: var(--blue); border-color: var(--blue); }
+  .toc a.on { color: var(--blue); border-color: var(--blue); background: var(--blue-bg); }
+  /* 模块流程子块 */
+  .flow { margin-top: 30px; }
+  .flow:first-of-type { margin-top: 8px; }
+  h3 {
+    font-size: 14.5px; font-weight: 600; margin: 0 0 3px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h3 .no {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 6px; font-size: 11.5px;
+    background: var(--blue-bg); color: var(--blue); flex: none;
+  }
+  h3 .no.g { background: var(--green-bg); color: var(--green); }
+  h3 .no.p { background: var(--purple-bg); color: var(--purple); }
+  h3 .no.a { background: var(--amber-bg); color: var(--amber); }
+  .flow .desc { margin: 0 0 12px; }
+  .note {
+    margin-top: 12px; font-size: 12.5px; color: var(--text-2);
+    background: #fcfcfd; border: 1px dashed var(--border); border-radius: 8px; padding: 10px 14px;
+  }
+  .note b { color: var(--text); }
+  @media print { body { background: #fff; } section { break-inside: avoid; } .toc { display: none; } }
 </style>
 </head>
 <body>
@@ -98,9 +132,27 @@
   <p class="meta">仓库：xiejinhe/xianyu-auto-reply · 部署形态：Docker Compose（也支持源码 / 桌面 EXE 启动器）</p>
 </header>
 
-<section>
+<nav class="toc">
+  <a href="#arch">① 整体架构</a>
+  <a href="#ext">② 外部集成</a>
+  <a href="#flows">③ 模块交互流程</a>
+  <a href="#login">登录鉴权</a>
+  <a href="#account">账号接入</a>
+  <a href="#im">在线聊天</a>
+  <a href="#autoreply">自动回复</a>
+  <a href="#order">订单发货</a>
+  <a href="#cron">定时任务</a>
+  <a href="#asr">语音转文字</a>
+  <a href="#publish">发布与监控</a>
+  <a href="#dist">分销</a>
+  <a href="#services">④ 服务清单</a>
+  <a href="#tree">⑤ 目录结构</a>
+  <a href="#bounds">⑦ 已知边界</a>
+</nav>
+
+<section id="arch">
   <h2>一、整体分层架构</h2>
-  <p class="desc">自上而下：使用方 → 前端（nginx）→ 三个 Python 服务 → 共享库 → 数据层。所有 Python 服务复用同一份 <code>common/</code> 代码。</p>
+  <p class="desc">自上而下：使用方 → 前端（nginx）→ 三个 Python 服务 → 共享库 → 数据层。所有 Python 服务复用同一份 <code>common/</code> 代码。注意：在线聊天用的 IM 长连接跑在 backend-web 进程内；websocket 服务是另一条 App 同款通道，专职自动回复。</p>
   <div class="svg-box">
     <svg viewBox="0 0 1080 650" role="img" aria-label="整体分层架构图">
       <title>闲鱼自动回复系统整体分层架构</title>
@@ -126,13 +178,13 @@
       <text x="210" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#042c53">backend-web</text>
       <text x="210" y="299" text-anchor="middle" font-size="12" fill="#185fa5">FastAPI 主服务 · 8089</text>
       <text x="210" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">账号 / 商品 / 订单 / 在线聊天</text>
-      <text x="210" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">REST 接口 + 业务编排</text>
+      <text x="210" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">REST + 前端 WS + 内置 IM 长连接</text>
 
       <rect x="390" y="256" width="300" height="92" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
       <text x="540" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#04342c">websocket</text>
-      <text x="540" y="299" text-anchor="middle" font-size="12" fill="#0f6e56">闲鱼 IM 长连接 · 8090</text>
-      <text x="540" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">消息收发 + 自动回复引擎</text>
-      <text x="540" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">心跳保活、断线重连</text>
+      <text x="540" y="299" text-anchor="middle" font-size="12" fill="#0f6e56">自动回复引擎 · 8090</text>
+      <text x="540" y="317" text-anchor="middle" font-size="11" fill="#5f5e5a">App 同款通道长连接，7×24 在线</text>
+      <text x="540" y="333" text-anchor="middle" font-size="11" fill="#5f5e5a">关键词 / AI 自动回复、自动发货</text>
 
       <rect x="720" y="256" width="300" height="92" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
       <text x="870" y="280" text-anchor="middle" font-size="14" font-weight="600" fill="#26215c">scheduler</text>
@@ -171,7 +223,7 @@
   </div>
 </section>
 
-<section>
+<section id="ext">
   <h2>二、外部平台与第三方集成</h2>
   <p class="desc">系统本身不生产数据，全部依赖闲鱼平台接口；AI 与语音识别为可选增强能力。</p>
   <div class="svg-box">
@@ -217,8 +269,707 @@
   </div>
 </section>
 
-<section>
-  <h2>三、服务清单</h2>
+<section id="flows">
+  <h2>三、模块交互流程</h2>
+  <p class="desc">逐个模块的端到端调用链：谁发起、经过哪些服务与函数、落在哪张表、和闲鱼怎么交互。横轴为调用顺序，虚线框为补充说明。</p>
+
+  <!-- 3.1 登录与鉴权 -->
+  <div class="flow" id="login">
+    <h3><span class="no">1</span>登录与鉴权</h3>
+    <p class="desc">用户名密码登录 → 锁定检查 → 密码校验 → 签发 JWT → 后续请求逐层鉴权。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 560" role="img" aria-label="登录与鉴权流程图">
+        <title>登录与鉴权流程</title>
+        <rect x="40" y="60" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="145" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">浏览器 · 登录页</text>
+        <text x="145" y="103" text-anchor="middle" font-size="11" fill="#5f5e5a">用户名 + 密码</text>
+        <text x="145" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">（开启时含滑块验证）</text>
+
+        <rect x="300" y="60" width="210" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="405" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">POST /auth/login</text>
+        <text x="405" y="103" text-anchor="middle" font-size="11" fill="#185fa5">路由层 auth.py</text>
+        <text x="405" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">记录登录日志</text>
+
+        <rect x="560" y="60" width="210" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="665" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">auth_service</text>
+        <text x="665" y="103" text-anchor="middle" font-size="11" fill="#0f6e56">查用户 · 锁定检查</text>
+        <text x="665" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">校验密码哈希</text>
+
+        <rect x="820" y="60" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="925" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">MySQL · xy_users</text>
+        <text x="925" y="103" text-anchor="middle" font-size="11" fill="#5f5e5a">password_hash</text>
+        <text x="925" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">login_fail_count 等</text>
+
+        <path d="M250 98 L296 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M510 98 L556 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M770 98 L816 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="820" y="200" width="210" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="925" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">签发 JWT</text>
+        <text x="925" y="243" text-anchor="middle" font-size="11" fill="#0f6e56">access 30 分钟</text>
+        <text x="925" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">refresh 7 天</text>
+
+        <rect x="560" y="200" width="210" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="665" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">返回 token + 用户</text>
+        <text x="665" y="243" text-anchor="middle" font-size="11" fill="#185fa5">含 role / is_admin</text>
+        <text x="665" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">失败则返回剩余次数</text>
+
+        <rect x="300" y="200" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="405" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">前端存 localStorage</text>
+        <text x="405" y="243" text-anchor="middle" font-size="11" fill="#5f5e5a">authStore 持久化</text>
+        <text x="405" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">路由守卫跳转</text>
+
+        <rect x="40" y="200" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="145" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">后续请求</text>
+        <text x="145" y="243" text-anchor="middle" font-size="11" fill="#5f5e5a">Authorization:</text>
+        <text x="145" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">Bearer token</text>
+
+        <path d="M925 136 L925 196" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M820 238 L774 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M560 238 L514 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M300 238 L254 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="340" width="210" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="145" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">deps 鉴权</text>
+        <text x="145" y="383" text-anchor="middle" font-size="11" fill="#534ab7">校验签名 / 过期</text>
+        <text x="145" y="400" text-anchor="middle" font-size="11" fill="#5f5e5a">取 current_user</text>
+
+        <rect x="300" y="340" width="210" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="405" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">归属 / 角色校验</text>
+        <text x="405" y="383" text-anchor="middle" font-size="11" fill="#534ab7">owner_id 比对</text>
+        <text x="405" y="400" text-anchor="middle" font-size="11" fill="#5f5e5a">is_admin 放行</text>
+
+        <rect x="560" y="340" width="210" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="665" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">业务路由执行</text>
+        <text x="665" y="383" text-anchor="middle" font-size="11" fill="#185fa5">services 编排</text>
+        <text x="665" y="400" text-anchor="middle" font-size="11" fill="#5f5e5a">读写 MySQL / Redis</text>
+
+        <rect x="820" y="340" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="925" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">返回 JSON</text>
+        <text x="925" y="383" text-anchor="middle" font-size="11" fill="#5f5e5a">ApiResponse</text>
+        <text x="925" y="400" text-anchor="middle" font-size="11" fill="#5f5e5a">success / message / data</text>
+
+        <path d="M145 276 L145 336" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M250 378 L296 378" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M510 378 L556 378" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M770 378 L816 378" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="452" width="1000" height="72" rx="8" fill="#faeeda" stroke="#e8d5b7" stroke-width="1"/>
+        <text x="60" y="476" font-size="11.5" fill="#412402">锁定策略：连续 3 次密码错误 → 锁定 2 小时（login_locked_until）；成功登录清零。</text>
+        <text x="60" y="495" font-size="11.5" fill="#412402">密码哈希：pbkdf2_sha256，兼容旧版 64 位纯 sha256；登录成功后写 last_login_at。</text>
+        <text x="60" y="514" font-size="11.5" fill="#412402">安全提示：/auth/check-default-password 检测是否仍为 admin123，添加账号前会拦截。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.2 账号接入 -->
+  <div class="flow" id="account">
+    <h3><span class="no">2</span>账号接入（登录 → Cookie → IM 长连接）</h3>
+    <p class="desc">两条登录入口产出的都是 Cookie；Cookie 落库后再换 IM Token、建长连接，前端才能订阅实时消息。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 620" role="img" aria-label="账号接入流程图">
+        <title>账号接入流程</title>
+        <rect x="30" y="50" width="180" height="64" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="120" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">扫码登录</text>
+        <text x="120" y="93" text-anchor="middle" font-size="11" fill="#185fa5">qr_login 轮询扫码态</text>
+
+        <rect x="30" y="150" width="180" height="64" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="120" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">账号密码登录</text>
+        <text x="120" y="193" text-anchor="middle" font-size="11" fill="#185fa5">滑块验证 geetest</text>
+
+        <rect x="280" y="100" width="190" height="64" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="375" y="124" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">Cookie 落库</text>
+        <text x="375" y="143" text-anchor="middle" font-size="11" fill="#5f5e5a">xy_accounts.cookie</text>
+
+        <rect x="540" y="100" width="190" height="64" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="635" y="124" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">申请 IM Token</text>
+        <text x="635" y="143" text-anchor="middle" font-size="11" fill="#0f6e56">Redis 缓存 chat_ 前缀</text>
+
+        <rect x="800" y="100" width="200" height="64" rx="9" fill="#534ab7" stroke="#534ab7" stroke-width="1.5" opacity="0.12"/>
+        <rect x="800" y="100" width="200" height="64" rx="9" fill="none" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="900" y="124" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">连接 IM 长连接</text>
+        <text x="900" y="143" text-anchor="middle" font-size="11" fill="#534ab7">/reg + ackDiff</text>
+
+        <path d="M210 82 L276 112" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M210 182 L276 152" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M470 132 L536 132" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M730 132 L796 132" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="800" y="230" width="200" height="64" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="900" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">同步完成</text>
+        <text x="900" y="273" text-anchor="middle" font-size="11" fill="#0f6e56">标记 online</text>
+
+        <rect x="540" y="230" width="190" height="64" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="635" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">前端订阅 WS</text>
+        <text x="635" y="273" text-anchor="middle" font-size="11" fill="#185fa5">/chat-new/ws/账号</text>
+
+        <rect x="280" y="230" width="190" height="64" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="375" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">会话 / 消息可用</text>
+        <text x="375" y="273" text-anchor="middle" font-size="11" fill="#5f5e5a">列表与聊天窗口就绪</text>
+
+        <rect x="30" y="230" width="200" height="64" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="130" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">自动恢复清单</text>
+        <text x="130" y="273" text-anchor="middle" font-size="11" fill="#854f0b">重启后逐个重连</text>
+
+        <path d="M900 164 L900 226" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M800 262 L734 262" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 262 L474 262" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <!-- 自动恢复清单为平行机制（进程启动时生效），不画入主链 -->
+
+        <rect x="30" y="340" width="490" height="106" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="48" y="364" font-size="11.5" font-weight="600" fill="#1f2328">Token 隔离</text>
+        <text x="48" y="383" font-size="11.5" fill="#5b6470">在线聊天与自动回复各用一套 IM Token 缓存，键名带 chat_ 前缀，</text>
+        <text x="48" y="401" font-size="11.5" fill="#5b6470">互不覆盖，避免两边互相把对方顶下线。</text>
+        <text x="48" y="424" font-size="11.5" fill="#5b6470">Token 过期时走 im_token_api 静默续期，失败才提示重新登录。</text>
+
+        <rect x="540" y="340" width="500" height="106" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="558" y="364" font-size="11.5" font-weight="600" fill="#1f2328">断线与重连</text>
+        <text x="558" y="383" font-size="11.5" fill="#5b6470">20 秒健康巡检 + 指数退避重连；闲鱼约 2~3 小时会踢一次连接。</text>
+        <text x="558" y="401" font-size="11.5" fill="#5b6470">进程重启后按「自动恢复清单」（系统设置键）自动重建连接，</text>
+        <text x="558" y="424" font-size="11.5" fill="#5b6470">首次启用时按「active 且有 Cookie 的账号」自动推导。</text>
+
+        <rect x="30" y="470" width="1010" height="76" rx="8" fill="#faeeda" stroke="#e8d5b7" stroke-width="1"/>
+        <text x="48" y="494" font-size="11.5" fill="#412402">通道差异：网页 IM 会话对「APP 来源消息」的推送时好时坏（按账号随机），所以系统内两个账号互发时，</text>
+        <text x="48" y="513" font-size="11.5" fill="#412402">发送方会额外通过 ImSessionManager.notify_peer_account 合成一条事件给接收方前端（真实推送优先、去重）。</text>
+        <text x="48" y="532" font-size="11.5" fill="#412402">代价是互发消息的实时性依赖应用层补偿，不代表闲鱼官方通道的完整能力。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.3 在线聊天 -->
+  <div class="flow" id="im">
+    <h3><span class="no">3</span>在线聊天（实时消息收发）</h3>
+    <p class="desc">接收链走 IM 长连接推送；发送链走 mtop 接口。两条链在数据库之外完全解耦，前端只认 WebSocket 事件。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 660" role="img" aria-label="在线聊天实时消息流程图">
+        <title>在线聊天实时消息流程</title>
+        <rect x="30" y="50" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="120" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">买家手机 App</text>
+        <text x="120" y="93" text-anchor="middle" font-size="11" fill="#5f5e5a">发出消息</text>
+        <text x="120" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">（或卖家 App）</text>
+
+        <rect x="248" y="50" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="338" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">闲鱼 IM 服务端</text>
+        <text x="338" y="93" text-anchor="middle" font-size="11" fill="#5f5e5a">syncPushPackage</text>
+        <text x="338" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">推送帧</text>
+
+        <rect x="466" y="50" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="556" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">GoofishImClient</text>
+        <text x="556" y="93" text-anchor="middle" font-size="11" fill="#0f6e56">8089 进程内长连接</text>
+        <text x="556" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">收帧 + 回 ACK</text>
+
+        <rect x="684" y="50" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="774" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">PushMessageParser</text>
+        <text x="774" y="93" text-anchor="middle" font-size="11" fill="#0f6e56">解密 + 解析</text>
+        <text x="774" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">表情 / 图片 / 文本</text>
+
+        <rect x="902" y="50" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="992" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">ImSessionManager</text>
+        <text x="992" y="93" text-anchor="middle" font-size="11" fill="#0f6e56">按账号找前端 WS</text>
+        <text x="992" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">投递 + 去重标记</text>
+
+        <path d="M210 88 L244 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M428 88 L462 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M646 88 L680 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M864 88 L898 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="902" y="190" width="180" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="992" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">前端 WebSocket</text>
+        <text x="992" y="233" text-anchor="middle" font-size="11" fill="#185fa5">useChatNewWs</text>
+        <text x="992" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">每账号一条连接</text>
+
+        <rect x="684" y="190" width="180" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="774" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">ChatNew.tsx</text>
+        <text x="774" y="233" text-anchor="middle" font-size="11" fill="#185fa5">handleWsNewMessage</text>
+        <text x="774" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">追加消息 + 改摘要</text>
+
+        <rect x="466" y="190" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="556" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">mergeMessages</text>
+        <text x="556" y="233" text-anchor="middle" font-size="11" fill="#534ab7">按 messageId 去重</text>
+        <text x="556" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">历史与推送合并</text>
+
+        <rect x="248" y="190" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="338" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">已读水位</text>
+        <text x="338" y="233" text-anchor="middle" font-size="11" fill="#534ab7">redPoint 本地归零</text>
+        <text x="338" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">localStorage 持久化</text>
+
+        <rect x="30" y="190" width="180" height="76" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="120" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">兜底轮询 15s</text>
+        <text x="120" y="233" text-anchor="middle" font-size="11" fill="#854f0b">断线期间补拉</text>
+        <text x="120" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">只在必要时触发</text>
+
+        <path d="M992 126 L992 186" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M902 228 L866 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M684 228 L648 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M466 228 L430 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M248 228 L212 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="30" y="330" width="180" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="120" y="354" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">输入框</text>
+        <text x="120" y="373" text-anchor="middle" font-size="11" fill="#185fa5">文本 / 表情 / 语音转写</text>
+        <text x="120" y="390" text-anchor="middle" font-size="11" fill="#5f5e5a">乐观上屏占位</text>
+
+        <rect x="248" y="330" width="180" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="338" y="354" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">POST /send-message</text>
+        <text x="338" y="373" text-anchor="middle" font-size="11" fill="#185fa5">/chat-new/账号</text>
+        <text x="338" y="390" text-anchor="middle" font-size="11" fill="#5f5e5a">文本 / 图片 / 音频</text>
+
+        <rect x="466" y="330" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="556" y="354" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">闲鱼发送接口</text>
+        <text x="556" y="373" text-anchor="middle" font-size="11" fill="#5f5e5a">sendByReceiverScope</text>
+        <text x="556" y="390" text-anchor="middle" font-size="11" fill="#5f5e5a">mtop 签名请求</text>
+
+        <rect x="684" y="330" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="774" y="354" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">对方收到</text>
+        <text x="774" y="373" text-anchor="middle" font-size="11" fill="#5f5e5a">返回 messageId</text>
+        <text x="774" y="390" text-anchor="middle" font-size="11" fill="#5f5e5a">回填本地占位</text>
+
+        <rect x="902" y="330" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="992" y="354" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">互发补偿</text>
+        <text x="992" y="373" text-anchor="middle" font-size="11" fill="#534ab7">notify_peer_account</text>
+        <text x="992" y="390" text-anchor="middle" font-size="11" fill="#5f5e5a">真实推送优先，去重</text>
+
+        <path d="M120 266 L120 326" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M210 368 L244 368" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M428 368 L462 368" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M646 368 L680 368" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M864 368 L898 368" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="30" y="446" width="1052" height="132" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="48" y="470" font-size="11.5" font-weight="600" fill="#1f2328">关键约束（踩过的坑）</text>
+        <text x="48" y="490" font-size="11.5" fill="#5b6470">· cid 可能带 @goofish 后缀：推送与列表比较前统一 normCid 归一化，否则正打开的会话会被判成「别的会话」，红点 +1 但消息延迟上屏。</text>
+        <text x="48" y="509" font-size="11.5" fill="#5b6470">· 闲鱼没有「标记已读」接口，服务端 redPoint 永远不清：前端用本地已读水位（accountId + cid）在重拉列表时归零。</text>
+        <text x="48" y="528" font-size="11.5" fill="#5b6470">· 推送与系统内合成事件可能重复到达，前后端各有一层去重（messageId 优先，无 ID 时按内容 + 5 秒窗口）。</text>
+        <text x="48" y="547" font-size="11.5" fill="#5b6470">· 图片走 /chat-new/proxy-image 代理（仅放行 alicdn / goofish / taobao / tbcdn 域名，防 SSRF）。</text>
+        <text x="48" y="566" font-size="11.5" fill="#5b6470">· 长连接掉线期间服务端不补推，重连后由前端主动补拉一次（handleWsReconnected → reloadCurrentChat）。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.4 自动回复 -->
+  <div class="flow" id="autoreply">
+    <h3><span class="no g">4</span>自动回复引擎（websocket 服务）</h3>
+    <p class="desc">与在线聊天是两套独立长连接：这条是「App 同款通道」，专门跑 7×24 自动回复与自动发货，不依赖浏览器是否打开。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 620" role="img" aria-label="自动回复引擎流程图">
+        <title>自动回复引擎流程</title>
+        <rect x="30" y="50" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="120" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">买家消息</text>
+        <text x="120" y="93" text-anchor="middle" font-size="11" fill="#5f5e5a">文本 / 图片 / 表情</text>
+        <text x="120" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">付款 / 订单事件</text>
+
+        <rect x="248" y="50" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="338" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">XianyuAsync</text>
+        <text x="338" y="93" text-anchor="middle" font-size="11" fill="#0f6e56">8090 常驻长连接</text>
+        <text x="338" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">账号池并发管理</text>
+
+        <rect x="466" y="50" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="556" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">message_handler</text>
+        <text x="556" y="93" text-anchor="middle" font-size="11" fill="#0f6e56">解密 + 分发</text>
+        <text x="556" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">按消息类型路由</text>
+
+        <rect x="684" y="50" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="774" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">消息过滤</text>
+        <text x="774" y="93" text-anchor="middle" font-size="11" fill="#534ab7">黑名单 · 过滤规则</text>
+        <text x="774" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">自身回声 / 系统消息</text>
+
+        <rect x="902" y="50" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="992" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">规则匹配</text>
+        <text x="992" y="93" text-anchor="middle" font-size="11" fill="#534ab7">关键词 · 商品 · 时段</text>
+        <text x="992" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">优先级排序</text>
+
+        <path d="M210 88 L244 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M428 88 L462 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M646 88 L680 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M864 88 L898 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="902" y="190" width="180" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="992" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">默认回复</text>
+        <text x="992" y="233" text-anchor="middle" font-size="11" fill="#185fa5">未命中关键词时</text>
+        <text x="992" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">可配置开关</text>
+
+        <rect x="684" y="190" width="180" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="774" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">AI 回复（可选）</text>
+        <text x="774" y="233" text-anchor="middle" font-size="11" fill="#534ab7">ai_reply_engine</text>
+        <text x="774" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">云端大模型 + 兜底</text>
+
+        <rect x="466" y="190" width="180" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="556" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">发送消息</text>
+        <text x="556" y="233" text-anchor="middle" font-size="11" fill="#0f6e56">文本 / 图片 / 商品卡</text>
+        <text x="556" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">间隔与限速</text>
+
+        <rect x="248" y="190" width="180" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="338" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">写日志</text>
+        <text x="338" y="233" text-anchor="middle" font-size="11" fill="#5f5e5a">auto_reply_logs</text>
+        <text x="338" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">命中规则可回溯</text>
+
+        <rect x="30" y="190" width="180" height="76" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="120" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">通知</text>
+        <text x="120" y="233" text-anchor="middle" font-size="11" fill="#854f0b">Webhook / 渠道</text>
+        <text x="120" y="250" text-anchor="middle" font-size="11" fill="#5f5e5a">通知模板渲染</text>
+
+        <path d="M992 126 L992 186" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M902 228 L866 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M684 228 L648 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M466 228 L430 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M248 228 L212 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <text x="40" y="316" font-size="11.5" fill="#8b949e">另一条支路：消息类型 = 付款 / 订单</text>
+        <path d="M40 326 L1040 326" fill="none" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+
+        <rect x="30" y="348" width="310" height="70" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="185" y="372" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">付款 / 下单事件</text>
+        <text x="185" y="391" text-anchor="middle" font-size="11" fill="#185fa5">订单已付款、待发货</text>
+
+        <rect x="385" y="348" width="310" height="70" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="540" y="372" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">auto_delivery_handler</text>
+        <text x="540" y="391" text-anchor="middle" font-size="11" fill="#0f6e56">发货规则判定</text>
+
+        <rect x="740" y="348" width="310" height="70" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="895" y="372" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">卡券匹配 → 自动发货</text>
+        <text x="895" y="391" text-anchor="middle" font-size="11" fill="#534ab7">card_matcher 取码并标记已用</text>
+
+        <path d="M340 383 L381 383" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M695 383 L736 383" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="30" y="452" width="1020" height="120" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="48" y="476" font-size="11.5" font-weight="600" fill="#1f2328">运行要点</text>
+        <text x="48" y="496" font-size="11.5" fill="#5b6470">· 回复优先级：关键词命中 &gt; AI 回复 &gt; 默认回复；同一买家短时间内多次消息会合并处理，避免刷屏。</text>
+        <text x="48" y="515" font-size="11.5" fill="#5b6470">· 消息过滤与黑名单在规则匹配之前执行，被过滤的消息不触发回复但会落日志。</text>
+        <text x="48" y="534" font-size="11.5" fill="#5b6470">· 自动发货同样受「发货规则 / 卡券库存 / 商品绑定」三重约束，失败会转人工并通知。</text>
+        <text x="48" y="553" font-size="11.5" fill="#5b6470">· AI 回复为可选能力：未配置 Key 或调用失败时自动降级为默认回复，不会阻塞主链路。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.5 订单 -->
+  <div class="flow" id="order">
+    <h3><span class="no a">5</span>订单同步与自动发货</h3>
+    <p class="desc">订单由 scheduler 定时抓取，也可由 websocket 的付款消息即时触发；两者最终都收敛到「规则 → 卡券 → 发货 → 通知」。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 540" role="img" aria-label="订单同步与自动发货流程图">
+        <title>订单同步与自动发货流程</title>
+        <rect x="40" y="55" width="230" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="155" y="79" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">scheduler</text>
+        <text x="155" y="98" text-anchor="middle" font-size="11" fill="#534ab7">fetch_orders_task</text>
+        <text x="155" y="115" text-anchor="middle" font-size="11" fill="#5f5e5a">定时轮询各账号</text>
+
+        <rect x="310" y="55" width="230" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="425" y="79" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">xianyu_order_client</text>
+        <text x="425" y="98" text-anchor="middle" font-size="11" fill="#5f5e5a">mtop 订单接口</text>
+        <text x="425" y="115" text-anchor="middle" font-size="11" fill="#5f5e5a">按账号 Cookie 签名</text>
+
+        <rect x="580" y="55" width="230" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="695" y="79" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">订单表</text>
+        <text x="695" y="98" text-anchor="middle" font-size="11" fill="#5f5e5a">xy_orders 落库</text>
+        <text x="695" y="115" text-anchor="middle" font-size="11" fill="#5f5e5a">幂等去重</text>
+
+        <rect x="850" y="55" width="200" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="950" y="79" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">状态变更检测</text>
+        <text x="950" y="98" text-anchor="middle" font-size="11" fill="#185fa5">已付款 / 已发货</text>
+        <text x="950" y="115" text-anchor="middle" font-size="11" fill="#5f5e5a">退款 / 关单</text>
+
+        <path d="M270 93 L306 93" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 93 L576 93" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M810 93 L846 93" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="850" y="200" width="200" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="950" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">发货规则匹配</text>
+        <text x="950" y="243" text-anchor="middle" font-size="11" fill="#185fa5">商品 / 关键词 / 金额</text>
+        <text x="950" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">是否免发货</text>
+
+        <rect x="580" y="200" width="230" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="695" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">卡券匹配</text>
+        <text x="695" y="243" text-anchor="middle" font-size="11" fill="#534ab7">card_matcher 取可用券</text>
+        <text x="695" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">发放后标记已使用</text>
+
+        <rect x="310" y="200" width="230" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="425" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">调用发货接口</text>
+        <text x="425" y="243" text-anchor="middle" font-size="11" fill="#0f6e56">agree_deliver</text>
+        <text x="425" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">无物流 / 虚拟发货</text>
+
+        <rect x="40" y="200" width="230" height="76" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="155" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">通知 + 日志</text>
+        <text x="155" y="243" text-anchor="middle" font-size="11" fill="#854f0b">发货结果回写订单</text>
+        <text x="155" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">失败转人工</text>
+
+        <path d="M950 131 L950 196" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M850 238 L814 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M580 238 L544 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M310 238 L274 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="320" width="1010" height="76" rx="8" fill="#e1f5ee" stroke="#a7d9c9" stroke-width="1"/>
+        <text x="58" y="344" font-size="11.5" font-weight="600" fill="#04342c">即时触发通道</text>
+        <text x="58" y="364" font-size="11.5" fill="#5b6470">websocket 服务收到「已付款」消息时，会立即走 auto_delivery_handler 判定并发货，不必等下一轮定时任务；</text>
+        <text x="58" y="383" font-size="11.5" fill="#5b6470">定时抓取仍在跑，用于兜底补单（漏推、断线、消息丢失）。两条路径共用同一套规则与幂等键，不会重复发货。</text>
+
+        <rect x="40" y="416" width="1010" height="94" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="58" y="440" font-size="11.5" font-weight="600" fill="#1f2328">相关衍生任务</text>
+        <text x="58" y="460" font-size="11.5" fill="#5b6470">补发货（redelivery）、超时未发货提醒（delivery_timeout）、自动评价（rate）、求小红花（red_flower）、</text>
+        <text x="58" y="479" font-size="11.5" fill="#5b6470">退款取消（refund_cancel）、关闭交易通知（close_notice），均由 scheduler 独立任务驱动并各自落日志。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.6 定时任务 -->
+  <div class="flow" id="cron">
+    <h3><span class="no p">6</span>定时任务调度（scheduler）</h3>
+    <p class="desc">所有「不用人盯着也要跑」的事都在这里；任务配置存库，可在后台「定时任务」页面开关与改周期。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 600" role="img" aria-label="定时任务调度流程图">
+        <title>定时任务调度流程</title>
+        <rect x="430" y="36" width="220" height="64" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="540" y="60" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">scheduler 主进程</text>
+        <text x="540" y="79" text-anchor="middle" font-size="11" fill="#534ab7">APScheduler · 8091</text>
+
+        <rect x="430" y="146" width="220" height="64" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="540" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">任务配置表</text>
+        <text x="540" y="189" text-anchor="middle" font-size="11" fill="#5f5e5a">scheduled_tasks · 开关 / 周期</text>
+
+        <path d="M540 100 L540 142" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <path d="M540 210 L540 240" fill="none" stroke="#888780" stroke-width="1.5"/>
+        <path d="M180 240 L900 240" fill="none" stroke="#888780" stroke-width="1.5"/>
+        <path d="M180 240 L180 274" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 240 L540 274" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M900 240 L900 274" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="278" width="280" height="70" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="180" y="302" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">凭证续期</text>
+        <text x="180" y="321" text-anchor="middle" font-size="11" fill="#0f6e56">Cookie / Token / 登录态</text>
+
+        <rect x="400" y="278" width="280" height="70" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="540" y="302" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">商品运营</text>
+        <text x="540" y="321" text-anchor="middle" font-size="11" fill="#185fa5">自动上架 · 擦亮 · 下架</text>
+
+        <rect x="760" y="278" width="280" height="70" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="900" y="302" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">订单与售后</text>
+        <text x="900" y="321" text-anchor="middle" font-size="11" fill="#854f0b">抓单 · 超时提醒 · 补发货</text>
+
+        <rect x="40" y="392" width="280" height="70" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="180" y="416" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">监控与采集</text>
+        <text x="180" y="435" text-anchor="middle" font-size="11" fill="#534ab7">商品监控 · 关键词采集</text>
+
+        <rect x="400" y="392" width="280" height="70" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="540" y="416" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">评价与互动</text>
+        <text x="540" y="435" text-anchor="middle" font-size="11" fill="#185fa5">补评价 · 求小红花 · 私信</text>
+
+        <rect x="760" y="392" width="280" height="70" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="900" y="416" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">维护与清理</text>
+        <text x="900" y="435" text-anchor="middle" font-size="11" fill="#5f5e5a">数据库备份 · 浏览器数据清理</text>
+
+        <path d="M180 348 L180 388" fill="none" stroke="#c9ccd1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+        <path d="M540 348 L540 388" fill="none" stroke="#c9ccd1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+        <path d="M900 348 L900 388" fill="none" stroke="#c9ccd1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+
+        <rect x="40" y="492" width="1000" height="84" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="58" y="516" font-size="11.5" font-weight="600" fill="#1f2328">执行约定</text>
+        <text x="58" y="536" font-size="11.5" fill="#5b6470">· 每个任务独立开关、独立周期，失败不影响其它任务；结果写各自日志表（补发货 / 擦亮 / 续期 / 备份…）。</text>
+        <text x="58" y="555" font-size="11.5" fill="#5b6470">· 所有任务共用 common 的账号加载与风控工具，遇到 FAIL_SYS_USER_VALIDATE 会跳过该账号并记录风控日志。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.7 ASR -->
+  <div class="flow" id="asr">
+    <h3><span class="no g">7</span>语音转文字（ASR）</h3>
+    <p class="desc">浏览器录音 → 前端转标准 WAV → 后端按配置选本地模型或云端 → 文本回填输入框，最后仍以文本消息发出。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 500" role="img" aria-label="语音转文字流程图">
+        <title>语音转文字流程</title>
+        <rect x="40" y="50" width="210" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="145" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">点击麦克风</text>
+        <text x="145" y="93" text-anchor="middle" font-size="11" fill="#5f5e5a">MediaRecorder 录音</text>
+        <text x="145" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">需浏览器授权</text>
+
+        <rect x="300" y="50" width="210" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="405" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">前端转 WAV</text>
+        <text x="405" y="93" text-anchor="middle" font-size="11" fill="#185fa5">16kHz / 16bit / 单声道</text>
+        <text x="405" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">不依赖服务端 ffmpeg</text>
+
+        <rect x="560" y="50" width="210" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="665" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">POST 转写</text>
+        <text x="665" y="93" text-anchor="middle" font-size="11" fill="#185fa5">/chat-new/transcribe-audio</text>
+        <text x="665" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">音频文件或直链</text>
+
+        <rect x="820" y="50" width="210" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="925" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">选路</text>
+        <text x="925" y="93" text-anchor="middle" font-size="11" fill="#534ab7">asr.provider</text>
+        <text x="925" y="110" text-anchor="middle" font-size="11" fill="#5f5e5a">auto / local / cloud</text>
+
+        <path d="M250 88 L296 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M510 88 L556 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M770 88 L816 88" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="560" y="190" width="210" height="64" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="665" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">本地 faster-whisper</text>
+        <text x="665" y="233" text-anchor="middle" font-size="11" fill="#0f6e56">CPU int8，无需 Key</text>
+
+        <rect x="560" y="286" width="210" height="64" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="665" y="310" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">云端识别（可选）</text>
+        <text x="665" y="329" text-anchor="middle" font-size="11" fill="#0f6e56">填了 API Key 才走</text>
+
+        <rect x="300" y="232" width="210" height="64" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="405" y="256" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">回填输入框</text>
+        <text x="405" y="275" text-anchor="middle" font-size="11" fill="#185fa5">用户可编辑再发</text>
+
+        <rect x="40" y="232" width="210" height="64" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="145" y="256" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">按文本消息发送</text>
+        <text x="145" y="275" text-anchor="middle" font-size="11" fill="#185fa5">走 /send-message</text>
+
+        <path d="M1010 126 L1010 214 L774 214" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M980 126 L980 318 L774 318" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M560 222 L532 222 L532 264 L514 264" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M560 318 L532 318 L532 264 L514 264" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M300 264 L254 264" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="382" width="1000" height="94" rx="8" fill="#faeeda" stroke="#e8d5b7" stroke-width="1"/>
+        <text x="58" y="406" font-size="11.5" font-weight="600" fill="#412402">依赖安装与模型缓存</text>
+        <text x="58" y="426" font-size="11.5" fill="#412402">设置页「一键安装依赖」调 POST /chat-new/asr/install-deps，后台 pip 装 faster-whisper + av==14.0.1，前端每 2 秒轮询 /asr/install-status。</text>
+        <text x="58" y="445" font-size="11.5" fill="#412402">装完无需重启：local_asr.reset_availability() 重新探测；模型首次下载缓存在持久化目录（Docker 卷 asr_models）。</text>
+        <text x="58" y="464" font-size="11.5" fill="#412402">注意：av 必须锁 14.0.1，faster-whisper 1.2.x 与 av 15+ 不兼容。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.8 发布与监控 -->
+  <div class="flow" id="publish">
+    <h3><span class="no a">8</span>商品发布与商品监控</h3>
+    <p class="desc">发布是「素材 → 生成 → 调闲鱼发布接口」；监控是「定时搜索/采集 → 落库 → 命中规则后自动下单并通知」。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 540" role="img" aria-label="商品发布与监控流程图">
+        <title>商品发布与商品监控流程</title>
+        <text x="40" y="40" font-size="12" font-weight="600" fill="#185fa5">A · 商品发布</text>
+        <rect x="40" y="56" width="230" height="72" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="155" y="80" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">素材库</text>
+        <text x="155" y="99" text-anchor="middle" font-size="11" fill="#185fa5">图片 / 视频 / 文案</text>
+
+        <rect x="310" y="56" width="230" height="72" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="425" y="80" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">发布服务</text>
+        <text x="425" y="99" text-anchor="middle" font-size="11" fill="#0f6e56">单品 / 批量 · 地址与运费</text>
+
+        <rect x="580" y="56" width="230" height="72" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="695" y="80" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">闲鱼发布接口</text>
+        <text x="695" y="99" text-anchor="middle" font-size="11" fill="#5f5e5a">图片先过安全审核</text>
+
+        <rect x="850" y="56" width="200" height="72" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="950" y="80" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">发布日志</text>
+        <text x="950" y="99" text-anchor="middle" font-size="11" fill="#5f5e5a">成功 / 失败原因</text>
+
+        <path d="M270 92 L306 92" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 92 L576 92" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M810 92 L846 92" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <path d="M40 150 L1040 150" fill="none" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="40" y="176" font-size="12" font-weight="600" fill="#534ab7">B · 商品监控</text>
+
+        <rect x="40" y="192" width="230" height="72" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="155" y="216" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">监控任务</text>
+        <text x="155" y="235" text-anchor="middle" font-size="11" fill="#534ab7">listing_monitor_task 定时</text>
+
+        <rect x="310" y="192" width="230" height="72" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="425" y="216" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">搜索 / 采集</text>
+        <text x="425" y="235" text-anchor="middle" font-size="11" fill="#5f5e5a">关键词 · 分类 · 指定卖家</text>
+
+        <rect x="580" y="192" width="230" height="72" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="695" y="216" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">监控商品表</text>
+        <text x="695" y="235" text-anchor="middle" font-size="11" fill="#5f5e5a">去重 · 价格与库存快照</text>
+
+        <rect x="850" y="192" width="200" height="72" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="950" y="216" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">命中规则 → 通知</text>
+        <text x="950" y="235" text-anchor="middle" font-size="11" fill="#854f0b">可绑下单账号自动下单</text>
+
+        <path d="M270 228 L306 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 228 L576 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M810 228 L846 228" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="300" width="1000" height="100" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="58" y="324" font-size="11.5" font-weight="600" fill="#1f2328">发布侧要点</text>
+        <text x="58" y="344" font-size="11.5" fill="#5b6470">· 图片必须走闲鱼 media 上传（本地图片先转存到闲鱼 CDN），直接外链一律被拒。</text>
+        <text x="58" y="363" font-size="11.5" fill="#5b6470">· 批量发布支持「账号池随机 / 全局随机 / 个人随机」选号，逐条落发布日志，可重试失败项。</text>
+        <text x="58" y="382" font-size="11.5" fill="#5b6470">· 发货方式支持包邮 / 按距离 / 一口价 / 模板 / 无需邮寄，地址来自地址库。</text>
+
+        <rect x="40" y="416" width="1000" height="94" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="58" y="440" font-size="11.5" font-weight="600" fill="#1f2328">监控侧要点</text>
+        <text x="58" y="460" font-size="11.5" fill="#5b6470">· 采集与下单用独立的「采集账号 / 下单账号」，与卖家账号隔离，避免同账号自买自卖被风控。</text>
+        <text x="58" y="479" font-size="11.5" fill="#5b6470">· 命中后先通知再下单（可关），下单失败会重试并记录原因；商品下架/涨价的判定基于价格与库存快照对比。</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 3.9 分销 -->
+  <div class="flow" id="dist">
+    <h3><span class="no p">9</span>分销与推广（promotion 子项目）</h3>
+    <p class="desc">独立子项目，与主服务共用同一套 MySQL；主后台的「分销管理」只读展示并做配置，实际下单/结算在代理侧完成。</p>
+    <div class="svg-box">
+      <svg viewBox="0 0 1080 460" role="img" aria-label="分销与推广流程图">
+        <title>分销与推广流程</title>
+        <rect x="40" y="60" width="230" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="155" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">分销商下单</text>
+        <text x="155" y="103" text-anchor="middle" font-size="11" fill="#185fa5">代理后台 / 移动端</text>
+        <text x="155" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">按分销价结算</text>
+
+        <rect x="310" y="60" width="230" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="425" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">代理订单</text>
+        <text x="425" y="103" text-anchor="middle" font-size="11" fill="#5f5e5a">落库并绑定货源</text>
+        <text x="425" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">发货状态回传</text>
+
+        <rect x="580" y="60" width="230" height="76" rx="9" fill="#e1f5ee" stroke="#0f6e56" stroke-width="1.5"/>
+        <text x="695" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#04342c">货源 / 对接商品</text>
+        <text x="695" y="103" text-anchor="middle" font-size="11" fill="#0f6e56">卡券 · 商品 · 自定义</text>
+        <text x="695" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">库存与成本价</text>
+
+        <rect x="850" y="60" width="200" height="76" rx="9" fill="#faeeda" stroke="#854f0b" stroke-width="1.5"/>
+        <text x="950" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#412402">发货 / 发券</text>
+        <text x="950" y="103" text-anchor="middle" font-size="11" fill="#854f0b">调用主服务能力</text>
+        <text x="950" y="120" text-anchor="middle" font-size="11" fill="#5f5e5a">或直连闲鱼</text>
+
+        <path d="M270 98 L306 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M540 98 L576 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M810 98 L846 98" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="850" y="200" width="200" height="76" rx="9" fill="#eeedfe" stroke="#534ab7" stroke-width="1.5"/>
+        <text x="950" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#26215c">结算 / 分润</text>
+        <text x="950" y="243" text-anchor="middle" font-size="11" fill="#534ab7">settlement_service</text>
+        <text x="950" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">多级分销比例</text>
+
+        <rect x="580" y="200" width="230" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="695" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">promotion 服务</text>
+        <text x="695" y="243" text-anchor="middle" font-size="11" fill="#185fa5">独立前后端子项目</text>
+        <text x="695" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">不参与主链路部署</text>
+
+        <rect x="310" y="200" width="230" height="76" rx="9" fill="#f1efe8" stroke="#888780" stroke-width="1"/>
+        <text x="425" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#2c2c2a">共用 MySQL</text>
+        <text x="425" y="243" text-anchor="middle" font-size="11" fill="#5f5e5a">货源 / 订单 / 分销商</text>
+        <text x="425" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">与主库同一实例</text>
+
+        <rect x="40" y="200" width="230" height="76" rx="9" fill="#e6f1fb" stroke="#185fa5" stroke-width="1.5"/>
+        <text x="155" y="224" text-anchor="middle" font-size="13" font-weight="600" fill="#042c53">主后台 · 分销管理</text>
+        <text x="155" y="243" text-anchor="middle" font-size="11" fill="#185fa5">货源 / 对接 / 代理订单</text>
+        <text x="155" y="260" text-anchor="middle" font-size="11" fill="#5f5e5a">分销商与下级</text>
+
+        <path d="M950 136 L950 196" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M850 238 L814 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M580 238 L544 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+        <path d="M310 238 L274 238" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <rect x="40" y="312" width="1000" height="100" rx="8" fill="#fcfcfd" stroke="#e3e6ea" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="58" y="336" font-size="11.5" font-weight="600" fill="#1f2328">推广发布</text>
+        <text x="58" y="356" font-size="11.5" fill="#5b6470">promotion 侧还有一套「推广发布」能力：promotion_xianyu_publisher 把对接商品代发到闲鱼，用于铺量；</text>
+        <text x="58" y="375" font-size="11.5" fill="#5b6470">发布地址从 promotion_address_selector 按规则选取，失败重试与主服务发布日志分开记录。</text>
+        <text x="58" y="394" font-size="11.5" fill="#5b6470">该能力默认不在主链路，只有显式启用推广服务时才跑。</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>看图顺序建议：</b>先看①整体架构建立全局印象，再按 1→9 逐个看交互流程。每张图的方块即为代码里的真实模块/函数名，可直接在
+    <code>backend-web/app/services/</code>、<code>websocket/app/services/xianyu/</code>、<code>scheduler/app/services/scheduler/</code> 里搜到。
+  </div>
+</section>
+
+<section id="services">
+  <h2>四、服务清单</h2>
   <p class="desc">docker-compose 一键拉起 6 个容器；也可源码方式逐个启动。</p>
   <table>
     <thead>
@@ -251,8 +1002,8 @@
   </table>
 </section>
 
-<section>
-  <h2>四、目录结构</h2>
+<section id="tree">
+  <h2>五、目录结构</h2>
   <div class="grid">
     <div class="mini">
       <h3><span class="tag">核心</span>backend-web/</h3>
@@ -290,7 +1041,7 @@
 </section>
 
 <section>
-  <h2>五、在线聊天语音转文字链路</h2>
+  <h2>六、语音转文字实现细节</h2>
   <p class="desc">最新加入的能力：浏览器录音 → 统一转 WAV → 后端本地模型识别 → 回填输入框 → 以文本消息发出。</p>
   <ul>
     <li>浏览器 <code>MediaRecorder</code> 录音后，由 <code>frontend/src/utils/audio.ts</code> 解码重编码为 16k/16bit 单声道 WAV，避免依赖服务端 ffmpeg。</li>
@@ -301,11 +1052,13 @@
   </ul>
 </section>
 
-<section>
-  <h2>六、已知边界</h2>
+<section id="bounds">
+  <h2>七、已知边界</h2>
   <ul>
-    <li><b>发送语音消息暂不可用</b>：闲鱼 PC 侧上传通道只做图片安全审核（传音频返回 <code>PICTURE_NOT_SAFE</code>），实测多种参数与路径变体均失败，需抓包确认 App 侧真实接口。</li>
-    <li><b>IM 长连接约 2~3 小时被服务端主动断开</b>，且断后不会自动重连，需要手动或补重连逻辑。</li>
+    <li><b>发送语音消息暂不可用</b>：闲鱼 PC 侧上传通道只做图片安全审核（传音频返回 <code>PICTURE_NOT_SAFE</code>），实测多种参数与路径变体均失败，需抓包确认 App 侧真实接口。语音转文字是绕开该限制的替代方案。</li>
+    <li><b>IM 长连接约 2~3 小时被服务端主动断开</b>：现已由 20 秒健康巡检 + 指数退避重连兜住，进程重启后按「自动恢复清单」重建连接（2026-10-17 起）。</li>
+    <li><b>网页 IM 通道对 APP 来源消息的推送不稳定</b>：同一账号时好时坏，故系统内账号互发依赖应用层补偿；与闲管家等 App 通道工具相比，实时性天然差几秒。</li>
+    <li><b>闲鱼接口存在账号级风控</b>：<code>FAIL_SYS_USER_VALIDATE</code> 一旦出现，重试无效且会加重风控。主页/头像类接口已加熔断（连续 3 次失败熔断 10 分钟）与失败负缓存，宁可留灰占位也不连击。</li>
     <li><b>闲鱼商品页可 iframe 嵌入</b>（响应头无 X-Frame-Options），但登录态归浏览器，系统数据库里的账号 Cookie 无法跨域注入。</li>
   </ul>
 </section>
@@ -313,5 +1066,18 @@
 <footer>本文件由项目源码结构整理生成 · 单文件、无外链依赖，可直接双击打开或打印为 PDF</footer>
 
 </div>
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var targets = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+  function sync() {
+    var y = window.scrollY + 90, idx = 0;
+    targets.forEach(function (t, i) { if (t && t.offsetTop <= y) idx = i; });
+    links.forEach(function (a, i) { a.classList.toggle('on', i === idx); });
+  }
+  window.addEventListener('scroll', sync, { passive: true });
+  sync();
+})();
+</script>
 </body>
 </html>
