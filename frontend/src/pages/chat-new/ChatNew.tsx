@@ -442,7 +442,9 @@ export function ChatNew() {
   }, [])
 
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
-    const summary = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
+    // 会话列表摘要带发送者前缀：自己的「你：」，对方的「他：」（性别拿不到，统一「他」）
+    const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
+    const summary = `${msg.isSelf ? '你' : '他'}：${body}`
     const isActiveAccount = accountId === activeAccountIdRef.current
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响
     if (!msg.isSelf) {
@@ -1457,7 +1459,7 @@ export function ChatNew() {
         setConversations((prev) =>
           prev.map((c) =>
             c.cid === activeCid
-              ? { ...c, lastMessageSummary: text.slice(0, 50), lastMessageTime: sentMsg.time }
+              ? { ...c, lastMessageSummary: `你：${text.slice(0, 50)}`, lastMessageTime: sentMsg.time }
               : c,
           ),
         )
@@ -1570,7 +1572,7 @@ export function ChatNew() {
         setConversations((prev) =>
           prev.map((c) =>
             c.cid === activeCid
-              ? { ...c, lastMessageSummary: '[图片]', lastMessageTime: sentMsg.time }
+              ? { ...c, lastMessageSummary: '你：[图片]', lastMessageTime: sentMsg.time }
               : c,
           ),
         )
@@ -1647,7 +1649,7 @@ export function ChatNew() {
         setConversations((prev) =>
           prev.map((c) =>
             c.cid === activeCid
-              ? { ...c, lastMessageSummary: '[语音]', lastMessageTime: sentMsg.time }
+              ? { ...c, lastMessageSummary: '你：[语音]', lastMessageTime: sentMsg.time }
               : c,
           ),
         )

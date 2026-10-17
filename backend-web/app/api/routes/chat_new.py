@@ -1127,6 +1127,12 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
         else:
             other_user_name = ""
 
+        # 摘要加发送者前缀：自己的消息「你：」，对方的「他：」。
+        # 性别数据拿不到，对方统一用「他」；系统消息 sender 为空不加前缀。
+        if last_msg_summary and sender_user_id:
+            prefix = "你" if sender_user_id == myid else "他"
+            last_msg_summary = f"{prefix}：{last_msg_summary}"
+
         return {
             "cid": cid,
             "rawCid": raw_cid,
