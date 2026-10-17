@@ -71,6 +71,7 @@ async def get_user_profile(
     user_id: str,
     cookies_str: str,
     db,
+    with_activity: bool = True,
 ) -> Optional[dict]:
     """
     查询对方的闲鱼主页信息
@@ -80,6 +81,9 @@ async def get_user_profile(
         user_id: 对方的闲鱼用户ID
         cookies_str: 账号Cookie字符串
         db: 数据库会话（用于更新Cookie）
+        with_activity: 是否顺带查「最近来过/回复速度」。这两个字段要额外
+            绕商品详情接口，只要头像/昵称的场景（如批量查头像）应传 False，
+            避免一次批量查询触发多次风控较严的商品详情请求。
 
     Returns:
         结构化主页信息字典，查询失败返回 None
@@ -125,7 +129,7 @@ async def get_user_profile(
     #    闲鱼把活跃状态挂在商品详情的 sellerDO 上（APP 主页的"X分钟前来过"
     #    就是它），主页接口本身没有这个字段。单独短缓存，失败静默跳过，
     #    不影响名片主体。
-    if profile and profile.get("itemCount"):
+    if with_activity and profile and profile.get("itemCount"):
         activity = await _get_activity_cached(
             account_id=account_id,
             user_id=user_id,

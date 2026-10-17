@@ -30,7 +30,11 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
 from app.services.chat_new.avatar_service import get_owner_user_info, get_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
-from app.services.chat_new.user_profile_service import get_user_profile, _load_sibling_accounts
+from app.services.chat_new.user_profile_service import (
+    get_user_profile,
+    _load_sibling_accounts,
+    PROFILE_CACHE_PREFIX,
+)
 from app.services.chat_new.official_blacklist_service import official_blacklist_request
 from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
@@ -378,6 +382,31 @@ async def get_conversations(
         # 用户手动删除的会话不再返回（删除后又有新消息的会自动恢复显示）
         conversations = await _filter_hidden_conversations(account_id, conversations)
 
+        # 头像/昵称优先用主页信息缓存（按 userId、30 分钟）：
+        # user.query 返回的 logo 实测不可靠——同一条会话查对方和自己，
+        # 返回的是同一张错误头像。这里只读缓存不发起 mtop 请求。
+        try:
+            redis_client = await get_redis_client()
+            profile_pipe = redis_client.pipeline()
+            for c in conversations:
+                profile_pipe.get(f"{PROFILE_CACHE_PREFIX}{c['otherUserId']}")
+            profile_results = await profile_pipe.execute()
+            for c, raw in zip(conversations, profile_results):
+                if not raw:
+                    continue
+                try:
+                    data = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                if data.get("avatar"):
+                    c["otherUserAvatar"] = data["avatar"]
+                if _is_valid_nick(data.get("nick", "")):
+                    c["otherUserName"] = data["nick"]
+        except Exception as e:
+            logger.warning(f"【{account_id}】读取主页信息缓存失败: {e}")
+
         # 从 Redis 批量读取所有会话的缓存，按优先级确定昵称并回写更优数据
         try:
             redis_client = await get_redis_client()
@@ -698,12 +727,30 @@ async def query_avatars(
             # 每次请求间隔 0.3 秒，防止 mtop API 限流
             if idx > 0:
                 await asyncio.sleep(0.3)
-            info = await get_user_info(
-                account_id=account_id,
-                cid=item.cid,
-                cookies_str=account.cookie,
-                db=db,
-            )
+            # 头像优先走主页接口（按 userId 缓存 30 分钟，不查活跃信息）：
+            # user.query 返回的 logo 实测不可靠——同一条会话查对方和自己，
+            # 返回的是同一张错误头像；主页接口的才是真实头像。
+            info = None
+            try:
+                profile = await get_user_profile(
+                    account_id=account_id,
+                    user_id=item.userId,
+                    cookies_str=account.cookie,
+                    db=db,
+                    with_activity=False,
+                )
+            except Exception as profile_e:
+                logger.warning(f"【{account_id}】主页信息查询失败，退回 user.query: {profile_e}")
+                profile = None
+            if profile and (profile.get("avatar") or profile.get("nick")):
+                info = {"avatar": profile.get("avatar", ""), "nick": profile.get("nick", "")}
+            if not info:
+                info = await get_user_info(
+                    account_id=account_id,
+                    cid=item.cid,
+                    cookies_str=account.cookie,
+                    db=db,
+                )
             if info:
                 user_infos[item.userId] = info
 
@@ -847,7 +894,26 @@ async def get_account_profile(
     if not account or not account.cookie:
         return ApiResponse(success=False, message="账号不存在或Cookie为空")
 
-    info = await get_owner_user_info(account_id, cid, account.cookie, db)
+    # 优先走主页接口：user.query 返回的 logo 实测不可靠（同一条会话查对方
+    # 和自己返回同一张错误头像），昵称还是脱敏的（如 x***1）；主页接口的
+    # 才是真实昵称和头像。拿不到时再退回 user.query。
+    manager = get_im_session_manager()
+    client = manager.clients.get(account_id)
+    # 自己的用户ID：优先取 IM 客户端的 myid，账号未连接时从 Cookie 的 unb 取
+    my_id = (getattr(client, "myid", "") if client else "") or trans_cookies(account.cookie).get("unb", "")
+    info = None
+    if my_id:
+        try:
+            profile = await get_user_profile(
+                account_id, my_id, account.cookie, db, with_activity=False,
+            )
+        except Exception as profile_e:
+            logger.warning(f"【{account_id}】主页信息查询失败，退回 user.query: {profile_e}")
+            profile = None
+        if profile and (profile.get("avatar") or profile.get("nick")):
+            info = {"avatar": profile.get("avatar", ""), "nick": profile.get("nick", "")}
+    if not info:
+        info = await get_owner_user_info(account_id, cid, account.cookie, db)
     if info and _is_valid_nick(info.get("nick", "")):
         account.display_name = info["nick"]
         await db.commit()
