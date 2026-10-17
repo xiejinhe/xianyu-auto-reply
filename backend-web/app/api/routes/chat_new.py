@@ -30,7 +30,7 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
 from app.services.chat_new.avatar_service import get_owner_user_info, get_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
-from app.services.chat_new.user_profile_service import get_user_profile
+from app.services.chat_new.user_profile_service import get_user_profile, _load_sibling_accounts
 from app.services.chat_new.official_blacklist_service import official_blacklist_request
 from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
@@ -814,12 +814,16 @@ async def get_chat_item_info(
     account_id: str,
     item_id: str,
     current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     查询会话关联商品的详情（价格/原价/运费/状态）
 
     会话列表的 extension 里只有 itemId / itemTitle / itemMainPic，不含价格，
     所以价格要额外查一次闲鱼商品详情接口，结果缓存 10 分钟。
+
+    商品详情是风控较严的接口（账号可能整体被拦 FAIL_SYS_USER_VALIDATE），
+    当前账号不可用时自动借用同一用户名下的其它账号兜底。
     """
     cache_key = f"{account_id}:{item_id}"
     now = time.time()
@@ -829,55 +833,64 @@ async def get_chat_item_info(
 
     manager = get_im_session_manager()
     client = manager.clients.get(account_id)
-    if not client or not client.is_connected:
-        return ApiResponse(success=False, message="账号未连接，无法获取商品信息")
 
-    try:
-        from common.services.xianyu_detail_client import XianyuItemDetailClient
+    from common.services.xianyu_detail_client import XianyuItemDetailClient
 
-        detail_client = XianyuItemDetailClient(account_id, client.cookies_str)
-        result = await detail_client.get_detail(item_id)
-        if not result.get("success"):
-            return ApiResponse(
-                success=False,
-                message=result.get("error") or "商品信息获取失败",
-            )
+    async def try_detail(aid: str, cookies: str) -> dict:
+        return await XianyuItemDetailClient(aid, cookies).get_detail(item_id)
 
-        item_do = (result.get("detail") or {}).get("itemDO") or {}
+    result: dict | None = None
+    if client and client.is_connected:
+        result = await try_detail(account_id, client.cookies_str)
 
-        # 商品图：imageInfos 是一个列表，major=True 的是主图，排到最前
-        images: list[dict] = []
-        for img in item_do.get("imageInfos") or []:
-            if isinstance(img, dict) and img.get("url"):
-                url = str(img["url"])
-                # 详情接口返回的图片是 http://，统一成 https 避免将来 https 部署时被浏览器
-                # 按混合内容拦截（alicdn 同时支持 https）
-                if url.startswith("http://"):
-                    url = "https://" + url[len("http://"):]
-                images.append({"url": url, "major": bool(img.get("major"))})
-        images.sort(key=lambda x: not x["major"])
+    # 当前账号不在线，或被商品详情接口风控（account_invalid）→ 换同用户其它账号重试。
+    # 注意：商品级失败（下架/不存在，item_invalid）不代表账号有问题，不重试。
+    account_blocked = result is None or bool(result.get("account_invalid"))
+    if account_blocked:
+        for fb_account, fb_cookies in await _load_sibling_accounts(account_id, db, limit=3):
+            result = await try_detail(fb_account, fb_cookies)
+            if result.get("success"):
+                logger.info(f"【{account_id}】商品详情由备用账号 {fb_account} 查到: {item_id}")
+                break
 
-        data = {
-            "itemId": str(item_id),
-            "title": item_do.get("title", "") or "",
-            "price": item_do.get("soldPrice", "") or "",
-            "originalPrice": item_do.get("originalPrice", "") or "",
-            "transportFee": item_do.get("transportFee", "") or "",
-            "status": item_do.get("itemStatusStr", "") or "",
-            # 下面这些用于前端自渲染商品详情，避免在弹窗里嵌闲鱼页面（那样会要求浏览器登录）
-            "desc": item_do.get("desc", "") or "",
-            "images": images,
-            "browseCnt": item_do.get("browseCnt", "") or "",
-            "collectCnt": item_do.get("collectCnt", "") or "",
-            "quantity": item_do.get("quantity", "") or "",
-            "sellerId": result.get("seller_user_id") or "",
-            "sellerNick": result.get("seller_nick") or "",
-        }
-        _ITEM_INFO_CACHE[cache_key] = (now + _ITEM_INFO_TTL, data)
-        return ApiResponse(success=True, data=data)
-    except Exception as e:
-        logger.error(f"【{account_id}】获取商品信息失败: {e}")
-        return ApiResponse(success=False, message=f"获取商品信息失败: {str(e)}")
+    if not result or not result.get("success"):
+        return ApiResponse(
+            success=False,
+            message=(result or {}).get("error") or "商品信息获取失败",
+        )
+
+    item_do = (result.get("detail") or {}).get("itemDO") or {}
+
+    # 商品图：imageInfos 是一个列表，major=True 的是主图，排到最前
+    images: list[dict] = []
+    for img in item_do.get("imageInfos") or []:
+        if isinstance(img, dict) and img.get("url"):
+            url = str(img["url"])
+            # 详情接口返回的图片是 http://，统一成 https 避免将来 https 部署时被浏览器
+            # 按混合内容拦截（alicdn 同时支持 https）
+            if url.startswith("http://"):
+                url = "https://" + url[len("http://"):]
+            images.append({"url": url, "major": bool(img.get("major"))})
+    images.sort(key=lambda x: not x["major"])
+
+    data = {
+        "itemId": str(item_id),
+        "title": item_do.get("title", "") or "",
+        "price": item_do.get("soldPrice", "") or "",
+        "originalPrice": item_do.get("originalPrice", "") or "",
+        "transportFee": item_do.get("transportFee", "") or "",
+        "status": item_do.get("itemStatusStr", "") or "",
+        # 下面这些用于前端自渲染商品详情，避免在弹窗里嵌闲鱼页面（那样会要求浏览器登录）
+        "desc": item_do.get("desc", "") or "",
+        "images": images,
+        "browseCnt": item_do.get("browseCnt", "") or "",
+        "collectCnt": item_do.get("collectCnt", "") or "",
+        "quantity": item_do.get("quantity", "") or "",
+        "sellerId": result.get("seller_user_id") or "",
+        "sellerNick": result.get("seller_nick") or "",
+    }
+    _ITEM_INFO_CACHE[cache_key] = (now + _ITEM_INFO_TTL, data)
+    return ApiResponse(success=True, data=data)
 
 
 def _parse_conversation(conv: dict, myid: str) -> dict | None:

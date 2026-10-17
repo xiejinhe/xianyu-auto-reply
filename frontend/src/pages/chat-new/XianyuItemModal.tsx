@@ -241,7 +241,7 @@ export function XianyuItemModal({
                   {price ? (
                     <span className="text-2xl font-semibold text-red-500">¥{price}</span>
                   ) : (
-                    <span className="text-sm text-slate-400">价格获取中…</span>
+                    <span className="text-sm text-slate-400">价格未获取到（接口风控或商品已下架）</span>
                   )}
                   {showOriginal ? (
                     <span className="text-sm text-slate-400 line-through">¥{originalPrice}</span>
