@@ -31,12 +31,14 @@ import {
   changeOfficialBlacklist,
   copyImageToClipboard,
   getItemInfo,
+  getXianyuUserProfile,
   type ChatAccount,
   type Conversation,
   type ChatItemInfo,
   type ChatMessage,
   type CustomerOrder,
   type QuickPhrase,
+  type XianyuUserProfile,
 } from '@/api/chatNew'
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
 import { useChatNewWs } from './useChatNewWs'
@@ -128,6 +130,9 @@ export function ChatNew() {
 
   // 当前会话关联的商品：图/标题/itemId 来自会话列表，价格需要额外查详情接口
   const [itemInfo, setItemInfo] = useState<ChatItemInfo | null>(null)
+
+  // 对方的闲鱼主页信息（会话顶部的"买家名片"）
+  const [peerProfile, setPeerProfile] = useState<XianyuUserProfile | null>(null)
   const [itemModalOpen, setItemModalOpen] = useState(false)
 
   // 发送消息
@@ -816,6 +821,24 @@ export function ChatNew() {
       cancelled = true
     }
   }, [activeAccountId, activeConversation?.itemId])
+
+  // 对方闲鱼主页信息（会话窗口的"买家名片"）：等级/好评率/属地/粉丝/认证
+  // 后端按用户ID缓存 30 分钟；查不到时静默不展示，不打扰聊天
+  useEffect(() => {
+    const peerId = activeConversation?.otherUserId
+    if (!activeAccountId || !peerId) {
+      setPeerProfile(null)
+      return
+    }
+    let cancelled = false
+    setPeerProfile(null)
+    getXianyuUserProfile(activeAccountId, peerId).then((profile) => {
+      if (!cancelled) setPeerProfile(profile)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeAccountId, activeConversation?.otherUserId])
 
   // 打开闲鱼个人主页弹窗（昵称和头像直接用系统内已有的数据）
   const openXianyuProfile = useCallback((userId: string, name: string, avatar: string) => {
@@ -1872,6 +1895,69 @@ export function ChatNew() {
             </button>
           )}
         </div>
+
+        {/* 对方名片条：闲鱼主页信息直接摆在会话里，点开可看完整主页 */}
+        {activeConversation?.otherUserId && peerProfile && (
+          <button
+            onClick={() => openXianyuProfile(
+              activeConversation.otherUserId,
+              peerProfile.nick || activeConversation.otherUserName,
+              peerProfile.avatar || activeConversation.otherUserAvatar,
+            )}
+            title="点击查看闲鱼个人主页"
+            className="w-full flex items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
+          >
+            {peerProfile.avatar ? (
+              <img
+                src={peerProfile.avatar}
+                alt=""
+                className="w-9 h-9 rounded-full object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
+                <User className="w-4 h-4 text-gray-400" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                  {peerProfile.nick || activeConversation.otherUserName || '未知用户'}
+                </span>
+                {peerProfile.shopLevel && (
+                  <span className="flex-shrink-0 px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-[10px] text-amber-700 dark:text-amber-300">
+                    {peerProfile.shopLevel}
+                  </span>
+                )}
+                {peerProfile.licensed && (
+                  <span className="flex-shrink-0 px-1 rounded bg-blue-100 dark:bg-blue-900/40 text-[10px] text-blue-600 dark:text-blue-300">
+                    持证
+                  </span>
+                )}
+                {typeof peerProfile.praiseRatio === 'number' && (
+                  <span className="flex-shrink-0 text-[10px] text-emerald-600 dark:text-emerald-400">
+                    好评{peerProfile.praiseRatio}%
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0">
+                {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
+                {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
+                {typeof peerProfile.itemCount === 'number' && (
+                  <span className="flex-shrink-0">宝贝{peerProfile.itemCount}</span>
+                )}
+                {peerProfile.certifications.slice(0, 2).map((cert) => (
+                  <span key={cert} className="flex-shrink-0 px-1 rounded bg-gray-100 dark:bg-gray-700">
+                    {cert}
+                  </span>
+                ))}
+                {peerProfile.introduction && (
+                  <span className="truncate">· {peerProfile.introduction}</span>
+                )}
+              </div>
+            </div>
+            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          </button>
+        )}
 
         {/* 会话关联的商品条：点开可看闲鱼商品页（图/标题来自会话，价格来自详情接口） */}
         {activeConversation?.itemId && (

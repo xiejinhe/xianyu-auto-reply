@@ -30,6 +30,7 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
 from app.services.chat_new.avatar_service import get_owner_user_info, get_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
+from app.services.chat_new.user_profile_service import get_user_profile
 from app.services.chat_new.official_blacklist_service import official_blacklist_request
 from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
@@ -770,6 +771,33 @@ async def get_account_profile(
         account.display_name = info["nick"]
         await db.commit()
     return ApiResponse(success=True, data=info or {})
+
+
+@router.get("/user-profile/{account_id}/{user_id}")
+async def get_chat_user_profile(
+    account_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    查询对方的闲鱼主页信息（会话窗口的"买家名片"）
+
+    走闲鱼网页版个人主页接口 mtop.idle.web.user.page.head，拿到昵称/头像/
+    属地/简介/店铺等级/好评率/粉丝数/认证标签等。按用户ID缓存 30 分钟，
+    避免同一个买家反复查询触发风控。
+    """
+    query = select(XYAccount).where(XYAccount.account_id == account_id)
+    if not is_admin_user(current_user):
+        query = query.where(XYAccount.owner_id == current_user.id)
+    account = (await db.execute(query)).scalar_one_or_none()
+    if not account or not account.cookie:
+        return ApiResponse(success=False, message="账号不存在或Cookie为空")
+
+    profile = await get_user_profile(account_id, user_id, account.cookie, db)
+    if not profile:
+        return ApiResponse(success=False, message="未获取到对方主页信息")
+    return ApiResponse(success=True, data=profile)
 
 
 # ==================== 会话关联商品信息 ====================

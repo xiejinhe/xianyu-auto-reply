@@ -60,6 +60,34 @@ export interface Conversation {
   unreadCount: number
 }
 
+/** 对方闲鱼主页信息（会话窗口的"买家名片"） */
+export interface XianyuUserProfile {
+  userId: string
+  nick: string
+  avatar: string
+  /** IP属地，如"北京市" */
+  ipLocation: string
+  introduction: string
+  /** 店铺等级，如 L5（买家没有） */
+  shopLevel: string
+  /** 好评率百分比，如 100 */
+  praiseRatio: number | null
+  /** 评价数 */
+  reviewNum: number | null
+  /** 信用分 */
+  creditScore: number | null
+  /** 是否持证经营 */
+  licensed: boolean
+  followers: string
+  following: string
+  /** 在售宝贝数 */
+  itemCount: number | null
+  /** 信用及评价数 */
+  rateCount: number | null
+  /** 认证标签：实名认证/真人认证/芝麻信用/闲鱼老用户 */
+  certifications: string[]
+}
+
 /** 聊天消息 */
 export interface ChatMessage {
   messageId: string
@@ -317,6 +345,26 @@ export const getItemInfo = async (
   try {
     const res = await get<{ success: boolean; message?: string; data: ChatItemInfo }>(
       `${PREFIX}/item-info/${encodeURIComponent(accountId)}/${encodeURIComponent(itemId)}`,
+    )
+    if (!res.success) return null
+    return res.data || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 获取对方的闲鱼主页信息（会话窗口的"买家名片"）
+ *
+ * 失败时返回 null（闲鱼未返回数据不算错误，前端静默不展示即可）
+ */
+export const getXianyuUserProfile = async (
+  accountId: string,
+  userId: string,
+): Promise<XianyuUserProfile | null> => {
+  try {
+    const res = await get<{ success: boolean; data: XianyuUserProfile }>(
+      `${PREFIX}/user-profile/${encodeURIComponent(accountId)}/${encodeURIComponent(userId)}`,
     )
     if (!res.success) return null
     return res.data || null
