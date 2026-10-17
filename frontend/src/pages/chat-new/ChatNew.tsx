@@ -48,6 +48,7 @@ import { appendMsg, mergeConversations, mergeMessages, toTimestampMs } from './c
 import { ChatHistoryRecovery, recoverConversations, recoverMessages,
   type ConversationCache, type MessageCache } from './chat_history_recovery'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
+import { EmojiPicker } from './EmojiPicker'
 import { CustomerOrdersPanel } from './CustomerOrdersPanel'
 import { QuickPhrasesPanel } from './QuickPhrasesPanel'
 import { OrderDetailModal } from './OrderDetailModal'
@@ -1676,6 +1677,24 @@ export function ChatNew() {
     sendMessageText(inputText, true)
   }
 
+  // 选表情：插到输入框光标处（无输入框引用时退化为追加到末尾）
+  const handleEmojiSelect = (emoji: string) => {
+    const el = inputRef.current
+    if (!el) {
+      setInputText((prev) => prev + emoji)
+      return
+    }
+    const start = el.selectionStart ?? inputText.length
+    const end = el.selectionEnd ?? start
+    setInputText(inputText.slice(0, start) + emoji + inputText.slice(end))
+    // 等 state 渲染完再把光标放回插入点之后
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = start + emoji.length
+      el.setSelectionRange(pos, pos)
+    })
+  }
+
   // ==================== 时间格式化 ====================
   const formatTime = (ts: number) => {
     if (!ts) return ''
@@ -2406,6 +2425,7 @@ export function ChatNew() {
               </div>
             )}
             <div className="flex items-end gap-2">
+              <EmojiPicker onSelect={handleEmojiSelect} />
               <button
                 type="button"
                 onClick={handlePickImage}
