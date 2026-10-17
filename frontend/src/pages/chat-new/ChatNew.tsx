@@ -49,6 +49,7 @@ import { ChatHistoryRecovery, recoverConversations, recoverMessages,
   type ConversationCache, type MessageCache } from './chat_history_recovery'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { EmojiPicker } from './EmojiPicker'
+import { ChatText } from './ChatText'
 import { CustomerOrdersPanel } from './CustomerOrdersPanel'
 import { QuickPhrasesPanel } from './QuickPhrasesPanel'
 import { OrderDetailModal } from './OrderDetailModal'
@@ -1962,7 +1963,9 @@ export function ChatNew() {
                       )}
                       <div className="flex items-center justify-between mt-0.5">
                         <span className="text-xs text-gray-400 truncate">
-                          {conv.lastMessageSummary || '暂无消息'}
+                          {(conv.lastMessageSummary || '暂无消息').includes('[')
+                            ? <ChatText text={conv.lastMessageSummary || '暂无消息'} />
+                            : (conv.lastMessageSummary || '暂无消息')}
                         </span>
                         {conv.unreadCount > 0 && (
                           <span className="ml-2 flex-shrink-0 bg-red-500 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">
@@ -2263,7 +2266,10 @@ export function ChatNew() {
                             ))}
                           </div>
                         ) : (
-                          <span className="whitespace-pre-wrap">{msg.text}</span>
+                          // 闲鱼的黄脸表情在消息里是 [中文名] 代码，这里翻译渲染
+                          <span className="whitespace-pre-wrap">
+                            <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
+                          </span>
                         )}
                       </div>
                       {msg.isSelf && msg.failed && (
