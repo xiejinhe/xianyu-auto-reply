@@ -1896,114 +1896,120 @@ export function ChatNew() {
           )}
         </div>
 
-        {/* 对方名片条：闲鱼主页信息直接摆在会话里，点开可看完整主页 */}
-        {activeConversation?.otherUserId && peerProfile && (
-          <button
-            onClick={() => openXianyuProfile(
-              activeConversation.otherUserId,
-              peerProfile.nick || activeConversation.otherUserName,
-              peerProfile.avatar || activeConversation.otherUserAvatar,
-            )}
-            title="点击查看闲鱼个人主页"
-            className="w-full flex items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
-          >
-            {peerProfile.avatar ? (
-              <img
-                src={peerProfile.avatar}
-                alt=""
-                className="w-9 h-9 rounded-full object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
-              />
-            ) : (
-              <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
-                <User className="w-4 h-4 text-gray-400" />
+        {/* 名片 + 会话商品：桌面端左右并排省一行高度，窄屏自动回退上下堆叠 */}
+        <div className="flex flex-col md:flex-row items-stretch border-b border-gray-200 dark:border-gray-700">
+          {/* 对方名片条：闲鱼主页信息直接摆在会话里，点开可看完整主页 */}
+          {activeConversation?.otherUserId && peerProfile && (
+            <button
+              onClick={() => openXianyuProfile(
+                activeConversation.otherUserId,
+                peerProfile.nick || activeConversation.otherUserName,
+                peerProfile.avatar || activeConversation.otherUserAvatar,
+              )}
+              title="点击查看闲鱼个人主页"
+              className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 md:border-r border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
+            >
+              {peerProfile.avatar ? (
+                <img
+                  src={peerProfile.avatar}
+                  alt=""
+                  className="w-9 h-9 rounded-full object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
+                  <User className="w-4 h-4 text-gray-400" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                    {peerProfile.nick || activeConversation.otherUserName || '未知用户'}
+                  </span>
+                  {peerProfile.lastVisitTime && (
+                    <span className="flex-shrink-0 px-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-[10px] text-emerald-700 dark:text-emerald-300">
+                      {peerProfile.lastVisitTime}
+                    </span>
+                  )}
+                  {peerProfile.shopLevel && (
+                    <span className="flex-shrink-0 px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-[10px] text-amber-700 dark:text-amber-300">
+                      {peerProfile.shopLevel}
+                    </span>
+                  )}
+                  {peerProfile.licensed && (
+                    <span className="flex-shrink-0 px-1 rounded bg-blue-100 dark:bg-blue-900/40 text-[10px] text-blue-600 dark:text-blue-300">
+                      持证
+                    </span>
+                  )}
+                  {typeof peerProfile.praiseRatio === 'number' && (
+                    <span className="flex-shrink-0 text-[10px] text-emerald-600 dark:text-emerald-400">
+                      好评{peerProfile.praiseRatio}%
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0">
+                  {peerProfile.replyRatio24h && (
+                    <span className="flex-shrink-0">24h回复{peerProfile.replyRatio24h}</span>
+                  )}
+                  {peerProfile.replyInterval && (
+                    <span className="flex-shrink-0">平均{peerProfile.replyInterval}回复</span>
+                  )}
+                  {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
+                  {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
+                  {typeof peerProfile.itemCount === 'number' && (
+                    <span className="flex-shrink-0">宝贝{peerProfile.itemCount}</span>
+                  )}
+                  {peerProfile.certifications.slice(0, 2).map((cert) => (
+                    <span key={cert} className="flex-shrink-0 px-1 rounded bg-gray-100 dark:bg-gray-700">
+                      {cert}
+                    </span>
+                  ))}
+                  {peerProfile.introduction && (
+                    <span className="truncate">· {peerProfile.introduction}</span>
+                  )}
+                </div>
               </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                  {peerProfile.nick || activeConversation.otherUserName || '未知用户'}
-                </span>
-                {peerProfile.lastVisitTime && (
-                  <span className="flex-shrink-0 px-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-[10px] text-emerald-700 dark:text-emerald-300">
-                    {peerProfile.lastVisitTime}
-                  </span>
-                )}
-                {peerProfile.shopLevel && (
-                  <span className="flex-shrink-0 px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-[10px] text-amber-700 dark:text-amber-300">
-                    {peerProfile.shopLevel}
-                  </span>
-                )}
-                {peerProfile.licensed && (
-                  <span className="flex-shrink-0 px-1 rounded bg-blue-100 dark:bg-blue-900/40 text-[10px] text-blue-600 dark:text-blue-300">
-                    持证
-                  </span>
-                )}
-                {typeof peerProfile.praiseRatio === 'number' && (
-                  <span className="flex-shrink-0 text-[10px] text-emerald-600 dark:text-emerald-400">
-                    好评{peerProfile.praiseRatio}%
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 min-w-0">
-                {peerProfile.replyRatio24h && (
-                  <span className="flex-shrink-0">24h回复{peerProfile.replyRatio24h}</span>
-                )}
-                {peerProfile.replyInterval && (
-                  <span className="flex-shrink-0">平均{peerProfile.replyInterval}回复</span>
-                )}
-                {peerProfile.ipLocation && <span className="flex-shrink-0">{peerProfile.ipLocation}</span>}
-                {peerProfile.followers && <span className="flex-shrink-0">粉丝{peerProfile.followers}</span>}
-                {typeof peerProfile.itemCount === 'number' && (
-                  <span className="flex-shrink-0">宝贝{peerProfile.itemCount}</span>
-                )}
-                {peerProfile.certifications.slice(0, 2).map((cert) => (
-                  <span key={cert} className="flex-shrink-0 px-1 rounded bg-gray-100 dark:bg-gray-700">
-                    {cert}
-                  </span>
-                ))}
-                {peerProfile.introduction && (
-                  <span className="truncate">· {peerProfile.introduction}</span>
-                )}
-              </div>
-            </div>
-            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
-          </button>
-        )}
+              <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
+            </button>
+          )}
 
-        {/* 会话关联的商品条：点开可看闲鱼商品页（图/标题来自会话，价格来自详情接口） */}
-        {activeConversation?.itemId && (
-          <button
-            onClick={() => setItemModalOpen(true)}
-            title="点击查看闲鱼商品页"
-            className="w-full flex items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left"
-          >
-            {activeConversation.itemMainPic ? (
-              <img
-                src={activeConversation.itemMainPic}
-                alt=""
-                className="w-10 h-10 rounded object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
-                <Package className="w-5 h-5 text-gray-400" />
+          {/* 会话关联的商品条：点开可看闲鱼商品页（图/标题来自会话，价格来自详情接口） */}
+          {activeConversation?.itemId && (
+            <button
+              onClick={() => setItemModalOpen(true)}
+              title="点击查看闲鱼商品页"
+              className={cn(
+                'flex-shrink-0 md:w-64 flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors text-left',
+                !(activeConversation?.otherUserId && peerProfile) && 'flex-1 md:w-auto',
+              )}
+            >
+              {activeConversation.itemMainPic ? (
+                <img
+                  src={activeConversation.itemMainPic}
+                  alt=""
+                  className="w-10 h-10 rounded object-cover flex-shrink-0 bg-gray-100 dark:bg-gray-700"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
+                  <Package className="w-5 h-5 text-gray-400" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-gray-700 dark:text-gray-200 truncate">
+                  {activeConversation.itemTitle || itemInfo?.title || '商品'}
+                </div>
+                <div className="text-xs text-gray-400 truncate">
+                  商品ID {activeConversation.itemId} · 点击查看商品
+                </div>
               </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="text-sm text-gray-700 dark:text-gray-200 truncate">
-                {activeConversation.itemTitle || itemInfo?.title || '商品'}
-              </div>
-              <div className="text-xs text-gray-400 truncate">
-                商品ID {activeConversation.itemId} · 点击查看商品
-              </div>
-            </div>
-            {itemInfo?.price ? (
-              <span className="text-sm font-semibold text-red-500 flex-shrink-0">
-                ¥{itemInfo.price}
-              </span>
-            ) : null}
-            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
-          </button>
-        )}
+              {itemInfo?.price ? (
+                <span className="text-sm font-semibold text-red-500 flex-shrink-0">
+                  ¥{itemInfo.price}
+                </span>
+              ) : null}
+              <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
+            </button>
+          )}
+        </div>
 
         {/* 消息区域 */}
         <div ref={msgContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
