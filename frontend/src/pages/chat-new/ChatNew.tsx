@@ -5,7 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2 } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
   getChatAccounts,
@@ -182,8 +182,19 @@ export function ChatNew() {
   const [phraseContent, setPhraseContent] = useState('')
   const [savingPhrase, setSavingPhrase] = useState(false)
 
-  // 页面需要实时订阅的账号列表（手动连接成功后加入，刷新后自动恢复已连接账号）
+  // 页面需要实时订阅的账号列表（已连接 或 已掉线但可恢复的账号都订阅，实现"断线也响"）
   const [wsAccountIds, setWsAccountIds] = useState<string[]>([])
+  // 会话列表搜索关键词（本地过滤已加载会话：用户名/用户ID/最后一条消息/商品标题）
+  const [convSearch, setConvSearch] = useState('')
+
+  // 断线兜底对账：记录已响铃的会话最新消息时间（accountId:cid -> 时间戳），
+  // 避免实时推送与对账轮询对同一消息重复响铃；首轮仅校准水位不响旧未读。
+  const rungConvRef = useRef<Record<string, number>>({})
+  // 全局基线标记：首轮对账（已连接账号）完成后置 true。首轮只校准水位（历史未读
+  // 不响），之后任何在线账号——含断开后才被看门狗恢复连接的账号——漏掉的新未读
+  // 都照常补响。用全局标记而非按账号标记，否则"页面打开时断开、之后才恢复"的账号
+  // 永远不会被置位，导致断开期间的新消息永远不响（正是用户描述的场景）。
+  const baselineDoneRef = useRef(false)
 
   // 手机端 Tab 切换（桌面端 md+ 仍为四栏并排，本 state 不影响桌面布局）
   type MobileTab = 'accounts' | 'convs' | 'chat' | 'tools'
@@ -331,12 +342,37 @@ export function ChatNew() {
     return [newConv, ...convs]
   }
 
+  // 断线兜底：记录已响铃会话的最新消息时间，避免对账轮询对同一消息重复响
+  const markRung = useCallback((accountId: string, cid: string, time: number) => {
+    const key = `${accountId}:${cid}`
+    const prev = rungConvRef.current[key] ?? 0
+    if (time > prev) rungConvRef.current[key] = time
+  }, [])
+
+  // 断线兜底对账：账号恢复连接后，把漏掉的新消息补响 + 未读角标。
+  // unreadCount 只统计对方发来的未读，自己发出的消息不会触发响铃。
+  const ringMissedIfAny = useCallback((accountId: string, cid: string, lastMessageTime: number, unreadCount: number) => {
+    const key = `${accountId}:${cid}`
+    const prev = rungConvRef.current[key] ?? 0
+    if (lastMessageTime > prev) rungConvRef.current[key] = lastMessageTime
+    // 首轮（baselineDone 未置位）仅校准水位，不响历史未读，避免打开页面时把旧未读全响一遍
+    if (!baselineDoneRef.current) return
+    if (unreadCount > 0 && lastMessageTime > prev) {
+      playNewMessageSound()
+      if (accountId !== activeAccountIdRef.current) {
+        setAccountUnread((p) => ({ ...p, [accountId]: (p[accountId] || 0) + 1 }))
+      }
+    }
+  }, [])
+
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     const summary = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
     const isActiveAccount = accountId === activeAccountIdRef.current
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响
     if (!msg.isSelf) {
       playNewMessageSound()
+      // 同步响铃水位，避免断线兜底对账轮询对同一消息重复响
+      markRung(accountId, cid, msg.time)
     }
     // 非当前账号收到新消息：账号卡片累计未读角标（切到该账号时清零）
     if (!isActiveAccount && !msg.isSelf) {
@@ -426,17 +462,37 @@ export function ChatNew() {
       const res = await getChatAccounts(page)
       if (page === 1) {
         setAccounts(res.data)
+        // 刷新页面后默认选中第一个已连接账号，会话列表/聊天窗口不至于一片空白。
+        // 只在当前没有选中账号时触发；只选「已连接」的（未连接的不自动 connect，
+        // 避免打开页面就触发连接动作），一个连接的账号都没有则保持原样。
+        if (!activeAccountIdRef.current) {
+          const firstConnected = res.data.find((a) => a.connected)
+          if (firstConnected) selectAccount(firstConnected.account_id)
+        }
       } else {
         setAccounts((prev) => [...prev, ...res.data])
       }
       setAccountPage(page)
       setAccountHasMore(res.hasMore)
+      // 订阅范围：已连接 或 已掉线但可自动恢复（has_client）的账号都订阅实时通道，
+      // 这样断线期间前端通道不丢，账号恢复后由 reconnected 事件补拉并响铃。
+      // 完全断开（无客户端）的账号不订阅，避免前端空转重连。
+      const subscribeIds = res.data
+        .filter((a) => a.connected || a.has_client)
+        .map((a) => a.account_id)
+      setWsAccountIds((prev) => {
+        const merged = [...prev]
+        for (const id of subscribeIds) {
+          if (!merged.includes(id)) merged.push(id)
+        }
+        return merged
+      })
     } catch (e: any) {
       addToast({ message: e.message || '获取账号列表失败', type: 'error' })
     } finally {
       setLoadingAccounts(false)
     }
-  }, [addToast])
+  }, [addToast, selectAccount])
 
   /** 加载更多账号 */
   const loadMoreAccounts = useCallback(() => {
@@ -616,6 +672,15 @@ export function ChatNew() {
   )
   // 以 userId 去重后构建依赖 key
   const missingInfoKey = [...new Set(missingInfoConvs.map((c) => c.otherUserId))].sort().join(',')
+
+  // 会话列表搜索：按用户名 / 用户ID / 最后一条消息 / 商品标题本地过滤（不区分大小写）
+  const keyword = convSearch.trim().toLowerCase()
+  const visibleConvs = keyword
+    ? conversations.filter((c) => {
+        const haystacks = [c.otherUserName, c.otherUserId, c.lastMessageSummary, c.itemTitle]
+        return haystacks.some((s) => (s || '').toLowerCase().includes(keyword))
+      })
+    : conversations
 
   useEffect(() => {
     if (!activeAccountId || !missingInfoKey) return
@@ -1234,6 +1299,41 @@ export function ChatNew() {
       window.clearInterval(timer)
     }
   }, [activeAccountId, activeCid])
+
+  // 断线兜底对账轮询：每 15 秒对「当前在线」的账号拉一次会话列表，
+  // 用服务端未读数(unreadCount)比对，把断线期间漏掉的新消息补响 + 未读角标。
+  // 断线期间拉不到（接口要求在线），等账号被自动恢复看门狗拉起来后的下一轮补响——
+  // 这就是"断线也响"的兜底：可恢复的掉线最终都会响，只有 Cookie 真失效才不响。
+  useEffect(() => {
+    let cancelled = false
+    const tick = async () => {
+      if (cancelled) return
+      const connectedIds = accountsRef.current.filter((a) => a.connected).map((a) => a.account_id)
+      let fetchedAny = false
+      for (const accountId of connectedIds) {
+        try {
+          const { conversations } = await getConversations(accountId)
+          if (cancelled) return
+          fetchedAny = true
+          for (const conv of conversations) {
+            ringMissedIfAny(accountId, conv.cid, conv.lastMessageTime, conv.unreadCount)
+          }
+        } catch {
+          // 静默失败，等下一轮
+        }
+      }
+      // 首轮整体对账完成：至少有一个账号成功拉取过（水位已校准），之后才允许响铃。
+      // 仅当真正校准过水位才置位，避免首轮全失败时把旧未读误响；置位后断开后恢复
+      // 连接的账号也能在后续轮次补响（覆盖用户所述"断开期间有人发消息"的场景）。
+      if (fetchedAny) baselineDoneRef.current = true
+    }
+    const timer = window.setInterval(tick, 15000)
+    void tick()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
 
   // ==================== 发送消息 ====================
   const sendMessageText = async (rawText: string, clearInput = false) => {
@@ -1872,20 +1972,42 @@ export function ChatNew() {
 
       {/* 中间：会话列表 */}
       <div className={`${mobileTab === 'convs' ? 'flex' : 'hidden'} md:flex w-full md:w-72 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
-        <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <span className="font-medium text-sm text-gray-700 dark:text-gray-300">会话列表</span>
-          <div className="flex items-center gap-1">
-            <SoundPicker />
-            {activeAccountId && (
-              <button
-                onClick={() => { setConvCursor(null); loadConversations(activeAccountId) }}
-                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                title="刷新会话"
-              >
-                <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingConvs ? 'animate-spin' : ''}`} />
-              </button>
-            )}
+        <div className="p-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-sm text-gray-700 dark:text-gray-300">会话列表</span>
+            <div className="flex items-center gap-1">
+              <SoundPicker />
+              {activeAccountId && (
+                <button
+                  onClick={() => { setConvCursor(null); loadConversations(activeAccountId) }}
+                  className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                  title="刷新会话"
+                >
+                  <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingConvs ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+            </div>
           </div>
+          {activeAccountId && (
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+              <input
+                value={convSearch}
+                onChange={(e) => setConvSearch(e.target.value)}
+                placeholder="搜索用户 / 消息关键词"
+                className="w-full pl-7 pr-7 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              {convSearch && (
+                <button
+                  onClick={() => setConvSearch('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="清除"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div
           className="flex-1 overflow-y-auto"
@@ -1908,9 +2030,13 @@ export function ChatNew() {
                 ? '暂无会话'
                 : '请先连接账号'}
             </p>
+          ) : visibleConvs.length === 0 ? (
+            <p className="text-center text-sm text-gray-400 py-12">
+              没有匹配「{convSearch.trim()}」的会话
+            </p>
           ) : (
             <>
-              {conversations.map((conv, idx) => (
+              {visibleConvs.map((conv, idx) => (
                 <div
                   key={conv.cid || `conv-${idx}`}
                   className={`group relative px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700/50 transition-colors ${

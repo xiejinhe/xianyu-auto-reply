@@ -852,7 +852,7 @@ export function Settings() {
                   </p>
                   <div className="w-24 h-24 mx-auto mb-2 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800">
                     {wechatQrcode ? (
-                      <img src={wechatQrcode} alt="微信群" className="w-full h-full object-cover" />
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">已上传（不在此显示）</div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">未上传</div>
                     )}
@@ -881,7 +881,7 @@ export function Settings() {
                   </p>
                   <div className="w-24 h-24 mx-auto mb-2 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800">
                     {qqQrcode ? (
-                      <img src={qqQrcode} alt="QQ群" className="w-full h-full object-cover" />
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">已上传（不在此显示）</div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">未上传</div>
                     )}
@@ -910,7 +910,7 @@ export function Settings() {
                   </p>
                   <div className="w-24 h-24 mx-auto mb-2 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800">
                     {wechatOfficialQrcode ? (
-                      <img src={wechatOfficialQrcode} alt="微信公众号" className="w-full h-full object-cover" />
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">已上传（不在此显示）</div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">未上传</div>
                     )}
@@ -939,7 +939,7 @@ export function Settings() {
                   </p>
                   <div className="w-24 h-24 mx-auto mb-2 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800">
                     {telegramQrcode ? (
-                      <img src={telegramQrcode} alt="Telegram" className="w-full h-full object-cover" />
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">已上传（不在此显示）</div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">未上传</div>
                     )}
@@ -968,7 +968,7 @@ export function Settings() {
                   </p>
                   <div className="w-24 h-24 mx-auto mb-2 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800">
                     {rewardQrcode ? (
-                      <img src={rewardQrcode} alt="赞赏码" className="w-full h-full object-cover" />
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">已上传（不在此显示）</div>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">未上传</div>
                     )}

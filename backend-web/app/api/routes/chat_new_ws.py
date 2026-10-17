@@ -140,29 +140,29 @@ async def chat_new_websocket(
     manager = get_im_session_manager()
     client = manager.clients.get(account_id)
     if not client:
-        logger.warning(f"【{account_id}】IM 客户端未连接，拒绝注册前端实时消息订阅")
+        # 账号完全没有 IM 客户端（用户主动断开）：拒绝订阅，避免前端空转重连
+        logger.warning(f"【{account_id}】IM 客户端不存在，拒绝注册前端实时消息订阅")
         await websocket.close(code=WS_CLOSE_IM_OFFLINE)
         return
 
+    # 客户端存在但已掉线：仍允许订阅并保活前端 WS（不再回 4404 掐断）。
+    # 这样断线期间前端通道不丢，账号被自动恢复看门狗（20s 巡检）拉起来后，
+    # reconnected 事件能送达前端，由前端补拉历史并响铃——实现"断线也响"。
+    # 不在此强制重连：避免与自动恢复看门狗的双重重连互相踢。
     if not client.is_connected:
-        # IM 长连接掉线了。与其让前端在 4404 上反复重连（退避最高 30s 一轮），
-        # 不如在这里顺手把 IM 拉起来，本次订阅就能直接成功。
-        logger.warning(f"【{account_id}】IM 客户端已掉线，订阅前先尝试立即重连")
-        if not await client.reconnect_now():
-            logger.warning(f"【{account_id}】IM 重连失败，拒绝注册前端实时消息订阅")
-            await websocket.close(code=WS_CLOSE_IM_OFFLINE)
-            return
+        logger.info(f"【{account_id}】IM 已掉线，仍允许前端订阅（待自动重连后补拉）")
 
     try:
         # 注册到管理器，开始接收推送
         await manager.register_ws_client(account_id, websocket)
 
-        # 发送连接成功消息
-        await websocket.send_text(json.dumps({
-            "event": "connected",
-            "account_id": account_id,
-            "message": "WebSocket 已连接，等待实时消息推送",
-        }, ensure_ascii=False))
+        # 仅当真正在线时才发 connected 事件，避免误导前端认为已连接
+        if client.is_connected:
+            await websocket.send_text(json.dumps({
+                "event": "connected",
+                "account_id": account_id,
+                "message": "WebSocket 已连接，等待实时消息推送",
+            }, ensure_ascii=False))
 
         # 持续接收前端消息（心跳等）
         await _receive_loop(websocket, account_id, manager)
@@ -205,12 +205,14 @@ async def _receive_loop(
 
             if msg_type == "ping":
                 client = manager.clients.get(account_id)
-                if not client or not client.is_connected:
+                # 账号已彻底移除（用户主动断开）：关掉这条前端订阅
+                if not client:
                     logger.warning(
-                        f"【{account_id}】IM 客户端已断开，关闭前端实时消息订阅"
+                        f"【{account_id}】IM 客户端已移除，关闭前端实时消息订阅"
                     )
                     await websocket.close(code=WS_CLOSE_IM_OFFLINE)
                     return
+                # 客户端存在但暂时掉线：仍回 pong 保活，不断开（待自动重连）
                 await websocket.send_text(
                     json.dumps({"event": "pong"}, ensure_ascii=False)
                 )

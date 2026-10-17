@@ -17,6 +17,10 @@ export interface ChatAccount {
   display_name: string
   remark: string
   connected: boolean
+  /** 是否持有 IM 客户端对象（已连接 或 已掉线但可自动恢复）。
+   *  即使 connected=false，只要 has_client=true 前端也应订阅实时通道，
+   *  以便账号自动重连后补拉历史并响铃（断线也响）。 */
+  has_client?: boolean
   status: string
   /** 所属用户（管理员查看时返回） */
   owner?: string

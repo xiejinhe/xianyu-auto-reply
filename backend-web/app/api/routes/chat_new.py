@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
-from app.services.chat_new.avatar_service import get_owner_user_info, get_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
+from app.services.chat_new.avatar_service import get_owner_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
 from app.services.chat_new.user_profile_service import (
     get_user_profile,
     _load_sibling_accounts,
@@ -163,6 +163,11 @@ async def list_accounts(
                 "display_name": display_name,
                 "remark": acc.remark or "",
                 "connected": acc.account_id in connected_ids,
+                # 账号是否持有 IM 客户端对象（已连接 或 已掉线但可自动恢复）。
+                # 前端据此决定是否订阅该账号的实时消息通道：即使当前"未连接"，
+                # 只要 has_client 为 true 就保持订阅，待自动重连成功后由 reconnected
+                # 事件补拉历史并响铃（实现"断线也响"）。完整断开（无客户端）的账号不订阅。
+                "has_client": acc.account_id in manager.clients,
                 "status": acc.status or "active",
             }
             if is_admin:
@@ -452,9 +457,10 @@ async def get_conversations(
                     if cached_nick:
                         c["otherUserName"] = cached_nick
 
-                # 头像：缓存有头像且会话没有时补填
-                if cached_avatar and not c.get("otherUserAvatar"):
-                    c["otherUserAvatar"] = cached_avatar
+                # 头像：不用 chat:avatar 缓存补填——那是 user.query 的结果，
+                # 实测存的是查询账号自己的头像，主页缓存过期时会把对方头像
+                # 错显示成自己的。头像只认主页接口（chat:user_profile），
+                # 拿不到就留空由前端批量 /avatars 再查，宁可占位也不错认。
 
             if need_write:
                 await write_pipe.execute()
@@ -727,9 +733,9 @@ async def query_avatars(
             # 每次请求间隔 0.3 秒，防止 mtop API 限流
             if idx > 0:
                 await asyncio.sleep(0.3)
-            # 头像优先走主页接口（按 userId 缓存 30 分钟，不查活跃信息）：
-            # user.query 返回的 logo 实测不可靠——同一条会话查对方和自己，
-            # 返回的是同一张错误头像；主页接口的才是真实头像。
+            # 头像只走主页接口（按 userId 缓存 30 分钟，不查活跃信息）：
+            # user.query 返回的 logo 实测是查询账号自己的头像——同一条会话查
+            # 对方和自己，返回同一张错误头像。宁可不显示，也不显示成自己的。
             info = None
             try:
                 profile = await get_user_profile(
@@ -740,17 +746,10 @@ async def query_avatars(
                     with_activity=False,
                 )
             except Exception as profile_e:
-                logger.warning(f"【{account_id}】主页信息查询失败，退回 user.query: {profile_e}")
+                logger.warning(f"【{account_id}】主页信息查询失败（头像留空）: {profile_e}")
                 profile = None
             if profile and (profile.get("avatar") or profile.get("nick")):
                 info = {"avatar": profile.get("avatar", ""), "nick": profile.get("nick", "")}
-            if not info:
-                info = await get_user_info(
-                    account_id=account_id,
-                    cid=item.cid,
-                    cookies_str=account.cookie,
-                    db=db,
-                )
             if info:
                 user_infos[item.userId] = info
 
