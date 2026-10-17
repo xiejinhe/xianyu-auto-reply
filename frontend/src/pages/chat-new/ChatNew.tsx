@@ -5,7 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2 } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
   getChatAccounts,
@@ -13,6 +13,7 @@ import {
   connectAccount,
   disconnectAccount,
   getConversations,
+  hideConversation,
   getMessages,
   sendTextMessage,
   sendImageMessage,
@@ -165,6 +166,7 @@ export function ChatNew() {
   const [blacklisting, setBlacklisting] = useState(false)
   const [isOfficiallyBlocked, setIsOfficiallyBlocked] = useState(false)
   const [recallingMessageId, setRecallingMessageId] = useState('')
+  const [deletingConvCid, setDeletingConvCid] = useState('')
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string
     message: string
@@ -817,6 +819,53 @@ export function ChatNew() {
       conversation.cid === cid ? { ...conversation, unreadCount: 0 } : conversation,
     ))
     restoreConversation(activeAccountId, cid)
+  }
+
+  // 删除会话：只从本系统的会话列表移除（后端记删除时刻），
+  // 之后对方再来消息（lastMessageTime 晚于删除时刻）会自动重新出现。
+  const handleDeleteConversation = async (conv: Conversation) => {
+    if (!activeAccountId || deletingConvCid) return
+    const name = conv.otherUserName || conv.otherUserId || '该用户'
+    const confirmed = await requestConfirm({
+      title: '删除会话',
+      message: `删除与「${name}」的会话？只从列表移除，聊天记录还在闲鱼上；对方再来消息会重新出现。`,
+      confirmText: '删除',
+      type: 'danger',
+    })
+    if (!confirmed) return
+    setDeletingConvCid(conv.cid)
+    try {
+      await hideConversation(activeAccountId, conv.cid)
+      const drop = (list: Conversation[]) => list.filter((c) => c.cid !== conv.cid)
+      const nextConvs = drop(conversationsRef.current)
+      conversationsRef.current = nextConvs
+      setConversations(nextConvs)
+      // 同步清理各层缓存与补偿边界，避免下次合并时又冒出来
+      const cache = convsCacheRef.current[activeAccountId]
+      if (cache) cache.convs = drop(cache.convs)
+      const boundary = recoveryRef.current.conversations.get(activeAccountId)
+      if (boundary) boundary.cache.convs = drop(boundary.cache.convs)
+      if (msgsCacheRef.current[activeAccountId]) {
+        delete msgsCacheRef.current[activeAccountId][conv.cid]
+      }
+      recoveryRef.current.messages.get(activeAccountId)?.delete(conv.cid)
+      // 删除的是当前打开的会话：清空右侧窗口
+      if (activeCidRef.current === conv.cid) {
+        activeConvPerAccountRef.current[activeAccountId] = ''
+        selectCid('')
+        messagesRef.current = []
+        setMessages([])
+        setMsgHasMore(false)
+        setMsgCursor(null)
+        msgCursorRef.current = null
+        setMobileTab('convs')
+      }
+      addToast({ message: '会话已删除', type: 'success' })
+    } catch (e: any) {
+      addToast({ message: e?.message || '删除会话失败', type: 'error' })
+    } finally {
+      setDeletingConvCid('')
+    }
   }
 
   const activeConversation = conversations.find((c) => c.cid === activeCid)
@@ -1844,13 +1893,28 @@ export function ChatNew() {
               {conversations.map((conv, idx) => (
                 <div
                   key={conv.cid || `conv-${idx}`}
-                  className={`px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700/50 transition-colors ${
+                  className={`group relative px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700/50 transition-colors ${
                     activeCid === conv.cid
                       ? 'bg-blue-50 dark:bg-blue-900/20'
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/30'
                   }`}
                   onClick={() => handleSelectConversation(conv.cid)}
                 >
+                  {/* 删除会话：桌面端悬停显示，手机端常显 */}
+                  <button
+                    type="button"
+                    title="删除会话"
+                    disabled={deletingConvCid === conv.cid}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteConversation(conv)
+                    }}
+                    className="absolute top-1.5 right-1.5 z-10 p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 transition-opacity disabled:opacity-40"
+                  >
+                    {deletingConvCid === conv.cid
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
                   <div className="flex items-center gap-2">
                     {conv.otherUserAvatar ? (
                       <img

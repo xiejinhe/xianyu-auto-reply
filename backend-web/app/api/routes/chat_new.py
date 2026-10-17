@@ -55,6 +55,13 @@ _INVALID_NICK_SET = {
     "超时未付款，系统关闭了订单",
 }
 
+# 用户手动删除的会话：ZSET member=cid、score=删除时刻(ms)。
+# 按「删除时刻」记录而不是永久隐藏：之后该会话若再来新消息
+# （lastMessageTime 晚于删除时刻）会自动恢复显示，符合
+# "对方重新找我，自然重新加载"的预期。
+HIDDEN_CONVS_PREFIX = "chat:hidden_convs:"
+HIDDEN_CONVS_MAX = 300
+
 
 def _is_valid_nick(name: str) -> bool:
     """
@@ -249,6 +256,77 @@ async def disconnect_account(
         return ApiResponse(success=False, message=f"断开失败: {str(e)}")
 
 
+@router.post("/conversations/{account_id}/{cid}/hide")
+async def hide_conversation(
+    account_id: str,
+    cid: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    从会话列表删除指定会话（仅本系统隐藏，不动闲鱼服务端）
+
+    按「删除时刻」记录：之后该会话再来新消息（lastMessageTime 晚于删除
+    时刻）会自动恢复显示，符合"对方重新找我，自然重新加载"的预期。
+    """
+    cid = (cid or "").strip()
+    if not cid:
+        return ApiResponse(success=False, message="缺少会话ID")
+    try:
+        redis_client = await get_redis_client()
+        key = f"{HIDDEN_CONVS_PREFIX}{account_id}"
+        await redis_client.zadd(key, {cid: int(time.time() * 1000)})
+        # 防止无限增长：只保留最近 HIDDEN_CONVS_MAX 条删除记录
+        if await redis_client.zcard(key) > HIDDEN_CONVS_MAX:
+            await redis_client.zremrangebyrank(key, 0, -(HIDDEN_CONVS_MAX + 1))
+        return ApiResponse(success=True, message="会话已删除")
+    except Exception as e:
+        logger.error(f"【{account_id}】删除会话 {cid} 失败: {e}")
+        return ApiResponse(success=False, message=f"删除会话失败: {str(e)}")
+
+
+async def _filter_hidden_conversations(
+    account_id: str, conversations: list
+) -> list:
+    """
+    过滤用户手动删除的会话
+
+    删除后该会话又有新消息（lastMessageTime 晚于删除时刻）时自动恢复显示，
+    并顺手清掉这条删除记录。
+    """
+    if not conversations:
+        return conversations
+    try:
+        redis_client = await get_redis_client()
+        key = f"{HIDDEN_CONVS_PREFIX}{account_id}"
+        pipe = redis_client.pipeline()
+        for conv in conversations:
+            pipe.zscore(key, conv.get("cid", ""))
+        scores = await pipe.execute()
+    except Exception as e:
+        logger.warning(f"【{account_id}】读取已删除会话记录失败: {e}")
+        return conversations
+
+    restored: list = []
+    kept: list = []
+    for conv, hidden_at in zip(conversations, scores):
+        if hidden_at is None:
+            kept.append(conv)
+            continue
+        last_ms = conv.get("lastMessageTime") or 0
+        if last_ms and last_ms < 1e12:
+            last_ms *= 1000  # 秒 → 毫秒
+        if last_ms > float(hidden_at):
+            restored.append(conv["cid"])  # 删除后又来了新消息，恢复显示
+            kept.append(conv)
+        # 否则保持隐藏（不加入 kept）
+    if restored:
+        try:
+            await redis_client.zrem(key, *restored)
+        except Exception as e:
+            logger.warning(f"【{account_id}】清理会话删除记录失败: {e}")
+    return kept
+
+
 @router.get("/conversations/{account_id}")
 async def get_conversations(
     account_id: str,
@@ -296,6 +374,9 @@ async def get_conversations(
             conv_info = _parse_conversation(conv, client.myid)
             if conv_info:
                 conversations.append(conv_info)
+
+        # 用户手动删除的会话不再返回（删除后又有新消息的会自动恢复显示）
+        conversations = await _filter_hidden_conversations(account_id, conversations)
 
         # 从 Redis 批量读取所有会话的缓存，按优先级确定昵称并回写更优数据
         try:

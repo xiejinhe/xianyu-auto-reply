@@ -178,6 +178,14 @@ export const getConversations = async (
   return data
 }
 
+/** 从会话列表删除会话（仅本系统隐藏；之后对方再来消息会自动重新出现） */
+export const hideConversation = async (accountId: string, cid: string): Promise<void> => {
+  const res = await post<{ success: boolean; message?: string }>(
+    `${PREFIX}/conversations/${accountId}/${cid}/hide`,
+  )
+  if (!res.success) throw new Error(res.message || '删除会话失败')
+}
+
 /** 发送文本消息 */
 export const sendTextMessage = async (
   accountId: string,
