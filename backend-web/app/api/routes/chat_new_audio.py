@@ -326,6 +326,19 @@ async def send_audio(
             duration_ms=duration_ms,
         )
         logger.info(f"【{account_id}】发送语音消息到 {toUserId}: {cdn_url} 时长={duration_ms}ms")
+        # 系统内互发实时性补偿（详见 ImSessionManager.notify_peer_account）
+        try:
+            await manager.notify_peer_account(
+                account_id,
+                cid,
+                toUserId,
+                message_id=send_result.get("messageId", ""),
+                msg_type="audio",
+                audio_url=cdn_url,
+                audio_duration=duration_ms,
+            )
+        except Exception as notify_e:
+            logger.warning(f"【{account_id}】系统内互发补偿失败: {notify_e}")
         return ApiResponse(
             success=True,
             message="发送成功",

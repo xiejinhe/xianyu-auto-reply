@@ -1380,6 +1380,11 @@ class GoofishImClient:
             return
 
         # 非请求响应 —— 服务器主动推送的消息，解密并记录日志
+        if PUSH_DEBUG_ENABLED:
+            logger.info(
+                f"【{self.account_id}】[原始帧] {len(data)}字节: "
+                f"{data[:PUSH_DEBUG_MAX_CHARS]}"
+            )
         await self._handle_push_message(message)
 
     async def _handle_push_message(self, message: dict):
@@ -1411,6 +1416,13 @@ class GoofishImClient:
                     continue
                 decrypted = self._push_parser.decrypt_push_data(sync_data["data"])
                 if decrypted is None:
+                    # 解密失败不再完全静默：IM_PUSH_DEBUG 时原样落日志，
+                    # 否则「服务端推了但本地解不开」这种问题完全无从排查
+                    if PUSH_DEBUG_ENABLED:
+                        logger.warning(
+                            f"【{self.account_id}】[推送解密失败] "
+                            f"{str(sync_data['data'])[:PUSH_DEBUG_MAX_CHARS]}"
+                        )
                     continue
                 parsed = self._push_parser.parse(decrypted)
                 if parsed is None:

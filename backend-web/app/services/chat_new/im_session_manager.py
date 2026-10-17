@@ -10,6 +10,7 @@ IM会话管理器
 """
 import asyncio
 import json
+import time
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from loguru import logger
@@ -210,6 +211,92 @@ class ImSessionManager:
             ws_set.discard(ws)
         if not ws_set and account_id in self._ws_clients:
             del self._ws_clients[account_id]
+
+    async def notify_peer_account(
+        self,
+        sender_account_id: str,
+        cid: str,
+        to_user_id: str,
+        *,
+        message_id: str,
+        msg_type: str,
+        text: str = "",
+        images: Optional[List[str]] = None,
+        audio_url: str = "",
+        audio_duration: int = 0,
+    ) -> bool:
+        """
+        系统内互发的实时性补偿（重要，勿删）：
+
+        实测闲鱼 IM 服务端对「网页 IM 会话（sendByReceiverScope）发出的消息」
+        不做跨网页会话的实时 syncPush —— 接收方的在线聊天长连接收不到任何
+        推送帧（同账号的自动回复长连接反而能收到），导致两个都在本系统在线
+        的账号互发时，接收方界面毫无动静，刷新页面才能看到。
+
+        这里在发送成功后，向接收账号的前端 WebSocket 合成一条与真实推送
+        同构的 new_message 事件。若服务端之后真的补推了同一条消息，前端按
+        messageId 去重（chat_history_merge.mergeMessages），不会重复显示。
+
+        Args:
+            sender_account_id: 发送方账号ID（用于查昵称与日志）
+            cid: 会话ID
+            to_user_id: 接收方账号ID（对方用户ID，同时是本系统的账号ID）
+            message_id: 发送成功后服务端返回的消息ID（前端去重键）
+            msg_type: 消息类型（text / image / audio）
+            text: 文本内容
+            images: 图片URL列表
+            audio_url: 语音URL
+            audio_duration: 语音时长（毫秒，与前端 ChatMessage.audioDuration 一致）
+
+        Returns:
+            是否有前端客户端接收到了该事件
+        """
+        if not self._ws_clients.get(to_user_id):
+            return False
+
+        sender_id = sender_account_id
+        sender_client = self.clients.get(sender_account_id)
+        if sender_client:
+            sender_id = getattr(sender_client, "myid", "") or sender_account_id
+
+        sender_name = ""
+        try:
+            async with async_session_maker() as db:
+                result = await db.execute(
+                    select(XYAccount.display_name, XYAccount.username).where(
+                        XYAccount.account_id == sender_account_id
+                    )
+                )
+                row = result.first()
+                if row:
+                    sender_name = (row[0] or row[1] or "").strip()
+        except Exception as e:
+            logger.warning(f"查询发送方昵称失败（{sender_account_id}）: {e}")
+
+        message: Dict[str, Any] = {
+            "messageId": message_id,
+            "senderId": sender_id,
+            "senderName": sender_name,
+            "isSelf": False,
+            "type": msg_type,
+            "text": text,
+            "images": images or [],
+            "time": int(time.time() * 1000),
+        }
+        if audio_url:
+            message["audioUrl"] = audio_url
+            message["audioDuration"] = audio_duration
+
+        await self._broadcast_event(to_user_id, {
+            "event": "new_message",
+            "cid": cid,
+            "message": message,
+        })
+        logger.info(
+            f"【{sender_account_id}】系统内互发补偿：已向 {to_user_id} 的前端"
+            f"合成 new_message 事件 (cid={cid}, type={msg_type})"
+        )
+        return True
 
     async def _setup_push_callback_after_connect(
         self, account_id: str, client: GoofishImClient

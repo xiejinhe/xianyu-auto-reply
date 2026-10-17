@@ -483,6 +483,20 @@ async def send_message(
         logger.info(
             f"【{account_id}】发送消息到 {req.toUserId}: {req.text[:50]}"
         )
+        # 系统内互发实时性补偿：对方账号也在本系统在线时，向其前端合成
+        # new_message 事件。闲鱼服务端不会把网页会话发出的消息实时推给
+        # 其他网页会话（实测），不补偿的话接收方界面毫无动静。
+        try:
+            await manager.notify_peer_account(
+                account_id,
+                req.cid,
+                req.toUserId,
+                message_id=send_result.get("messageId", ""),
+                msg_type="text",
+                text=req.text,
+            )
+        except Exception as notify_e:
+            logger.warning(f"【{account_id}】系统内互发补偿失败: {notify_e}")
         return ApiResponse(
             success=True,
             message="发送成功",

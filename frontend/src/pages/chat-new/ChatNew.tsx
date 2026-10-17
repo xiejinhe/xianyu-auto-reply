@@ -74,6 +74,8 @@ export function ChatNew() {
   const [connectingId, setConnectingId] = useState('')
   const [accountPage, setAccountPage] = useState(1)
   const [accountHasMore, setAccountHasMore] = useState(false)
+  // 非当前账号的来消息计数：显示在账号卡片角标上，切到该账号时清零
+  const [accountUnread, setAccountUnread] = useState<Record<string, number>>({})
   const accountListRef = useRef<HTMLDivElement>(null)
 
   // 会话相关
@@ -316,6 +318,10 @@ export function ChatNew() {
     if (!msg.isSelf) {
       playNewMessageSound()
     }
+    // 非当前账号收到新消息：账号卡片累计未读角标（切到该账号时清零）
+    if (!isActiveAccount && !msg.isSelf) {
+      setAccountUnread((prev) => ({ ...prev, [accountId]: (prev[accountId] || 0) + 1 }))
+    }
 
     const isViewingConv = isActiveAccount && cid === activeCidRef.current
     const conversationCache = convsCacheRef.current[accountId]
@@ -456,6 +462,7 @@ export function ChatNew() {
         addToast({ message: '连接成功', type: 'success' })
         await loadAccounts()
         selectAccount(accountId)
+        setAccountUnread((prev) => (prev[accountId] ? { ...prev, [accountId]: 0 } : prev))
         setWsAccountIds((prev) => prev.includes(accountId) ? prev : [...prev, accountId])
         // 手机端：连接成功后自动切到"会话"Tab（桌面端不受影响）
         setMobileTab('convs')
@@ -493,6 +500,7 @@ export function ChatNew() {
   const handleSelectAccount = async (acc: ChatAccount) => {
     if (acc.connected) {
       selectAccount(acc.account_id)
+      setAccountUnread((prev) => (prev[acc.account_id] ? { ...prev, [acc.account_id]: 0 } : prev))
       // 选中已连接账号时也建立 WebSocket（页面刷新后首次选中时触发）
       setWsAccountIds((prev) => prev.includes(acc.account_id) ? prev : [...prev, acc.account_id])
       // 手机端：选中已连接账号后切到"会话"Tab
@@ -1700,6 +1708,14 @@ export function ChatNew() {
                     <span className="text-xs text-gray-400">
                       {acc.connected ? '已连接' : acc.status !== 'active' ? '已禁用' : '未连接'}
                     </span>
+                    {(accountUnread[acc.account_id] || 0) > 0 && (
+                      <span
+                        className="ml-auto inline-flex min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-medium"
+                        title={`${accountUnread[acc.account_id]} 条新消息`}
+                      >
+                        {accountUnread[acc.account_id] > 99 ? '99+' : accountUnread[acc.account_id]}
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
