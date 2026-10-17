@@ -28,6 +28,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # 已知的消息内容标识键：命中任一即认为该 dict 是一条消息内容载荷
 _CONTENT_KEYS = ("text", "image", "picUrl", "audio")
 
+# 语音消息的降级文案：contentType==3 的真实内容藏在 audio 字段里，
+# interpret_content 统一先降级成这个占位文本，再由调用方提取音频地址。
+AUDIO_PLACEHOLDER_TEXT = "[语音消息]"
+
 
 def load_content_json(raw: Any) -> Optional[Dict[str, Any]]:
     """将消息内容载荷字符串解析为内容 JSON dict（兼容明文 JSON 与 base64）
@@ -125,7 +129,7 @@ def interpret_content(decoded: Dict[str, Any]) -> Tuple[str, List[str], str]:
         return ("", _extract_image_urls(decoded), "image")
 
     if content_type == 3 and "audio" in decoded:
-        return ("[语音消息]", [], "text")
+        return (AUDIO_PLACEHOLDER_TEXT, [], "text")
 
     # 兜底：未带标准 contentType 但结构可识别
     if "text" in decoded:
@@ -193,6 +197,37 @@ def parse_content_payloads(candidates: Sequence[Any]) -> Tuple[str, List[str], s
         return ("", [], "text")
     text, images, msg_type = interpret_content(decoded)
     return (text, images, msg_type or "text")
+
+
+def parse_content_with_audio(
+    candidates: Sequence[Any],
+) -> Tuple[str, List[str], str, str, int]:
+    """在 parse_content_payloads 基础上，额外解析语音消息的音频地址与时长
+
+    语音（contentType==3 + audio）在 interpret_content 里会先降级成占位文本，
+    真实的音频地址藏在 decoded["audio"] 中。调用方必须把 msg_type 改成 "audio"
+    并带上 audioUrl，前端才能播放或转文字；只拿占位文本的话用户看到的就是
+    一句干巴巴的「[语音消息]」，既听不了也转不了。
+
+    Args:
+        candidates: 候选载荷字符串序列，按优先级排列
+    Returns:
+        (text, images, msg_type, audio_url, audio_duration)
+        非语音消息时后两项为 ("", 0)；语音但取不到地址时保持占位文本与 text 类型
+    """
+    decoded = decode_first_content(candidates)
+    if decoded is None:
+        return ("", [], "text", "", 0)
+
+    text, images, msg_type = interpret_content(decoded)
+    audio_url, audio_duration = "", 0
+    if text == AUDIO_PLACEHOLDER_TEXT:
+        audio_url, audio_duration = extract_audio_info(decoded)
+        if audio_url:
+            msg_type = "audio"
+            text = ""
+
+    return (text, images, msg_type or "text", audio_url, audio_duration)
 
 
 def _extract_text(text_obj: Any) -> str:

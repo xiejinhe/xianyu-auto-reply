@@ -37,6 +37,7 @@ from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
 from common.utils.xianyu_utils import trans_cookies
 from common.utils.xianyu_message_parser import (
+    AUDIO_PLACEHOLDER_TEXT,
     load_content_json,
     interpret_content,
     extract_audio_info,
@@ -1021,11 +1022,12 @@ def _parse_message(model: dict, myid: str) -> dict | None:
         # 消息时间戳（goofish IM 中字段名为 createAt）
         msg_time = message.get("createAt", 0) or message.get("time", 0)
 
-        # 语音：contentType==3 + audio，interpret_content 会降级成 "[语音消息]" 文本，
-        # 这里把真实的音频地址与时长取出来，让前端可以播放
+        # 语音：contentType==3 + audio，interpret_content 会降级成占位文本，
+        # 这里把真实的音频地址与时长取出来，让前端可以播放 / 转文字。
+        # 判据与推送侧共用 AUDIO_PLACEHOLDER_TEXT，避免两处硬编码不一致。
         audio_url = ""
         audio_duration = 0
-        if msg_type == "text" and msg_text == "[语音消息]" and isinstance(decoded, dict):
+        if msg_type == "text" and msg_text == AUDIO_PLACEHOLDER_TEXT and isinstance(decoded, dict):
             audio_url, audio_duration = extract_audio_info(decoded)
             if audio_url:
                 msg_type = "audio"

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from common.utils.xianyu_utils import decrypt
-from common.utils.xianyu_message_parser import parse_content_payloads
+from common.utils.xianyu_message_parser import parse_content_with_audio
 
 
 class PushMessageParser:
@@ -105,24 +105,25 @@ class PushMessageParser:
             cid = cid_raw.split("@")[0] if "@" in cid_raw else cid_raw
             msg_time = msg_1.get("5", 0)
 
-            # 解析 base64 内容
-            text_content, images, msg_type = self._decode_content(msg_1)
-            if not text_content and not images:
+            # 解析消息内容：文本 / 图片 / 语音（语音会额外给出音频地址与时长）
+            text_content, images, msg_type, audio_url, audio_duration = (
+                self._decode_content(msg_1)
+            )
+            if not text_content and not images and not audio_url:
                 text_content = reminder
                 msg_type = "text"
 
             is_self = sender_id == self.myid
+            preview = text_content or ("[语音]" if audio_url else "[图片]")
 
             if is_self:
                 logger.info(
-                    f"【{self.account_id}】[推送-发出] cid={cid}, "
-                    f"内容: {text_content or '[图片]'}"
+                    f"【{self.account_id}】[推送-发出] cid={cid}, 内容: {preview}"
                 )
             else:
                 logger.info(
                     f"【{self.account_id}】[推送-收到] cid={cid}, "
-                    f"发送者={sender_name}({sender_id}), "
-                    f"内容: {text_content or '[图片]'}"
+                    f"发送者={sender_name}({sender_id}), 内容: {preview}"
                 )
 
             return {
@@ -136,6 +137,8 @@ class PushMessageParser:
                     "type": msg_type,
                     "text": text_content,
                     "images": images,
+                    "audioUrl": audio_url,
+                    "audioDuration": audio_duration,
                     "time": msg_time,
                 },
             }
@@ -217,28 +220,31 @@ class PushMessageParser:
             logger.warning(f"【{self.account_id}】解析卡片更新推送失败: {e}")
             return None
 
-    def _decode_content(self, msg_1: dict) -> Tuple[str, List[str], str]:
+    def _decode_content(self, msg_1: dict) -> Tuple[str, List[str], str, str, int]:
         """
         从推送消息中解码内容（兼容明文 JSON 与 base64 两种载荷）
 
-        IM 主动推送的图片/文本内容 JSON 实际位于 msg["1"]["6"]["3"]["5"]，且为
+        IM 主动推送的图片/文本/语音内容 JSON 实际位于 msg["1"]["6"]["3"]["5"]，且为
         【明文 JSON 字符串】；旧格式则在 ["1"] 为 base64。信封字段在此提取，内容
         解析（识别明文/base64、判定文本/图片/语音）统一交由公共模块
         common.utils.xianyu_message_parser 处理，与 HTTP 历史消息、自动回复侧共用
         同一套逻辑，避免各写一套互相不同步。
 
         Returns:
-            (text, images, msg_type) 三元组
+            (text, images, msg_type, audio_url, audio_duration) 五元组。
+            语音消息会额外给出音频地址与时长，供前端播放 / 转文字。
         """
         try:
             msg_6 = msg_1.get("6", {})
             if not isinstance(msg_6, dict):
-                return ("", [], "text")
+                return ("", [], "text", "", 0)
             msg_6_3 = msg_6.get("3", {})
             if not isinstance(msg_6_3, dict):
-                return ("", [], "text")
+                return ("", [], "text", "", 0)
 
             # 候选载荷按优先级：["5"]（实时推送明文 JSON）→ ["1"]（旧格式 base64）
-            return parse_content_payloads([msg_6_3.get("5", ""), msg_6_3.get("1", "")])
+            return parse_content_with_audio(
+                [msg_6_3.get("5", ""), msg_6_3.get("1", "")]
+            )
         except Exception:
-            return ("", [], "text")
+            return ("", [], "text", "", 0)

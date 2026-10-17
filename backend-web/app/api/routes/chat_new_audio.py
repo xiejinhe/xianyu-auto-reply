@@ -639,9 +639,24 @@ async def transcribe_audio(
         if not url.startswith(("http://", "https://")):
             return ApiResponse(success=False, message="音频地址无效")
         try:
+            # 闲鱼语音 CDN 会校验 Referer，不带会被拒（403）。
+            # 带上与网页端一致的请求头，否则「对方语音转文字」根本下载不到音频。
+            headers = {
+                "Referer": "https://www.goofish.com/",
+                "Origin": "https://www.goofish.com",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/146.0.0.0 Safari/537.36"
+                ),
+                "Accept": "audio/*,*/*;q=0.8",
+            }
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), follow_redirects=True) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
             if resp.status_code >= 400:
+                logger.warning(
+                    f"【{account_id}】下载对方语音失败 HTTP {resp.status_code}: {url[:200]}"
+                )
                 return ApiResponse(success=False, message=f"音频下载失败（{resp.status_code}）")
             audio_bytes = resp.content
         except Exception as e:
@@ -670,7 +685,12 @@ async def transcribe_audio(
         text, model = await _speech_to_text(ai_settings, audio_bytes, mime)
     except Exception as e:
         logger.warning(f"【{account_id}】语音转文字失败: {e}")
-        return ApiResponse(success=False, message=f"转写失败：{str(e)[:200]}")
+        # 闲鱼 APP 的语音有可能是 amr 之类本地模型解不了的格式（本机 av 未编译 amr
+        # 解码器）。直接抛原始异常用户看不懂，这里补一条能照着做的建议。
+        hint = ""
+        if not (ai_settings.get("api_key") or "").strip():
+            hint = "。若对方语音是 amr 等本地模型不支持的格式，可在「系统设置 → 语音转文字」填云端 API Key 兜底"
+        return ApiResponse(success=False, message=f"转写失败：{str(e)[:200]}{hint}")
 
     logger.info(f"【{account_id}】语音转文字成功 model={model} 长度={len(text)}")
     return ApiResponse(success=True, message="转写成功", data={"text": text, "model": model})
