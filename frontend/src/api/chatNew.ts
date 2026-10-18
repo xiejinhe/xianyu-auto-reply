@@ -120,6 +120,9 @@ export interface ChatMessage {
   failed?: boolean
   /** 发送失败原因（如被安全拦截的明文文案），用于点击感叹号查看 */
   failReason?: string
+  /** 推送来源标记：'app_channel' = App 通道实时推送。它的 messageId 与
+   * IM 网关历史接口是两套 ID 体系，前端合并时据此做内容级去重 */
+  pushSource?: string
 }
 
 // ==================== 接口方法 ====================

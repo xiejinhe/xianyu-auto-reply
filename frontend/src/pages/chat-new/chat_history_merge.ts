@@ -21,6 +21,24 @@ export function mergeMessages(latest: ChatMessage[], existing: ChatMessage[]): C
   const unidentified = new Set<ChatMessage>()
   for (const message of [...latest, ...existing]) {
     if (message.messageId) {
+      // App 通道推送与 IM 网关历史是两套互不相通的 messageId（实测同一
+      // 条消息一边是 32 位 hex、一边是 4347684267508.PNM），同一物理消息
+      // 会以两个不同 ID 的副本到达：先实时推一条、历史兜底再拉一条，
+      // 表现为重复气泡。这里对带 app_channel 标记的副本按
+      // 「发送者+内容+时间」识别孪生并合并；必须至少一侧带标记才启用，
+      // 否则会误吞用户快速连发的相同内容（见 matchesPlaceholder 的教训）。
+      // 时间容差 2 秒：同一物理消息两侧时间戳相同或相差极小，
+      // 而真实连发的两条消息不会共享同一毫秒级时间戳。
+      let twin: ChatMessage | undefined
+      for (const candidate of identified.values()) {
+        if (isAppChannelTwin(candidate, message)) { twin = candidate; break }
+      }
+      if (twin) {
+        if (message.pushSource === 'app_channel') continue
+        // message 是历史副本（readStatus 等字段更全），替换掉推送副本
+        identified.set(twin.messageId, message)
+        continue
+      }
       if (!identified.has(message.messageId)) identified.set(message.messageId, message)
     } else {
       unidentified.add(message)
@@ -41,6 +59,18 @@ export function mergeMessages(latest: ChatMessage[], existing: ChatMessage[]): C
     }
   }
   return merged.sort((a, b) => toTimestampMs(a.time) - toTimestampMs(b.time))
+}
+
+/** 是否为同一物理消息的两个副本（App 通道实时推送 vs IM 网关历史）。
+ * 必须至少一侧带 app_channel 推送标记才允许按内容比对。 */
+function isAppChannelTwin(a: ChatMessage, b: ChatMessage): boolean {
+  if (a.pushSource !== 'app_channel' && b.pushSource !== 'app_channel') return false
+  if (a.messageId === b.messageId) return false
+  return a.senderId === b.senderId && a.type === b.type &&
+    a.text === b.text &&
+    a.images.length === b.images.length &&
+    a.images.every((url, index) => url === b.images[index]) &&
+    Math.abs(toTimestampMs(a.time) - toTimestampMs(b.time)) <= 2000
 }
 
 /** 实时推送和发送结果使用同一套去重规则，回填占位消息的真实 ID。 */

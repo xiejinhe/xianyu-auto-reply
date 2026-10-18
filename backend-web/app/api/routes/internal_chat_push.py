@@ -67,6 +67,12 @@ async def receive_app_channel_push(
         "text": req.text,
         "images": req.images or [],
         "time": req.time_ms or 0,
+        # 来源标记：App 通道的 messageId（bizTag 里的 32 位 hex）与 IM 网关
+        # 历史接口的 messageId（如 4347684267508.PNM）是两套互不相通的 ID，
+        # 同一条消息会以两个不同 ID 的副本到达前端。前端 mergeMessages
+        # 依赖这个标记，对带标记的副本按「发送者+内容+时间」合并去重，
+        # 避免先实时推一条、历史兜底再拉一条后出现重复气泡（实测踩坑）。
+        "pushSource": "app_channel",
     }
 
     try:
