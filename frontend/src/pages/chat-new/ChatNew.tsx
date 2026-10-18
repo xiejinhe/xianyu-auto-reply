@@ -926,6 +926,8 @@ export function ChatNew() {
         if (isActive()) {
           conversationsRef.current = local
           setConversations(local)
+          // 缓存顶上的也要有订单角标（角标查本地库，零风控风险）
+          void loadOrderMarks(accountId)
         }
       }
     }
@@ -990,6 +992,8 @@ export function ChatNew() {
           if (local.length) {
             conversationsRef.current = local
             setConversations(local)
+            // 限流兜底的列表同样要有订单角标（本地库查询，不碰闲鱼接口）
+            void loadOrderMarks(accountId)
           }
         }
       }
