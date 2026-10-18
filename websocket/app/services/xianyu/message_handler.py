@@ -783,6 +783,13 @@ class MessageHandler:
             )
 
             sender_id = str(parsed.get("send_user_id") or "")
+            # 打一行显式日志：App 通道是否真的被触发，只能靠它和 backend-web 的
+            # `POST /api/v1/internal/chat-push` 两边对表确认（曾经因为没有日志，
+            # 用户看到"5 秒"时无法判断到底是本通道生效还是 15 秒轮询撞上的）
+            logger.info(
+                f"【{self.cookie_id}】App通道转发: cid={chat_id}, "
+                f"type={'image' if is_image else 'text'}, id={message_id or '-'}"
+            )
             schedule_chat_push(
                 account_id=self.cookie_id,
                 cid=chat_id,
