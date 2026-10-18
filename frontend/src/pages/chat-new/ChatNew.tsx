@@ -465,6 +465,29 @@ export function ChatNew() {
     }
   }, [])
 
+  // 对账轮询发现某会话有新动静时，把服务端最新会话数据合并进列表状态。
+  // 此前对账只响铃不回写，推送缺失时（闲鱼不给网页 IM 稳定推 APP 来源消息）
+  // 列表摘要和红点要等用户手动刷新才出现——这是"铃声响但列表不动"的根因。
+  const syncConvFromReconcile = useCallback((accountId: string, conv: Conversation) => {
+    const key = normCid(conv.cid)
+    const isViewingConv = accountId === activeAccountIdRef.current &&
+      key === normCid(activeCidRef.current)
+    // 正在看的会话 = 已读：套水位归零红点，防止服务端旧未读把红点亮回来
+    const serverConv: Conversation = isViewingConv ? { ...conv, unreadCount: 0 } : conv
+    if (isViewingConv) markConvReadByKey(accountId, conv.cid, conv.lastMessageTime)
+    const cache = convsCacheRef.current[accountId]
+    if (cache) {
+      const exists = cache.convs.some((c) => normCid(c.cid) === key)
+      cache.convs = exists
+        ? cache.convs.map((c) => (normCid(c.cid) === key ? { ...c, ...serverConv } : c))
+        : [serverConv, ...cache.convs]
+    }
+    if (accountId === activeAccountIdRef.current) {
+      conversationsRef.current = cache?.convs ?? [serverConv, ...conversationsRef.current]
+      setConversations(conversationsRef.current)
+    }
+  }, [markConvReadByKey])
+
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     // 会话列表摘要带发送者前缀：自己的「你：」，对方的「他：」（性别拿不到，统一「他」）
     const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
@@ -529,6 +552,8 @@ export function ChatNew() {
 
   // WebSocket 首次连接或重连成功后，补偿会话缓存，并刷新当前窗口
   const reloadCurrentChatRef = useRef<(accountId: string) => void>(() => {})
+  // 供对账轮询调用：正在看的会话有新动静时立即补拉消息，不等 15 秒窗口轮询
+  const catchUpConvRef = useRef<(accountId: string, cid: string) => Promise<void>>(async () => {})
   const handleWsConnected = useCallback((accountId: string, isReconnect: boolean) => {
     setAccounts((prev) => prev.map((account) => (
       account.account_id === accountId ? { ...account, connected: true } : account
@@ -947,7 +972,8 @@ export function ChatNew() {
 
   useEffect(() => {
     reloadCurrentChatRef.current = reloadCurrentChat
-  }, [reloadCurrentChat])
+    catchUpConvRef.current = catchUpActiveConversation
+  }, [reloadCurrentChat, catchUpActiveConversation])
 
   // 推送缺失兜底：闲鱼不给网页 IM 稳定推送对方消息（服务端行为，实测长期如此，
   // 见提交 67e6348 的排查）。推送和断线补偿任何一环没接到，聊天窗口就会一直
@@ -1424,7 +1450,9 @@ export function ChatNew() {
     }
   }, [activeAccountId, activeCid])
 
-  // 断线兜底对账轮询：每 15 秒对「当前在线」的账号拉一次会话列表，
+  // 断线兜底对账轮询：每 15 秒对「当前在线」的账号拉一次会话列表。
+  // 发现某会话有新动静时做两件事：① 把服务端最新会话数据回写列表（摘要+红点
+  // ≤15s 自动出现，不再等手动刷新）；② 若正是当前打开的会话，立即补拉消息进窗口。
   // 用服务端未读数(unreadCount)比对，把断线期间漏掉的新消息补响 + 未读角标。
   // 断线期间拉不到（接口要求在线），等账号被自动恢复看门狗拉起来后的下一轮补响——
   // 这就是"断线也响"的兜底：可恢复的掉线最终都会响，只有 Cookie 真失效才不响。
@@ -1440,6 +1468,15 @@ export function ChatNew() {
           if (cancelled) return
           fetchedAny = true
           for (const conv of conversations) {
+            // 先于响铃水位判断「有没有新动静」：有则把列表摘要/红点一并回写，
+            // 正在看的会话立即补拉消息——推送缺失时不再只响铃不动界面
+            const isNew = conv.lastMessageTime > (rungConvRef.current[`${accountId}:${conv.cid}`] ?? 0)
+            if (isNew && baselineDoneRef.current) {
+              const isViewingConv = accountId === activeAccountIdRef.current &&
+                normCid(conv.cid) === normCid(activeCidRef.current)
+              syncConvFromReconcile(accountId, conv)
+              if (isViewingConv) void catchUpConvRef.current(accountId, conv.cid)
+            }
             ringMissedIfAny(accountId, conv.cid, conv.lastMessageTime, conv.unreadCount)
           }
         } catch {
