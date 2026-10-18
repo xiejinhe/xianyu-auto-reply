@@ -70,16 +70,22 @@ HIDDEN_CONVS_MAX = 300
 # 最近一次成功的会话列表缓存（首页）：闲鱼 IM 流控（400600001）时回退显示，
 # 不然前端只能看到「暂无会话」。流控通常是突发性的，几分钟自愈，
 # 期间前端 15 秒一次的对账轮询若一直拿不到数据，列表就一直白屏。
+# TTL 刻意给长（6 小时）：这只是「最近一次成功的快照」，过期只会让数据变旧
+# （仍带 rateLimited 标记可用），但一旦过期就直接弹「请求过于频繁」吓人；
+# 每次成功拉取都会刷新，正常使用时数据始终是最新的。
 CONVS_LASTGOOD_PREFIX = "chat:convs_lastgood:"
-CONVS_LASTGOOD_TTL = 600
+CONVS_LASTGOOD_TTL = 6 * 3600
 
-# 进程内流控冷却：账号被闲鱼限流后 5 分钟内的请求不再转发给闲鱼，
-# 直接回兜底缓存。实测这个限流需要较长的安静期才自愈，90 秒碰一次
-# 都会把窗口一直重置；列表的实时更新有 App 通道推送兜着，冷却期长一点
-# 不影响消息及时性。前端冷却只对刷新后的新页面有效，旧页面的 15 秒轮询
-# 拦不住，必须在后端把闲鱼 shield 住。
+# 进程内流控冷却：账号被闲鱼限流后一段时间内的请求不再转发给闲鱼，
+# 直接回兜底缓存。实测这个限流需要较长的安静期才自愈，固定 5 分钟会在
+# 到期瞬间再撞一次限流、把闲鱼的限流窗口一直续上（曾从 21:10 拖到 23:19
+# 都没恢复），因此改为指数退避：连续被限流就翻倍冷却，成功一次后重置。
+# 列表的实时更新有 App 通道推送兜着，冷却期长一点不影响消息及时性。
+# 前端冷却只对刷新后的新页面有效，旧页面的轮询拦不住，必须在后端把闲鱼 shield 住。
 CONVS_COOLDOWN_S = 300
+CONVS_COOLDOWN_MAX_S = 1800
 _convs_rate_limit_until: dict = {}
+_convs_backoff_level: dict = {}  # 账号 → 连续被限流次数，用于指数退避
 
 
 def _is_valid_nick(name: str) -> bool:
@@ -506,9 +512,21 @@ async def get_conversations(
                 f"【{account_id}】IM会话列表返回错误, "
                 f"code={err_code}, reason={reason}"
             )
-            # 流控错误：记冷却 + 优先回退最近一次成功的会话列表（仅首页）
+            # 流控错误：指数退避记冷却 + 优先回退最近一次成功的会话列表（仅首页）
             if err_code == "400600001":
-                _convs_rate_limit_until[account_id] = time.time() + CONVS_COOLDOWN_S
+                # 连续被限流就翻倍冷却（5→10→20→…封顶 30 分钟），成功一次后重置。
+                # 固定冷却会在到期瞬间再撞一次限流，把闲鱼的限流窗口续上，
+                # 账号半天缓不过来——退避才能给出真正的安静期让它自愈。
+                level = _convs_backoff_level.get(account_id, 0) + 1
+                _convs_backoff_level[account_id] = level
+                cooldown = min(
+                    CONVS_COOLDOWN_S * (2 ** (level - 1)), CONVS_COOLDOWN_MAX_S
+                )
+                _convs_rate_limit_until[account_id] = time.time() + cooldown
+                logger.info(
+                    f"【{account_id}】会话列表被闲鱼限流，进入冷却 {cooldown}s"
+                    f"（第 {level} 次连续）"
+                )
                 if cursor is None:
                     fallback = await _convs_lastgood_response(account_id)
                     if fallback:
@@ -617,6 +635,8 @@ async def get_conversations(
 
         # 首页拉取成功：缓存一份作为流控兜底（翻页不缓存）
         if cursor is None:
+            # 首页拉取成功：重置退避等级（账号已恢复，下次限流从 5 分钟重新算起）
+            _convs_backoff_level.pop(account_id, None)
             try:
                 redis_client = await get_redis_client()
                 await redis_client.set(
