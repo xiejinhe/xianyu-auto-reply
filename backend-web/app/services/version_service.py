@@ -296,9 +296,14 @@ async def _check_from_github(
                     "Accept": "application/vnd.github+json",
                 },
             )
-            # 仓库不存在或从未发布过 Release 时 GitHub 返回 404
+            # 仓库从未发布过 Release 时 GitHub 返回 404。这不是故障——只是
+            # 「没有已发布的更新版本」，按无更新处理，避免给用户弹一个吓人的
+            # 红色错误。本项目用 git 推送到 main 分发，本来就不会有 Release。
+            # （代价：github_repo 配错写错时也会走这条分支，表现为「无更新」
+            # 而非报错，属于可接受的权衡。）
             if response.status_code == 404:
-                result["error"] = f"仓库 {repo} 暂无 Release"
+                result["description"] = f"仓库 {repo} 未发布 Release，当前无可用更新"
+                result["has_update"] = False
                 return result
             response.raise_for_status()
             data = response.json()
