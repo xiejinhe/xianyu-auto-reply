@@ -48,6 +48,15 @@ import { useChatNewWs } from './useChatNewWs'
  *  不做归一化时，正打开的会话会被推送误判成「非当前会话」——列表红点 +1、
  *  消息却不进聊天窗口，只能等 30 秒兜底轮询补上（用户实测延迟约 20 秒）。 */
 const normCid = (cid: string) => (cid || '').split('@')[0].trim()
+/** 响铃水位/去重用的键：cid 一律归一化，推送侧的 cid 偶尔带 @goofish，
+ *  不归一化会导致「同一个会话两个 key」，水位对不上就会重复响铃。 */
+const rungKey = (accountId: string, cid: string) => `${accountId}:${normCid(cid)}`
+/** 对账容差：服务端会话的 modifyTime 与消息 createAt 不是同一时刻，
+ *  通常晚几百毫秒到几秒。严格比较会让同一条消息「推送响一次、对账再响一次」。 */
+const RING_TOLERANCE_MS = 3000
+/** 「对方正在输入」：收到停止帧后的宽限期 / 无更新时的最长显示时间 */
+const TYPING_HIDE_MS = 2200
+const TYPING_MAX_MS = 6000
 
 /** 已读水位持久化：不落盘的话刷新页面水位就丢，服务端旧未读又会把红点亮一次 */
 const READ_MARKS_KEY = 'chat_conv_read_marks'
@@ -244,6 +253,12 @@ export function ChatNew() {
   // 断线兜底对账：记录已响铃的会话最新消息时间（accountId:cid -> 时间戳），
   // 避免实时推送与对账轮询对同一消息重复响铃；首轮仅校准水位不响旧未读。
   const rungConvRef = useRef<Record<string, number>>({})
+  // 响铃去重：同一条物理消息可能被两条通道各推一次（App 通道 messageId 是 32 位
+  // hex、网页 IM 是 xxx.PNM，两套体系没法按 ID 对上），只能按「账号+会话+发送者+
+  // 内容」比对，15 秒内同样内容只响一次。
+  const recentRingsRef = useRef<Array<{ key: string; at: number }>>([])
+  // 每个会话最近一次真正响铃的时刻：对账轮询只是兜底通道，刚为这个会话响过就不许再响。
+  const lastRingAtRef = useRef<Record<string, number>>({})
   // 全局基线标记：首轮对账（已连接账号）完成后置 true。首轮只校准水位（历史未读
   // 不响），之后任何在线账号——含断开后才被看门狗恢复连接的账号——漏掉的新未读
   // 都照常补响。用全局标记而非按账号标记，否则"页面打开时断开、之后才恢复"的账号
@@ -444,24 +459,44 @@ export function ChatNew() {
 
   // 断线兜底：记录已响铃会话的最新消息时间，避免对账轮询对同一消息重复响
   const markRung = useCallback((accountId: string, cid: string, time: number) => {
-    const key = `${accountId}:${cid}`
+    const key = rungKey(accountId, cid)
     const prev = rungConvRef.current[key] ?? 0
     if (time > prev) rungConvRef.current[key] = time
+  }, [])
+
+  // 实时推送通道的响铃：同一条消息被两条通道重复投递时只响一次。
+  // 判定键不含时间戳（两侧时间可能差几毫秒），只看「谁发的 + 说了什么」，15 秒窗口。
+  const ringOnce = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
+    const now = Date.now()
+    const key = [
+      accountId, normCid(cid), msg.senderId, msg.type,
+      (msg.text || '').slice(0, 80), (msg.images || [])[0] || '',
+    ].join('|')
+    recentRingsRef.current = recentRingsRef.current.filter((r) => now - r.at < 15000)
+    if (recentRingsRef.current.some((r) => r.key === key)) return false
+    recentRingsRef.current.push({ key, at: now })
+    lastRingAtRef.current[rungKey(accountId, cid)] = now
+    playNewMessageSound()
+    return true
   }, [])
 
   // 断线兜底对账：账号恢复连接后，把漏掉的新消息补响 + 未读角标。
   // unreadCount 只统计对方发来的未读，自己发出的消息不会触发响铃。
   const ringMissedIfAny = useCallback((accountId: string, cid: string, lastMessageTime: number, unreadCount: number) => {
-    const key = `${accountId}:${cid}`
+    const key = rungKey(accountId, cid)
     const prev = rungConvRef.current[key] ?? 0
     if (lastMessageTime > prev) rungConvRef.current[key] = lastMessageTime
     // 首轮（baselineDone 未置位）仅校准水位，不响历史未读，避免打开页面时把旧未读全响一遍
     if (!baselineDoneRef.current) return
-    if (unreadCount > 0 && lastMessageTime > prev) {
-      playNewMessageSound()
-      if (accountId !== activeAccountIdRef.current) {
-        setAccountUnread((p) => ({ ...p, [accountId]: (p[accountId] || 0) + 1 }))
-      }
+    // 同一条消息：modifyTime 比推送里的 createAt 晚几百毫秒到几秒，用容差吃掉这段差值
+    if (unreadCount <= 0 || lastMessageTime <= prev + RING_TOLERANCE_MS) return
+    // 该会话刚响过（实时推送通道），兜底通道 20 秒内不再重复响
+    const now = Date.now()
+    if (now - (lastRingAtRef.current[key] ?? 0) < 20000) return
+    lastRingAtRef.current[key] = now
+    playNewMessageSound()
+    if (accountId !== activeAccountIdRef.current) {
+      setAccountUnread((p) => ({ ...p, [accountId]: (p[accountId] || 0) + 1 }))
     }
   }, [])
 
@@ -489,9 +524,10 @@ export function ChatNew() {
   }, [markConvReadByKey])
 
   // ==================== 对方正在输入 ====================
-  // 后端只推「开始输入 / 停止输入」两个状态（闲鱼帧 3=1/0），
-  // 前端按 4 秒超时自动隐藏：对方停手时偶尔会漏掉 0 帧，
-  // 靠超时兜底不会让提示一直挂着。
+  // 闲鱼是「边打字边推」：实测 1（正在输入）/0（停止）大约 1~2 秒交替一次，
+  // 收到 0 就立刻清空的话提示会闪断，用户看到的就是"闪一下就没"。
+  // 所以收到 0 只挂一个宽限计时器，期间只要有新的 1 到达就取消；
+  // 1 则挂一个较长的兜底超时（对方停手时偶尔漏发 0 帧）。
   const [typingConv, setTypingConv] = useState<{ accountId: string; cid: string } | null>(null)
   const typingTimerRef = useRef<number | null>(null)
   const handleWsTyping = useCallback((accountId: string, cid: string, typing: boolean) => {
@@ -500,11 +536,17 @@ export function ChatNew() {
       typingTimerRef.current = null
     }
     if (!typing) {
-      setTypingConv(null)
+      typingTimerRef.current = window.setTimeout(() => {
+        setTypingConv(null)
+        typingTimerRef.current = null
+      }, TYPING_HIDE_MS)
       return
     }
     setTypingConv({ accountId, cid: normCid(cid) })
-    typingTimerRef.current = window.setTimeout(() => setTypingConv(null), 4000)
+    typingTimerRef.current = window.setTimeout(() => {
+      setTypingConv(null)
+      typingTimerRef.current = null
+    }, TYPING_MAX_MS)
   }, [])
 
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
@@ -514,7 +556,7 @@ export function ChatNew() {
     const isActiveAccount = accountId === activeAccountIdRef.current
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响
     if (!msg.isSelf) {
-      playNewMessageSound()
+      ringOnce(accountId, cid, msg)
       // 同步响铃水位，避免断线兜底对账轮询对同一消息重复响
       markRung(accountId, cid, msg.time)
     }
@@ -527,7 +569,12 @@ export function ChatNew() {
     const isViewingConv = isActiveAccount && normCid(cid) === normCid(activeCidRef.current)
     if (isViewingConv) {
       markConvReadByKey(accountId, cid, msg.time)
-      // 消息已经到达，输入提示立即撤掉（等下一个 0 帧太慢）
+      // 消息已经到达，输入提示立即撤掉（等下一个 0 帧太慢）；
+      // 顺带清掉待执行的宽限计时器，否则它会把之后新一轮的「正在输入」也关掉
+      if (typingTimerRef.current) {
+        window.clearTimeout(typingTimerRef.current)
+        typingTimerRef.current = null
+      }
       setTypingConv(null)
     }
     const conversationCache = convsCacheRef.current[accountId]
@@ -1494,7 +1541,8 @@ export function ChatNew() {
           for (const conv of conversations) {
             // 先于响铃水位判断「有没有新动静」：有则把列表摘要/红点一并回写，
             // 正在看的会话立即补拉消息——推送缺失时不再只响铃不动界面
-            const isNew = conv.lastMessageTime > (rungConvRef.current[`${accountId}:${conv.cid}`] ?? 0)
+            const isNew = conv.lastMessageTime >
+              (rungConvRef.current[rungKey(accountId, conv.cid)] ?? 0) + RING_TOLERANCE_MS
             if (isNew && baselineDoneRef.current) {
               const isViewingConv = accountId === activeAccountIdRef.current &&
                 normCid(conv.cid) === normCid(activeCidRef.current)
