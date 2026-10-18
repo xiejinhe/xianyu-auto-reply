@@ -46,6 +46,7 @@ from common.utils.xianyu_message_parser import (
     load_content_json,
     interpret_content,
     extract_audio_info,
+    classify_event,
 )
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1442,6 +1443,11 @@ def _parse_message(model: dict, myid: str) -> dict | None:
                 msg_type = "audio"
                 msg_text = ""
 
+        # 系统 / 交易事件卡片识别（付款状态、演出信息、发货凭证等）：
+        # 这类消息闲鱼以"方括号摘要"或卡片形式下发，前端据此渲染成居中事件卡，
+        # 而非普通聊天气泡。纯文本规则，不依赖采样真实载荷。
+        is_event, event_kind = classify_event(msg_text, msg_type)
+
         return {
             "messageId": str(message.get("messageId", "") or ""),
             "senderId": sender_id,
@@ -1453,6 +1459,8 @@ def _parse_message(model: dict, myid: str) -> dict | None:
             "audioUrl": audio_url,
             "audioDuration": audio_duration,
             "time": msg_time,
+            "isEvent": is_event,
+            "eventKind": event_kind,
             # 读状态（IM 原始字段，实测 0=未读、2=已读）：
             # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
             "readStatus": model.get("readStatus"),

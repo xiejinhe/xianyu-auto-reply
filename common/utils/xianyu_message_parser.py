@@ -32,6 +32,56 @@ _CONTENT_KEYS = ("text", "image", "picUrl", "audio")
 # interpret_content 统一先降级成这个占位文本，再由调用方提取音频地址。
 AUDIO_PLACEHOLDER_TEXT = "[语音消息]"
 
+# 系统 / 交易事件消息里常出现的业务关键词，用于把"卡片 / 系统摘要"归类到具体事件。
+_EVENT_KEYWORDS = (
+    "演出", "发货", "物流", "付款", "拍下", "专拍", "待付款", "待发货",
+    "已发货", "确认收货", "退款", "交易成功", "交易关闭", "订单",
+    "填写演出信息", "发货凭证", "收货", "催付",
+)
+
+# 闲鱼的系统 / 交易事件消息（付款状态变更、填写演出信息、发货凭证等）在 IM 里
+# 通常以"方括号包裹的摘要"出现，例如 [你已填写演出信息，请确认]、[我已发货，请查看
+# 发货凭证]；用户正常聊天几乎不会以 [ 开头。据此即可在不采样真实载荷的前提下，
+# 把这类消息从普通聊天气泡识别为"事件卡片"。
+_EVENT_KIND_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("performance", ("演出",)),
+    ("refund", ("退款", "交易关闭")),
+    ("shipping", ("发货", "物流", "收货", "凭证")),
+    ("payment", ("付款", "拍下", "专拍", "催付", "待付款")),
+    ("done", ("交易成功",)),
+)
+
+
+def classify_event(text: str, msg_type: str) -> Tuple[bool, str]:
+    """
+    判断一条消息是否为「系统 / 交易事件卡片」，并返回事件类别。
+
+    识别依据（不依赖真实载荷采样，纯文本规则）：
+    - 闲鱼系统摘要统一用方括号包裹（text 以 [ 开头）→ 视为事件；
+    - 或 type=="card" 且文本命中交易 / 演出等业务关键词 → 视为事件。
+
+    Args:
+        text: 消息展示文本（已解码后的 title / summary / reminder 等）。
+        msg_type: 消息类型（'text' / 'card' / 'image' / 'audio' ...）。
+
+    Returns:
+        (is_event, event_kind)：is_event 为真时 event_kind ∈
+        {'performance','refund','shipping','payment','done','generic'}。
+    """
+    if not text or msg_type in ("image", "audio"):
+        return False, ""
+    t = text.strip()
+    if t.startswith("["):
+        is_event = True
+    elif msg_type == "card" and any(k in t for k in _EVENT_KEYWORDS):
+        is_event = True
+    else:
+        return False, ""
+    for kind, keys in _EVENT_KIND_RULES:
+        if any(k in t for k in keys):
+            return True, kind
+    return True, "generic"
+
 
 def load_content_json(raw: Any) -> Optional[Dict[str, Any]]:
     """将消息内容载荷字符串解析为内容 JSON dict（兼容明文 JSON 与 base64）

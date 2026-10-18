@@ -113,6 +113,12 @@ export interface ChatMessage {
   audioDuration?: number
   /** 语音转文字结果（ASR 完成后回填） */
   audioText?: string
+  /** 是否为系统 / 交易事件卡片（付款状态、演出信息、发货凭证等），
+   * 前端据此渲染成居中的事件卡，而非普通聊天气泡 */
+  isEvent?: boolean
+  /** 事件类别（后端 classify_event 给出）：performance / refund / shipping /
+   * payment / done / generic，用于事件卡图标 */
+  eventKind?: string
   time: number
   /** 读状态（IM 原始字段）：0=未读、2=已读；自己消息=对方是否已读，对方消息=自己是否已读 */
   readStatus?: number

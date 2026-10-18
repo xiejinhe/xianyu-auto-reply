@@ -16,7 +16,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from common.utils.xianyu_utils import decrypt
-from common.utils.xianyu_message_parser import parse_content_with_audio
+from common.utils.xianyu_message_parser import (
+    parse_content_with_audio,
+    classify_event,
+)
 
 
 class PushMessageParser:
@@ -179,6 +182,7 @@ class PushMessageParser:
                     "text": str(text_content),
                     "images": [],
                     "time": msg_time,
+                    **dict(zip(("isEvent", "eventKind"), classify_event(str(text_content), "card"))),
                 },
             }
         except Exception as e:
@@ -214,6 +218,7 @@ class PushMessageParser:
                     "text": reminder,
                     "images": [],
                     "time": msg_time,
+                    **dict(zip(("isEvent", "eventKind"), classify_event(reminder, "text"))),
                 },
             }
         except Exception as e:

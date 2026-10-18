@@ -5,7 +5,17 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle } from 'lucide-react'
+
+// 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
+const EVENT_ICONS: Record<string, typeof Info> = {
+  performance: Ticket, // 演出信息
+  refund: RotateCcw, // 退款 / 交易关闭
+  shipping: Truck, // 发货 / 物流 / 收货 / 凭证
+  payment: CreditCard, // 付款 / 拍下 / 专拍
+  done: CheckCircle, // 交易成功
+  generic: Info, // 其它系统事件
+}
 import { useUIStore } from '@/store/uiStore'
 import {
   getChatAccounts,
@@ -2789,6 +2799,23 @@ export function ChatNew() {
                 </div>
               )}
               {messages.map((msg, idx) => {
+                // 系统 / 交易事件卡片：居中、带图标，区别于普通聊天气泡
+                if (msg.isEvent) {
+                  const EventIcon = EVENT_ICONS[msg.eventKind || 'generic'] || Info
+                  return (
+                    <div
+                      key={msg.messageId || idx}
+                      className="flex justify-center my-1.5 px-3"
+                    >
+                      <div className="flex items-center gap-1.5 max-w-[88%] rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 px-3 py-1.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
+                        <EventIcon className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                        <span className="whitespace-pre-wrap">
+                          <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
+                        </span>
+                      </div>
+                    </div>
+                  )
+                }
                 const isSystem = msg.type === 'system'
                 // 对方头像：优先用户信息缓存，退回当前会话的头像
                 const otherAvatar =
