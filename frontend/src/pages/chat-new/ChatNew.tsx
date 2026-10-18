@@ -121,6 +121,18 @@ import { cn } from '@/utils/cn'
 /** 检查昵称是否为纯数字（如用户ID），纯数字视为无效昵称 */
 const isPureDigits = (name: string) => /^\d+$/.test(name)
 
+/** 闲鱼对部分接口的昵称打了码（如 樱***1）：会话列表、用户主页、账号信息
+ *  返回的都是打码名，只有消息体里的 reminderTitle（前端 senderName）是完整的。
+ *  取两个昵称里更适合展示的那个：完整 > 打码（含 *） > 空/纯数字。 */
+const betterNick = (cur: string, incoming: string): string => {
+  const c = (cur || '').trim()
+  const n = (incoming || '').trim()
+  if (!n || isPureDigits(n)) return c
+  if (!c || isPureDigits(c)) return n
+  if (c.includes('*') && !n.includes('*')) return n
+  return c
+}
+
 const canRecallMessage = (message: ChatMessage) =>
   message.isSelf &&
   !!message.messageId &&
@@ -432,6 +444,32 @@ export function ChatNew() {
     }
   }, [markConvReadByKey])
 
+  // 消息体里的 senderName 是完整昵称（会话列表/主页接口都被闲鱼打了码），
+  // 拉到消息后把【当前会话】的展示名升级成完整版：会话列表、顶部标题、名片随之变全。
+  // 只动匹配 cid 的那一个会话，别把别人的打码名也换成这个人的昵称。
+  const upgradeConvNickFromMsgs = useCallback((accountId: string, cid: string, msgs: ChatMessage[]) => {
+    const sender = msgs.find((m) => !m.isSelf && m.senderName)
+    if (!sender?.senderName) return
+    const full = sender.senderName
+    const key = normCid(cid)
+    const upgrade = (c: Conversation): Conversation => {
+      if (normCid(c.cid) !== key) return c
+      const next = betterNick(c.otherUserName, full)
+      return next === c.otherUserName ? c : { ...c, otherUserName: next }
+    }
+    const cache = convsCacheRef.current[accountId]
+    if (cache) cache.convs = cache.convs.map(upgrade)
+    // 顺手把用户信息缓存里的打码昵称也升级掉，后续重拉列表时用它补名
+    if (sender.senderId) {
+      const info = userInfoCacheRef.current[sender.senderId]
+      if (info) userInfoCacheRef.current[sender.senderId] = { ...info, nick: betterNick(info.nick, full) }
+    }
+    if (accountId === activeAccountIdRef.current) {
+      conversationsRef.current = conversationsRef.current.map(upgrade)
+      setConversations(conversationsRef.current)
+    }
+  }, [])
+
   /** 更新会话列表的通用逻辑（可作用于 state 数组或缓存数组） */
   const updateConvList = (convs: Conversation[], cid: string, summary: string, msg: ChatMessage, isViewing: boolean): Conversation[] => {
     const key = normCid(cid)
@@ -440,7 +478,10 @@ export function ChatNew() {
     if (exists) {
       const updated = convs.map((c) => {
         if (!sameConv(c)) return c
-        return { ...c, lastMessageSummary: summary, lastMessageTime: msg.time, unreadCount: isViewing ? 0 : c.unreadCount + 1 }
+        return { ...c, lastMessageSummary: summary, lastMessageTime: msg.time,
+          unreadCount: isViewing ? 0 : c.unreadCount + 1,
+          // 消息体里的 senderName 是完整昵称，会话列表里的往往被打码（樱***1），顺手升级
+          otherUserName: msg.isSelf ? c.otherUserName : betterNick(c.otherUserName, msg.senderName || '') }
       })
       const target = updated.find(sameConv)!
       return [target, ...updated.filter((c) => !sameConv(c))]
@@ -817,8 +858,7 @@ export function ChatNew() {
         if (!info) return conversation
         return { ...conversation,
           otherUserAvatar: conversation.otherUserAvatar || info.avatar,
-          otherUserName: !conversation.otherUserName || isPureDigits(conversation.otherUserName)
-            ? info.nick || conversation.otherUserName : conversation.otherUserName }
+          otherUserName: betterNick(conversation.otherUserName, info.nick || '') }
       })
       const cached = convsCacheRef.current[accountId]
       const next: ConversationCache = {
@@ -864,8 +904,9 @@ export function ChatNew() {
   const missingInfoConvs = conversations.filter(
     (c) => {
       if (!c.otherUserId || !c.cid) return false
-      // 昵称有效（非空且非纯数字）且头像存在时无需查询
-      const hasValidName = !!c.otherUserName && !isPureDigits(c.otherUserName)
+      // 昵称有效（非空、非纯数字、非打码）且头像存在时无需查询
+      const hasValidName = !!c.otherUserName && !isPureDigits(c.otherUserName) &&
+        !c.otherUserName.includes('*')
       if (c.otherUserAvatar && hasValidName) return false
       // 缓存中已有完整信息则跳过
       const cached = userInfoCacheRef.current[c.otherUserId]
@@ -921,8 +962,9 @@ export function ChatNew() {
           if (!info) return c
           const updates: Partial<Conversation> = {}
           if (info.avatar && !c.otherUserAvatar) updates.otherUserAvatar = info.avatar
-          // 昵称为空或纯数字时用 API 返回的昵称覆盖
-          if (info.nick && (!c.otherUserName || isPureDigits(c.otherUserName))) updates.otherUserName = info.nick
+          // 昵称为空/纯数字/打码（樱***1）时用 API 返回的昵称覆盖
+          const nextNick = betterNick(c.otherUserName, info.nick || '')
+          if (nextNick && nextNick !== c.otherUserName) updates.otherUserName = nextNick
           return Object.keys(updates).length > 0 ? { ...c, ...updates } : c
         }),
       )
@@ -985,6 +1027,8 @@ export function ChatNew() {
       setMessages(next.msgs)
       setMsgHasMore(next.hasMore)
       setMsgCursor(next.cursor)
+      // 消息里的 senderName 是完整昵称，列表/顶部的打码名（樱***1）顺手升级
+      upgradeConvNickFromMsgs(accountId, cid, next.msgs)
       if (!result.complete) {
         addToast({ message: '断线期间消息较多，请点击加载更多继续补齐', type: 'warning' })
       }
@@ -993,7 +1037,7 @@ export function ChatNew() {
     }).finally(() => {
       if (requestId === msgRequestIdRef.current) setLoadingMsgs(false)
     })
-  }, [addToast])
+  }, [addToast, upgradeConvNickFromMsgs])
 
   const loadMessages = useCallback(async (accountId: string, cid: string, append = false, silent = false) => {
     if (!accountId || !cid) return
@@ -1021,6 +1065,8 @@ export function ChatNew() {
         setMessages(next.msgs)
         setMsgHasMore(next.hasMore)
         setMsgCursor(next.cursor)
+        // 消息里的 senderName 是完整昵称，列表/顶部的打码名（樱***1）顺手升级
+        upgradeConvNickFromMsgs(accountId, cid, next.msgs)
         // 正在看的消息拉取成功 = 已读：顺手清掉该会话红点，
         // 同时兜住「推送误标的红点」和「服务端旧未读」两类残留
         if (accountId === activeAccountIdRef.current && normCid(cid) === normCid(activeCidRef.current)) {
@@ -1031,7 +1077,7 @@ export function ChatNew() {
       }).finally(() => {
         if (!silent && requestId === msgRequestIdRef.current) setLoadingMsgs(false)
       })
-  }, [addToast, catchUpActiveConversation, clearConvUnread])
+  }, [addToast, catchUpActiveConversation, clearConvUnread, upgradeConvNickFromMsgs])
 
   // 边界已在断线时冻结，等待会话补偿期间收到的实时消息不会推进消息补偿终点。
   const reloadCurrentChat = useCallback(async (accountId: string) => {
@@ -2391,11 +2437,11 @@ export function ChatNew() {
             <button
               onClick={() => openXianyuProfile(
                 activeConversation.otherUserId,
-                peerProfile.nick || activeConversation.otherUserName,
+                betterNick(peerProfile.nick || '', activeConversation.otherUserName || ''),
                 peerProfile.avatar || activeConversation.otherUserAvatar,
               )}
               title={[
-                peerProfile.nick || activeConversation.otherUserName,
+                betterNick(peerProfile.nick || '', activeConversation.otherUserName || ''),
                 peerProfile.lastVisitTime,
                 peerProfile.shopLevel && `店铺等级 ${peerProfile.shopLevel}`,
                 typeof peerProfile.praiseRatio === 'number' && `好评率 ${peerProfile.praiseRatio}%`,
@@ -2424,7 +2470,8 @@ export function ChatNew() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                    {peerProfile.nick || activeConversation.otherUserName || '未知用户'}
+                    {/* 主页接口的昵称是打码的（樱***1），有完整昵称时优先显示完整版 */}
+                    {betterNick(peerProfile.nick || '', activeConversation.otherUserName || '') || '未知用户'}
                   </span>
                   {peerProfile.lastVisitTime && (
                     <span className="flex-shrink-0 px-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-[10px] text-emerald-700 dark:text-emerald-300">

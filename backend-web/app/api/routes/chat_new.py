@@ -47,7 +47,7 @@ from common.utils.xianyu_message_parser import (
     interpret_content,
     extract_audio_info,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -580,6 +580,34 @@ async def get_conversations(
         return ApiResponse(success=False, message=f"获取会话列表失败: {str(e)}")
 
 
+async def _upgrade_account_display_name(db: AsyncSession, account_id: str, nick: str) -> None:
+    """用完整昵称升级账号展示名（闲鱼账号/会话接口返回的昵称都是打码的）。
+
+    只在当前展示名为空或含 * 时才写库，完整昵称一旦落库后续调用直接跳过。
+    失败只告警不抛出——昵称升级是锦上添花，不能影响消息拉取主流程。
+    """
+    try:
+        result = await db.execute(
+            select(XYAccount.display_name).where(XYAccount.account_id == account_id)
+        )
+        current = (result.scalar() or "").strip()
+        if current and "*" not in current:
+            return
+        await db.execute(
+            update(XYAccount)
+            .where(XYAccount.account_id == account_id)
+            .values(display_name=nick)
+        )
+        await db.commit()
+        logger.info(f"【{account_id}】账号展示名已从「{current or '空'}」升级为完整昵称「{nick}」")
+    except Exception as e:
+        logger.warning(f"【{account_id}】升级账号展示名失败: {e}")
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
 @router.get("/messages/{account_id}/{cid}")
 async def get_messages(
     account_id: str,
@@ -587,6 +615,7 @@ async def get_messages(
     cursor: int = None,
     limit: int = 20,
     current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     获取指定会话的聊天记录
@@ -625,6 +654,16 @@ async def get_messages(
             if msg_info:
                 messages.append(msg_info)
         messages.reverse()
+
+        # 自己消息里的 senderName 是完整昵称（账号信息/会话列表接口返回的都是
+        # 打码名，如 樱***1）。账号列表展示名还是打码/空的话，顺手用完整昵称升级。
+        self_nick = next(
+            (m.get("senderName") for m in messages
+             if m.get("isSelf") and m.get("senderName") and "*" not in m["senderName"]),
+            "",
+        )
+        if self_nick:
+            await _upgrade_account_display_name(db, account_id, self_nick)
 
         return ApiResponse(
             success=True,
