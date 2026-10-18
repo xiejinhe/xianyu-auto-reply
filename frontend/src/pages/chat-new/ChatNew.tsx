@@ -390,6 +390,12 @@ export function ChatNew() {
   const historyPageRef = useRef({ convHasMore, msgHasMore })
   useEffect(() => { historyPageRef.current = { convHasMore, msgHasMore } }, [convHasMore, msgHasMore])
   const convRequestIdRef = useRef<Record<string, number>>({})
+  // 会话列表「拉首页」的在途计数（账号 → 在途请求数）：计数 >0 时同一账号的
+  // 新首页请求直接复用，不再重复打到闲鱼。开发模式 React.StrictMode 会把 effect
+  // 执行两次，页面加载时「选中账号 effect」和「WS 连上补偿」还会各拉一次，
+  // 实测一次刷新发 2~4 条请求，直接叠加闲鱼 IM 流控风险。
+  // append（加载更多）不参与去重；force（用户手动点刷新）总会真发。
+  const convInflightRef = useRef<Map<string, number>>(new Map())
   const msgRequestIdRef = useRef(0)
 
   /** 同步更新账号 ref，避免账号切换后旧请求把数据写入新账号窗口 */
@@ -913,8 +919,13 @@ export function ChatNew() {
     } catch { /* 静默：角标拉不到就先不显示 */ }
   }, [])
 
-  const loadConversations = useCallback(async (accountId: string, append = false, merge = false) => {
+  const loadConversations = useCallback(async (accountId: string, append = false, merge = false, force = false) => {
     if (!accountId) return
+    // 在途去重：同一账号的首页请求已在飞就复用，避免重复请求打到闲鱼
+    if (!append) {
+      if (!force && (convInflightRef.current.get(accountId) ?? 0) > 0) return
+      convInflightRef.current.set(accountId, (convInflightRef.current.get(accountId) ?? 0) + 1)
+    }
     const requestId = (convRequestIdRef.current[accountId] ?? 0) + 1
     convRequestIdRef.current[accountId] = requestId
     const generation = recoveryRef.current.generation(accountId)
@@ -1009,6 +1020,11 @@ export function ChatNew() {
       }
       if (isCurrent()) addToast({ message: error.message, type: 'error' })
     }).finally(() => {
+      if (!append) {
+        const left = (convInflightRef.current.get(accountId) ?? 1) - 1
+        if (left > 0) convInflightRef.current.set(accountId, left)
+        else convInflightRef.current.delete(accountId)
+      }
       if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
     })
   }, [addToast, applyReadMarks, loadOrderMarks])
@@ -2457,7 +2473,7 @@ export function ChatNew() {
               <SoundPicker />
               {activeAccountId && (
                 <button
-                  onClick={() => { setConvCursor(null); loadConversations(activeAccountId) }}
+                  onClick={() => { setConvCursor(null); loadConversations(activeAccountId, false, false, true) }}
                   className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
                   title="刷新会话"
                 >
