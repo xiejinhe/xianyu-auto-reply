@@ -2799,24 +2799,11 @@ export function ChatNew() {
                 </div>
               )}
               {messages.map((msg, idx) => {
-                // 系统 / 交易事件卡片：居中、带图标，区别于普通聊天气泡
-                if (msg.isEvent) {
-                  const EventIcon = EVENT_ICONS[msg.eventKind || 'generic'] || Info
-                  return (
-                    <div
-                      key={msg.messageId || idx}
-                      className="flex justify-center my-1.5 px-3"
-                    >
-                      <div className="flex items-center gap-1.5 max-w-[88%] rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 px-3 py-1.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
-                        <EventIcon className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                        <span className="whitespace-pre-wrap">
-                          <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
-                        </span>
-                      </div>
-                    </div>
-                  )
-                }
                 const isSystem = msg.type === 'system'
+                // 系统 / 交易事件消息：按发送者左右对齐，和普通消息一样待在对话流里，
+                // 只是气泡换成事件卡样式（浅底 + 描边 + 图标），一眼能和打字消息区分开。
+                const isEvent = !!msg.isEvent
+                const EventIcon = EVENT_ICONS[msg.eventKind || 'generic'] || Info
                 // 对方头像：优先用户信息缓存，退回当前会话的头像
                 const otherAvatar =
                   userInfoCacheRef.current[msg.senderId]?.avatar || activeConversation?.otherUserAvatar || ''
@@ -2849,20 +2836,30 @@ export function ChatNew() {
                     </button>
                   )}
                   <div className="max-w-[70%]">
-                    {/* 发送者名称 */}
+                    {/* 发送者名称（系统事件消息常无昵称，此时只显示时间） */}
                     <div
                       className={`text-xs text-gray-400 mb-1 ${
                         msg.isSelf ? 'text-right' : 'text-left'
                       }`}
                     >
-                      {msg.senderName}
-                      <span className="ml-2">{formatTime(msg.time)}</span>
+                      {msg.senderName ? (
+                        <>
+                          {msg.senderName}
+                          <span className="ml-2">{formatTime(msg.time)}</span>
+                        </>
+                      ) : (
+                        formatTime(msg.time)
+                      )}
                     </div>
                     {/* 消息气泡（失败的本地消息在气泡前显示红色感叹号，点击查看原因） */}
                     <div className={`flex items-center gap-1.5 ${msg.isSelf ? 'flex-row-reverse' : ''}`}>
                       <div
                         className={`rounded-lg px-3 py-2 text-sm break-words ${
-                          msg.isSelf
+                          isEvent
+                            ? msg.isSelf
+                              ? 'bg-blue-50 border border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/60 dark:text-blue-200'
+                              : 'bg-gray-50 border border-gray-200 text-gray-600 dark:bg-gray-700/50 dark:border-gray-600 dark:text-gray-300'
+                            : msg.isSelf
                             ? 'bg-blue-500 text-white'
                             : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
                         } ${msg.type === 'system' ? '!bg-gray-200 dark:!bg-gray-600 text-center text-gray-500 dark:text-gray-400 text-xs' : ''}`}
@@ -2915,6 +2912,14 @@ export function ChatNew() {
                               />
                             ))}
                           </div>
+                        ) : isEvent ? (
+                          // 事件卡气泡：图标 + 文本，浅底描边已在外层 className 处理
+                          <span className="inline-flex items-start gap-1.5">
+                            <EventIcon className="w-3.5 h-3.5 flex-shrink-0 opacity-70 mt-[2px]" />
+                            <span className="whitespace-pre-wrap">
+                              <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
+                            </span>
+                          </span>
                         ) : (
                           // 闲鱼的黄脸表情在消息里是 [中文名] 代码，这里翻译渲染
                           <span className="whitespace-pre-wrap">
