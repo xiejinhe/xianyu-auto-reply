@@ -574,6 +574,60 @@ export function ChatNew() {
     return [newConv, ...convs]
   }
 
+  // 用刚拉到的**整段消息**校正会话列表条目（摘要 + 时间，必要时置顶）。
+  // 会话列表接口被闲鱼限流时列表会停更，但消息接口是另一条通道、仍然通畅，
+  // 不回写就会出现「聊天窗口显示 23:42、列表还停在 12:56」的对不上。
+  // 与 updateConvList 的区别：那个是「来了一条新消息」（累加未读、强制置顶），
+  // 这个是「按已有消息校正」——不累加未读，只在时间确实更新时才置顶，
+  // 且字段没变时原样返回，避免 15 秒轮询白白触发重渲染。
+  const syncConvFromMessages = (accountId: string, cid: string, msgs: ChatMessage[]): void => {
+    const latest = msgs[msgs.length - 1]
+    if (!latest) return
+    const body = latest.type === 'image' ? '[图片]' : (latest.text || '').slice(0, 50)
+    const summary = `${latest.isSelf ? '你' : '他'}：${body}`
+    const key = normCid(cid)
+    const isViewing = accountId === activeAccountIdRef.current && key === normCid(activeCidRef.current)
+    const applyList = (convs: Conversation[]): Conversation[] => {
+      const idx = convs.findIndex((c) => normCid(c.cid) === key)
+      if (idx < 0) return convs
+      const cur = convs[idx]
+      const nextTime = Math.max(cur.lastMessageTime || 0, latest.time)
+      const nextName = latest.isSelf ? cur.otherUserName : betterNick(cur.otherUserName, latest.senderName || '')
+      const nextUnread = isViewing ? 0 : cur.unreadCount
+      // 字段完全没变就原样返回，别为轮询制造新数组
+      if (cur.lastMessageSummary === summary && (cur.lastMessageTime || 0) === nextTime
+        && cur.otherUserName === nextName && cur.unreadCount === nextUnread) {
+        return convs
+      }
+      const patched: Conversation = {
+        ...cur,
+        lastMessageSummary: summary,
+        lastMessageTime: nextTime,
+        unreadCount: nextUnread,
+        otherUserName: nextName,
+      }
+      // 时间没前进就不置顶，只就地校正，保持列表顺序稳定
+      if (nextTime === (cur.lastMessageTime || 0)) {
+        const next = [...convs]
+        next[idx] = patched
+        return next
+      }
+      return [patched, ...convs.filter((_, i) => i !== idx)]
+    }
+    const cache = convsCacheRef.current[accountId]
+    if (cache) cache.convs = applyList(cache.convs)
+    if (accountId === activeAccountIdRef.current) {
+      const next = cache?.convs ?? applyList(conversationsRef.current)
+      // 引用没变说明字段毫无变化：不 setState、不落盘，别为 15 秒轮询白忙
+      if (next !== conversationsRef.current) {
+        conversationsRef.current = next
+        setConversations(next)
+        // 顺手落一份本地缓存：刷新页面时列表先拿它顶上，不至于回到停更的旧数据
+        writeConvCache(accountId, next)
+      }
+    }
+  }
+
   // 断线兜底：记录已响铃会话的最新消息时间，避免对账轮询对同一消息重复响
   const markRung = useCallback((accountId: string, cid: string, time: number) => {
     const key = rungKey(accountId, cid)
@@ -1213,6 +1267,9 @@ export function ChatNew() {
         setMsgCursor(next.cursor)
         // 消息里的 senderName 是完整昵称，列表/顶部的打码名（樱***1）顺手升级
         upgradeConvNickFromMsgs(accountId, cid, next.msgs)
+        // 用刚拉到的消息回写会话列表条目：会话列表接口被闲鱼限流时会停更，
+        // 而消息接口是另一条通道仍然通畅，不回写就会「窗口 23:42、列表 12:56」
+        syncConvFromMessages(accountId, cid, next.msgs)
         // 正在看的消息拉取成功 = 已读：顺手清掉该会话红点，
         // 同时兜住「推送误标的红点」和「服务端旧未读」两类残留
         if (accountId === activeAccountIdRef.current && normCid(cid) === normCid(activeCidRef.current)) {
