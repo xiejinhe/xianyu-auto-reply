@@ -335,6 +335,10 @@ export function ChatNew() {
   // 读状态刷新都不再去请求该账号，避免把限流窗口一直撞着不恢复。
   // 后端也有一道同样的冷却，这里是为了不产生无意义的本地请求。
   const rateLimitUntilRef = useRef<Record<string, number>>({})
+  // 限流兜底提示的去重节流（账号 -> 上次提示时间戳）：后端返回兜底缓存时
+  // rateLimited=true，前端给用户说明一次「为什么刷新没有新数据」即可，
+  // 同账号 5 分钟内不重复弹，避免后台轮询每 30s 弹一次刷屏。
+  const rateLimitedNoticeAtRef = useRef<Record<string, number>>({})
   // 响铃去重：同一条物理消息可能被两条通道各推一次（App 通道 messageId 是 32 位
   // hex、网页 IM 是 xxx.PNM，两套体系没法按 ID 对上），只能按「账号+会话+发送者+
   // 内容」比对，15 秒内同样内容只响一次。
@@ -1007,8 +1011,13 @@ export function ChatNew() {
       }
     }
 
+    // 后端在账号被闲鱼限流时会回退 Redis 兜底缓存并带 rateLimited=true。
+    // recoverConversations 只透传 items/hasMore/cursor，用闭包变量记录，
+    // 补偿链路（多页）里只要有一页是兜底就算数。
+    let sawRateLimited = false
     const fetchPage = async (cursor?: number) => {
       const page = await getConversations(accountId, cursor)
+      if (page.rateLimited) sawRateLimited = true
       return { items: page.conversations, hasMore: page.hasMore, nextCursor: page.nextCursor }
     }
     const request = compensating && boundary
@@ -1049,6 +1058,24 @@ export function ChatNew() {
       }
       if (!result.complete) {
         addToast({ message: `账号 ${accountId} 会话较多，请点击加载更多继续补齐`, type: 'warning' })
+      }
+      if (sawRateLimited) {
+        // 账号正被闲鱼限流：本地也记 5 分钟冷却，停掉对账轮询 / 读状态刷新对
+        // 这个账号的请求（后端冷却期内只会回缓存，不会真的打闲鱼，但没必要空转）
+        rateLimitUntilRef.current[accountId] = Date.now() + 300_000
+        // 给用户说明一次「为什么刷新没有新数据」：同账号 5 分钟内不重复弹，
+        // 避免切账号 / 补偿轮询每轮都弹。文案点明是闲鱼侧限流、非系统故障。
+        const now = Date.now()
+        if (isActive() && (rateLimitedNoticeAtRef.current[accountId] ?? 0) + 300_000 < now) {
+          rateLimitedNoticeAtRef.current[accountId] = now
+          addToast({
+            message: `账号 ${accountId} 正被闲鱼限流，列表显示的是上次的数据，稍后会自动恢复`,
+            type: 'info',
+          })
+        }
+      } else {
+        // 拉取成功：提前解除本地冷却，不用干等 5 分钟整
+        delete rateLimitUntilRef.current[accountId]
       }
       if (!append && isActive() && latest[0]?.cid) {
         getAccountProfile(accountId, latest[0].cid).then((profile) => {
@@ -1801,9 +1828,16 @@ export function ChatNew() {
       for (const accountId of connectedIds) {
         if ((rateLimitUntilRef.current[accountId] ?? 0) > now) continue
         try {
-          const { conversations } = await getConversations(accountId)
+          const { conversations, rateLimited } = await getConversations(accountId)
           if (cancelled) return
           fetchedAny = true
+          // 后端限流冷却期内会回缓存并带 rateLimited：本地同步记冷却，
+          // 后续轮次跳过该账号；成功一次就提前解除，不等整 5 分钟
+          if (rateLimited) {
+            rateLimitUntilRef.current[accountId] = Date.now() + 300_000
+          } else {
+            delete rateLimitUntilRef.current[accountId]
+          }
           for (const conv of conversations) {
             // 先于响铃水位判断「有没有新动静」：有则把列表摘要/红点一并回写，
             // 正在看的会话立即补拉消息——推送缺失时不再只响铃不动界面
