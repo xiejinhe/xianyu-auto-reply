@@ -118,6 +118,20 @@ async def get_user_profile(
             try:
                 data = json.loads(cached)
                 if isinstance(data, dict) and data.get("nick"):
+                    # 主页信息缓存 30 分钟，但「最近来过」是 5 分钟短缓存：
+                    # 命中主页缓存也必须补活跃信息，否则名片上的绿色
+                    # 「X前来过」标签只在主页缓存恰好过期的瞬间才出现，
+                    # 其余 25 分钟打开会话都会被当成"功能没加"。
+                    # 真正的出网频率由活跃信息自己的缓存兜底
+                    # （命中 5 分钟 / 未命中 2 分钟内不重复出网）。
+                    if with_activity:
+                        data = await _merge_activity(
+                            account_id=account_id,
+                            user_id=user_id,
+                            cookies_str=cookies_str,
+                            db=db,
+                            profile=data,
+                        )
                     return data
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -156,7 +170,33 @@ async def get_user_profile(
     #    闲鱼把活跃状态挂在商品详情的 sellerDO 上（APP 主页的"X分钟前来过"
     #    就是它），主页接口本身没有这个字段。单独短缓存，失败静默跳过，
     #    不影响名片主体。
-    if with_activity and profile and profile.get("itemCount"):
+    if with_activity and profile:
+        profile = await _merge_activity(
+            account_id=account_id,
+            user_id=user_id,
+            cookies_str=cookies_str,
+            db=db,
+            profile=profile,
+        )
+
+    return profile
+
+
+async def _merge_activity(
+    account_id: str,
+    user_id: str,
+    cookies_str: str,
+    db,
+    profile: dict,
+) -> dict:
+    """把「最近来过 / 回复速度」合并进名片数据（没有在售商品时原样返回）
+
+    出网与否由 _get_activity_cached 的短缓存兜底：命中 5 分钟内不重复查，
+    查不到 2 分钟内不重试，所以每次打开会话调用一次也是安全的。
+    """
+    try:
+        if not profile.get("itemCount"):
+            return profile
         activity = await _get_activity_cached(
             account_id=account_id,
             user_id=user_id,
@@ -164,9 +204,11 @@ async def get_user_profile(
             db=db,
             expected_nick=profile.get("nick", ""),
         )
-        if activity:
-            profile.update(activity)
-
+    except Exception as e:
+        logger.warning(f"【{account_id}】合并对方活跃信息失败: {e}")
+        return profile
+    if activity:
+        profile.update(activity)
     return profile
 
 
@@ -320,6 +362,20 @@ def _to_int(value) -> Optional[int]:
         return None
 
 
+def _nick_mismatch(expected: str, actual: str) -> bool:
+    """判断商品详情的卖家昵称与主页昵称是否矛盾（True=矛盾，应丢弃）
+
+    两边都完整时要求完全一致；任一侧带 * 掩码（如主页接口返回"樱***1"，
+    商品详情返回"樱花飞舞4321"）时无法精确比对，退化为首尾字符比对。
+    任一侧为空时视为无法判断，不拦截。
+    """
+    if not expected or not actual:
+        return False
+    if "*" in expected or "*" in actual:
+        return not (expected[0] == actual[0] and expected[-1] == actual[-1])
+    return expected != actual
+
+
 async def _get_activity_cached(
     account_id: str,
     user_id: str,
@@ -445,9 +501,12 @@ async def _try_activity_on_items(
 
         seller = (result.get("detail") or {}).get("sellerDO") or {}
         # 商品列表理论上只返回对方的在售商品，但保险起见校验一下卖家昵称，
-        # 避免拿错人的活跃信息显示在会话里
+        # 避免拿错人的活跃信息显示在会话里。注意主页接口返回的可能是打码
+        # 昵称（如"樱***1"），商品详情返回的是完整昵称（"樱花飞舞4321"），
+        # 两侧永远不相等——任一侧带掩码时退化为首尾字符比对，
+        # 否则备用账号查到的结果会被这道校验整单丢弃（实测踩坑）。
         nick = str(seller.get("nick") or "")
-        if expected_nick and nick and nick != expected_nick:
+        if _nick_mismatch(expected_nick, nick):
             continue
 
         activity: dict = {}
