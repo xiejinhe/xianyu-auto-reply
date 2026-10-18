@@ -1575,11 +1575,16 @@ export function ChatNew() {
   // 这就是"断线也响"的兜底：可恢复的掉线最终都会响，只有 Cookie 真失效才不响。
   useEffect(() => {
     let cancelled = false
+    // 闲鱼流控冷却：某账号被限流后 90 秒内不再去撞，否则 15 秒一次的轮询
+    // 会把流控一直撞着不恢复（实测「请求过于频繁」就是这么拖长的）
+    const rateLimitUntilRef: Record<string, number> = {}
     const tick = async () => {
       if (cancelled) return
+      const now = Date.now()
       const connectedIds = accountsRef.current.filter((a) => a.connected).map((a) => a.account_id)
       let fetchedAny = false
       for (const accountId of connectedIds) {
+        if ((rateLimitUntilRef[accountId] ?? 0) > now) continue
         try {
           const { conversations } = await getConversations(accountId)
           if (cancelled) return
@@ -1597,8 +1602,12 @@ export function ChatNew() {
             }
             ringMissedIfAny(accountId, conv.cid, conv.lastMessageTime, conv.unreadCount)
           }
-        } catch {
-          // 静默失败，等下一轮
+        } catch (e) {
+          // 闲鱼流控：该账号冷却 90 秒再试，别每 15 秒撞一次把流控拖着不恢复
+          if (String((e as Error)?.message || '').includes('请求过于频繁')) {
+            rateLimitUntilRef[accountId] = Date.now() + 90_000
+          }
+          // 其余失败静默，等下一轮
         }
       }
       // 首轮整体对账完成：至少有一个账号成功拉取过（水位已校准），之后才允许响铃。

@@ -66,6 +66,12 @@ _INVALID_NICK_SET = {
 HIDDEN_CONVS_PREFIX = "chat:hidden_convs:"
 HIDDEN_CONVS_MAX = 300
 
+# 最近一次成功的会话列表缓存（首页）：闲鱼 IM 流控（400600001）时回退显示，
+# 不然前端只能看到「暂无会话」。流控通常是突发性的，几分钟自愈，
+# 期间前端 15 秒一次的对账轮询若一直拿不到数据，列表就一直白屏。
+CONVS_LASTGOOD_PREFIX = "chat:convs_lastgood:"
+CONVS_LASTGOOD_TTL = 600
+
 
 def _is_valid_nick(name: str) -> bool:
     """
@@ -467,8 +473,21 @@ async def get_conversations(
                 f"【{account_id}】IM会话列表返回错误, "
                 f"code={err_code}, reason={reason}"
             )
-            # 流控错误给前端提示
+            # 流控错误：优先回退最近一次成功的会话列表（仅首页），让界面有数据可看
             if err_code == "400600001":
+                if cursor is None:
+                    try:
+                        redis_client = await get_redis_client()
+                        raw = await redis_client.get(f"{CONVS_LASTGOOD_PREFIX}{account_id}")
+                        if raw:
+                            cached = json.loads(raw)
+                            logger.info(
+                                f"【{account_id}】会话列表被闲鱼限流，回退最近一次缓存"
+                                f"（{len(cached.get('conversations', []))} 条）"
+                            )
+                            return ApiResponse(success=True, data={**cached, "rateLimited": True})
+                    except Exception as e:
+                        logger.warning(f"【{account_id}】读取会话列表兜底缓存失败: {e}")
                 return ApiResponse(success=False, message="请求过于频繁，请稍后再试")
             return ApiResponse(success=False, message=f"IM服务异常: {reason or err_code}")
 
@@ -505,8 +524,12 @@ async def get_conversations(
                     continue
                 if data.get("avatar"):
                     c["otherUserAvatar"] = data["avatar"]
-                if _is_valid_nick(data.get("nick", "")):
-                    c["otherUserName"] = data["nick"]
+                # 主页接口（user.page.head）的昵称也是打码的（樱***1）：
+                # 只在会话列表连打码名都没有时才补位，别用它覆盖已有的昵称
+                p_nick = data.get("nick", "")
+                cur_nick = c.get("otherUserName", "")
+                if p_nick and (not cur_nick or cur_nick.isdigit()):
+                    c["otherUserName"] = p_nick
         except Exception as e:
             logger.warning(f"【{account_id}】读取主页信息缓存失败: {e}")
 
@@ -538,22 +561,23 @@ async def get_conversations(
                 cached_avatar = cached_data.get("avatar", "")
                 conv_nick = c.get("otherUserName", "")  # 从会话列表 reminderTitle 提取的
 
-                # 昵称优先级：会话列表有效昵称 > 缓存昵称
-                if _is_valid_nick(conv_nick):
-                    # 会话列表有有效昵称
-                    # 如果缓存无昵称或缓存昵称带***而会话列表不带，则更新缓存
-                    if not cached_nick or ("***" in cached_nick and "***" not in conv_nick):
-                        new_cache = {"avatar": cached_avatar, "nick": conv_nick}
-                        write_pipe.set(
-                            f"{AVATAR_CACHE_PREFIX}{c['cid']}",
-                            json.dumps(new_cache, ensure_ascii=False),
-                            ex=AVATAR_CACHE_TTL,
-                        )
-                        need_write = True
-                else:
-                    # 会话列表无有效昵称，使用缓存昵称
-                    if cached_nick:
-                        c["otherUserName"] = cached_nick
+                # 昵称优先级：完整昵称 > 打码昵称（樱***1）> 空。
+                # 会话列表的 reminderTitle 常被闲鱼打码，user.query 缓存里是完整名，
+                # 不能让打码名压过完整名（此前会话列表有效就无条件用它并回写缓存）。
+                conv_full = bool(conv_nick) and _is_valid_nick(conv_nick) and "***" not in conv_nick
+                cache_full = bool(cached_nick) and _is_valid_nick(cached_nick) and "***" not in cached_nick
+                if conv_full and (not cached_nick or not cache_full):
+                    # 会话列表是完整名、缓存缺名或打码 → 用完整名升级缓存
+                    new_cache = {"avatar": cached_avatar, "nick": conv_nick}
+                    write_pipe.set(
+                        f"{AVATAR_CACHE_PREFIX}{c['cid']}",
+                        json.dumps(new_cache, ensure_ascii=False),
+                        ex=AVATAR_CACHE_TTL,
+                    )
+                    need_write = True
+                if not conv_full and cache_full:
+                    # 会话列表被打码/缺失 → 用缓存里的完整名升级展示
+                    c["otherUserName"] = cached_nick
 
                 # 头像：不用 chat:avatar 缓存补填——那是 user.query 的结果，
                 # 实测存的是查询账号自己的头像，主页缓存过期时会把对方头像
@@ -565,6 +589,22 @@ async def get_conversations(
 
         except Exception as e:
             logger.warning(f"【{account_id}】Redis批量处理用户信息失败: {e}")
+
+        # 首页拉取成功：缓存一份作为流控兜底（翻页不缓存）
+        if cursor is None:
+            try:
+                redis_client = await get_redis_client()
+                await redis_client.set(
+                    f"{CONVS_LASTGOOD_PREFIX}{account_id}",
+                    json.dumps({
+                        "conversations": conversations,
+                        "hasMore": body.get("hasMore", False),
+                        "nextCursor": body.get("nextCursor", None),
+                    }, ensure_ascii=False),
+                    ex=CONVS_LASTGOOD_TTL,
+                )
+            except Exception as e:
+                logger.warning(f"【{account_id}】写会话列表兜底缓存失败: {e}")
 
         return ApiResponse(
             success=True,

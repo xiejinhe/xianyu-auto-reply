@@ -168,7 +168,7 @@ export const getConversations = async (
   accountId: string,
   cursor?: number,
   limit: number = 20,
-): Promise<{ conversations: Conversation[]; hasMore: boolean; nextCursor: number | null }> => {
+): Promise<{ conversations: Conversation[]; hasMore: boolean; nextCursor: number | null; rateLimited?: boolean }> => {
   const params = new URLSearchParams()
   if (cursor !== undefined && cursor !== null) params.append('cursor', String(cursor))
   params.append('limit', String(limit))
@@ -176,7 +176,7 @@ export const getConversations = async (
   const res = await get<{
     success: boolean
     message?: string
-    data: { conversations: Conversation[]; hasMore: boolean; nextCursor: number | null }
+    data: { conversations: Conversation[]; hasMore: boolean; nextCursor: number | null; rateLimited?: boolean }
   }>(`${PREFIX}/conversations/${accountId}?${params.toString()}`)
   if (!res.success) throw new Error(res.message || '获取会话列表失败')
   const data = res.data || { conversations: [], hasMore: false, nextCursor: null }
