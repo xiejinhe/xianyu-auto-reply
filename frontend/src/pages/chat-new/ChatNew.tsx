@@ -133,6 +133,28 @@ const betterNick = (cur: string, incoming: string): string => {
   return c
 }
 
+/** 会话列表本地缓存（localStorage）：闲鱼会话列表接口被限流时（400600001 要
+ *  很久才恢复），刷新页面也能先显示上次拿到的列表，不至于空白一片。 */
+const CONVS_LS_PREFIX = 'chat_new_convs_cache:'
+const readConvCache = (accountId: string): Conversation[] => {
+  try {
+    const raw = localStorage.getItem(`${CONVS_LS_PREFIX}${accountId}`)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed?.conversations) ? parsed.conversations : []
+  } catch {
+    return []
+  }
+}
+const writeConvCache = (accountId: string, convs: Conversation[]) => {
+  try {
+    localStorage.setItem(`${CONVS_LS_PREFIX}${accountId}`,
+      JSON.stringify({ savedAt: Date.now(), conversations: convs.slice(0, 50) }))
+  } catch {
+    // 隐私模式 / 存储配额满：忽略即可
+  }
+}
+
 const canRecallMessage = (message: ChatMessage) =>
   message.isSelf &&
   !!message.messageId &&
@@ -265,6 +287,10 @@ export function ChatNew() {
   // 断线兜底对账：记录已响铃的会话最新消息时间（accountId:cid -> 时间戳），
   // 避免实时推送与对账轮询对同一消息重复响铃；首轮仅校准水位不响旧未读。
   const rungConvRef = useRef<Record<string, number>>({})
+  // 闲鱼流控冷却（账号 -> 解禁时间戳）：会话列表接口被流控后，对账轮询、
+  // 读状态刷新都不再去请求该账号，避免把限流窗口一直撞着不恢复。
+  // 后端也有一道同样的冷却，这里是为了不产生无意义的本地请求。
+  const rateLimitUntilRef = useRef<Record<string, number>>({})
   // 响铃去重：同一条物理消息可能被两条通道各推一次（App 通道 messageId 是 32 位
   // hex、网页 IM 是 xxx.PNM，两套体系没法按 ID 对上），只能按「账号+会话+发送者+
   // 内容」比对，15 秒内同样内容只响一次。
@@ -842,6 +868,19 @@ export function ChatNew() {
     const compensating = merge || (append && !!boundary)
     if (compensating) boundary ??= recoveryRef.current.ensureConversations(accountId, existing)
 
+    // 本地缓存兜底：刚打开页面 / 切账号时先显示上次的列表，
+    // 服务端数据到了再整体替换（限流时这就是唯一能看到的数据）
+    if (!append && !compensating && existing.convs.length === 0) {
+      const local = readConvCache(accountId)
+      if (local.length) {
+        convsCacheRef.current[accountId] = { convs: local, hasMore: existing.hasMore, cursor: existing.cursor }
+        if (isActive()) {
+          conversationsRef.current = local
+          setConversations(local)
+        }
+      }
+    }
+
     const fetchPage = async (cursor?: number) => {
       const page = await getConversations(accountId, cursor)
       return { items: page.conversations, hasMore: page.hasMore, nextCursor: page.nextCursor }
@@ -877,6 +916,8 @@ export function ChatNew() {
         setConversations(next.convs)
         setConvHasMore(next.hasMore)
         setConvCursor(next.cursor)
+        // 本地留一份：闲鱼限流 / 刷新页面时先拿它顶上，不至于白屏
+        if (!append) writeConvCache(accountId, next.convs)
       }
       if (!result.complete) {
         addToast({ message: `账号 ${accountId} 会话较多，请点击加载更多继续补齐`, type: 'warning' })
@@ -889,6 +930,18 @@ export function ChatNew() {
         }).catch((error: Error) => addToast({ message: error.message, type: 'error' }))
       }
     }).catch((error: Error) => {
+      // 闲鱼流控：记 5 分钟冷却（对账轮询/读状态刷新都会跳过这个账号），
+      // 手头一个会话都没有时用本地缓存顶上，别让界面空白
+      if (String(error?.message || '').includes('请求过于频繁')) {
+        rateLimitUntilRef.current[accountId] = Date.now() + 300_000
+        if (isActive() && conversationsRef.current.length === 0) {
+          const local = readConvCache(accountId)
+          if (local.length) {
+            conversationsRef.current = local
+            setConversations(local)
+          }
+        }
+      }
       if (isCurrent()) addToast({ message: error.message, type: 'error' })
     }).finally(() => {
       if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
@@ -904,9 +957,12 @@ export function ChatNew() {
   const missingInfoConvs = conversations.filter(
     (c) => {
       if (!c.otherUserId || !c.cid) return false
-      // 昵称有效（非空、非纯数字、非打码）且头像存在时无需查询
-      const hasValidName = !!c.otherUserName && !isPureDigits(c.otherUserName) &&
-        !c.otherUserName.includes('*')
+      // 昵称有效（非空且非纯数字）且头像存在时无需查询。
+      // 注意：这里**不要**把打码名（樱***1）也当成无效——那会让每个会话都去
+      // 触发批量头像查询，一屏十几个会话就是十几个接口请求，很容易把账号
+      // 顶进闲鱼风控（实测会话列表接口会被连带流控）。昵称的完整化改由
+      // 「打开会话时用消息里的完整昵称升级」，不额外发请求。
+      const hasValidName = !!c.otherUserName && !isPureDigits(c.otherUserName)
       if (c.otherUserAvatar && hasValidName) return false
       // 缓存中已有完整信息则跳过
       const cached = userInfoCacheRef.current[c.otherUserId]
@@ -1543,6 +1599,8 @@ export function ChatNew() {
     if (!activeAccountId || !activeCid) return
     let cancelled = false
     const refresh = async () => {
+      // 账号处于流控冷却期：读状态刷新也停掉，别给已经限流的账号再加压
+      if ((rateLimitUntilRef.current[activeAccountId] ?? 0) > Date.now()) return
       try {
         const res = await getMessages(activeAccountId, activeCid, undefined, 20)
         if (cancelled) return
@@ -1567,24 +1625,24 @@ export function ChatNew() {
     }
   }, [activeAccountId, activeCid])
 
-  // 断线兜底对账轮询：每 15 秒对「当前在线」的账号拉一次会话列表。
+  // 断线兜底对账轮询：每 30 秒对「当前在线」的账号拉一次会话列表。
+  // 消息实时性由 App 通道推送保证，这里只是兜底（推送丢了/断线期间漏了），
+  // 间隔从 15 秒放宽到 30 秒——15 秒 × 多账号会把闲鱼的会话列表接口顶进
+  // 流控（400600001），而它一旦被限流要很久才恢复，代价远大于晚 15 秒。
   // 发现某会话有新动静时做两件事：① 把服务端最新会话数据回写列表（摘要+红点
-  // ≤15s 自动出现，不再等手动刷新）；② 若正是当前打开的会话，立即补拉消息进窗口。
+  // ≤30s 自动出现，不再等手动刷新）；② 若正是当前打开的会话，立即补拉消息进窗口。
   // 用服务端未读数(unreadCount)比对，把断线期间漏掉的新消息补响 + 未读角标。
   // 断线期间拉不到（接口要求在线），等账号被自动恢复看门狗拉起来后的下一轮补响——
   // 这就是"断线也响"的兜底：可恢复的掉线最终都会响，只有 Cookie 真失效才不响。
   useEffect(() => {
     let cancelled = false
-    // 闲鱼流控冷却：某账号被限流后 90 秒内不再去撞，否则 15 秒一次的轮询
-    // 会把流控一直撞着不恢复（实测「请求过于频繁」就是这么拖长的）
-    const rateLimitUntilRef: Record<string, number> = {}
     const tick = async () => {
       if (cancelled) return
       const now = Date.now()
       const connectedIds = accountsRef.current.filter((a) => a.connected).map((a) => a.account_id)
       let fetchedAny = false
       for (const accountId of connectedIds) {
-        if ((rateLimitUntilRef[accountId] ?? 0) > now) continue
+        if ((rateLimitUntilRef.current[accountId] ?? 0) > now) continue
         try {
           const { conversations } = await getConversations(accountId)
           if (cancelled) return
@@ -1603,9 +1661,9 @@ export function ChatNew() {
             ringMissedIfAny(accountId, conv.cid, conv.lastMessageTime, conv.unreadCount)
           }
         } catch (e) {
-          // 闲鱼流控：该账号冷却 90 秒再试，别每 15 秒撞一次把流控拖着不恢复
+          // 闲鱼流控：该账号冷却 5 分钟（与后端一致），期间不再请求
           if (String((e as Error)?.message || '').includes('请求过于频繁')) {
-            rateLimitUntilRef[accountId] = Date.now() + 90_000
+            rateLimitUntilRef.current[accountId] = Date.now() + 300_000
           }
           // 其余失败静默，等下一轮
         }
@@ -1615,7 +1673,7 @@ export function ChatNew() {
       // 连接的账号也能在后续轮次补响（覆盖用户所述"断开期间有人发消息"的场景）。
       if (fetchedAny) baselineDoneRef.current = true
     }
-    const timer = window.setInterval(tick, 15000)
+    const timer = window.setInterval(tick, 30000)
     void tick()
     return () => {
       cancelled = true
