@@ -438,6 +438,25 @@ export const getCustomerOrders = async (
   return res.data || []
 }
 
+/** 会话列表的订单标记：该买家进行中订单数 + 最新一单状态（已取消/关闭/退款不计入） */
+export interface CustomerOrderMark {
+  count: number
+  status: string
+}
+
+export const getCustomerOrderMarks = async (
+  accountId: string,
+  buyerIds: string[],
+): Promise<Record<string, CustomerOrderMark>> => {
+  if (!buyerIds.length) return {}
+  const params = new URLSearchParams({ buyer_ids: buyerIds.slice(0, 200).join(',') })
+  const res = await get<{ success: boolean; message?: string; data: Record<string, CustomerOrderMark> }>(
+    `${PREFIX}/customer-order-marks/${accountId}?${params.toString()}`,
+  )
+  if (!res.success) throw new Error(res.message || '获取订单标记失败')
+  return res.data || {}
+}
+
 export const getQuickPhrases = async (): Promise<QuickPhrase[]> => {
   const res = await get<{ success: boolean; data: QuickPhrase[] }>(`${PREFIX}/quick-phrases`)
   return res.data || []

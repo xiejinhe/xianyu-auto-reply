@@ -4,7 +4,7 @@
  * 三栏布局：左侧账号列表 | 中间会话列表 | 右侧聊天记录
  * 支持多账号切换，基于WebSocket API获取数据
  */
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
@@ -20,6 +20,7 @@ import {
   queryUserInfos,
   getAccountProfile,
   getCustomerOrders,
+  getCustomerOrderMarks,
   getQuickPhrases,
   createQuickPhrase,
   updateQuickPhrase,
@@ -38,10 +39,12 @@ import {
   type ChatItemInfo,
   type ChatMessage,
   type CustomerOrder,
+  type CustomerOrderMark,
   type QuickPhrase,
   type XianyuUserProfile,
 } from '@/api/chatNew'
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
+import { getOrderStatusMeta } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
 
 /** cid 统一比较：推送与会话列表两条来源的 cid 偶有 @goofish 后缀差异，去掉再比。
@@ -81,6 +84,35 @@ const saveReadMarks = (marks: Record<string, number>) => {
   } catch {
     // 存不了（隐私模式等）就算了，水位退化为仅本次页面会话有效
   }
+}
+
+// ==================== 桌面端面板拖拽调宽 ====================
+/** 三栏可拖拽宽度（px）：账号列表 / 会话列表 / 右侧工作区，localStorage 持久化 */
+const PANEL_WIDTHS_KEY = 'chat_new_panel_widths'
+const PANEL_DEFAULTS = { accounts: 224, convs: 288, tools: 320 }
+type PanelKey = keyof typeof PANEL_DEFAULTS
+/** 拖拽方向：右侧工作区在最右边，往左拖才是变宽 */
+const PANEL_DRAG_DIR: Record<PanelKey, 1 | -1> = { accounts: 1, convs: 1, tools: -1 }
+const PANEL_LIMITS: Record<PanelKey, [number, number]> = {
+  accounts: [180, 400],
+  convs: [220, 520],
+  tools: [240, 560],
+}
+
+const loadPanelWidths = (): typeof PANEL_DEFAULTS => {
+  const merged = { ...PANEL_DEFAULTS }
+  try {
+    const raw = localStorage.getItem(PANEL_WIDTHS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      for (const k of Object.keys(PANEL_DEFAULTS) as PanelKey[]) {
+        const v = Number(parsed[k])
+        const [min, max] = PANEL_LIMITS[k]
+        if (Number.isFinite(v) && v >= min && v <= max) merged[k] = v
+      }
+    }
+  } catch { /* 坏数据就用默认值 */ }
+  return merged
 }
 
 /** 会话列表的最后一条摘要：发送者前缀按人着色，
@@ -256,6 +288,8 @@ export function ChatNew() {
 
   // 当前客户订单与快捷短语
   const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([])
+  /** 会话列表的订单标记：buyerId -> { count, status }，只算进行中的订单 */
+  const [orderMarks, setOrderMarks] = useState<Record<string, CustomerOrderMark>>({})
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [deliveringOrderNo, setDeliveringOrderNo] = useState('')
   const [confirmingOrderNo, setConfirmingOrderNo] = useState('')
@@ -854,6 +888,21 @@ export function ChatNew() {
   }
 
   // ==================== 加载会话列表 ====================
+  /** 批量拉会话列表的订单标记：只查本地库（xy_orders），不碰闲鱼接口、无风控风险。
+   *  角标是辅助信息，失败一律静默。 */
+  const loadOrderMarks = useCallback(async (accountId: string) => {
+    const convs = convsCacheRef.current[accountId]?.convs ?? []
+    const ids = Array.from(new Set(convs.map((c) => c.otherUserId).filter(Boolean)))
+    if (!ids.length) {
+      setOrderMarks({})
+      return
+    }
+    try {
+      const marks = await getCustomerOrderMarks(accountId, ids)
+      if (accountId === activeAccountIdRef.current) setOrderMarks(marks)
+    } catch { /* 静默：角标拉不到就先不显示 */ }
+  }, [])
+
   const loadConversations = useCallback(async (accountId: string, append = false, merge = false) => {
     if (!accountId) return
     const requestId = (convRequestIdRef.current[accountId] ?? 0) + 1
@@ -918,6 +967,8 @@ export function ChatNew() {
         setConvCursor(next.cursor)
         // 本地留一份：闲鱼限流 / 刷新页面时先拿它顶上，不至于白屏
         if (!append) writeConvCache(accountId, next.convs)
+        // 会话列表的「有订单」角标：随列表一起刷新（本地库查询，开销极小）
+        void loadOrderMarks(accountId)
       }
       if (!result.complete) {
         addToast({ message: `账号 ${accountId} 会话较多，请点击加载更多继续补齐`, type: 'warning' })
@@ -946,7 +997,7 @@ export function ChatNew() {
     }).finally(() => {
       if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
     })
-  }, [addToast, applyReadMarks])
+  }, [addToast, applyReadMarks, loadOrderMarks])
 
   // 用 ref 保持 accounts 最新引用，避免 effect 闭包取到旧值
   const accountsRef = useRef(accounts)
@@ -1194,8 +1245,13 @@ export function ChatNew() {
     setConversations(cached?.convs ?? [])
     setConvHasMore(cached?.hasMore ?? false)
     setConvCursor(cached?.cursor ?? null)
+    // 换账号先清掉上一个账号的订单标记，防止串号残留
+    setOrderMarks({})
     if (!cached || recoveryRef.current.conversations.has(accountId)) {
       void loadConversations(accountId, false, !!cached)
+    } else {
+      // 命中缓存不重拉列表时也要刷订单标记，否则角标停留在上一次的状态
+      void loadOrderMarks(accountId)
     }
     const cid = activeConvPerAccountRef.current[accountId] || ''
     selectCid(cid)
@@ -1434,6 +1490,8 @@ export function ChatNew() {
       const res = await manualDelivery(orderNo)
       addToast({ message: res.message || (res.success ? '发货成功' : '发货失败'), type: res.success ? 'success' : 'error' })
       await loadCustomerOrders()
+      // 订单状态变了，会话列表角标跟着刷一次
+      if (activeAccountId) void loadOrderMarks(activeAccountId)
     } catch (e: any) {
       addToast({ message: e.message || '发货失败', type: 'error' })
     } finally {
@@ -1450,6 +1508,7 @@ export function ChatNew() {
       const res = await noLogisticsDelivery(orderNo)
       addToast({ message: res.message || (res.success ? '无物流发货成功' : '无物流发货失败'), type: res.success ? 'success' : 'error' })
       await loadCustomerOrders(true)
+      if (activeAccountId) void loadOrderMarks(activeAccountId)
     } catch (e: any) {
       addToast({ message: e.message || '无物流发货失败', type: 'error' })
     } finally {
@@ -1464,6 +1523,8 @@ export function ChatNew() {
       const res = await cancelOrder(orderNo)
       addToast({ message: res.message || (res.success ? '订单已取消' : '取消订单失败'), type: res.success ? 'success' : 'error' })
       await loadCustomerOrders(true)
+      // 取消后该买家可能没有进行中订单了，角标同步刷掉
+      if (activeAccountId) void loadOrderMarks(activeAccountId)
     } catch (e: any) {
       addToast({ message: e.message || '取消订单失败', type: 'error' })
     } finally {
@@ -2159,6 +2220,55 @@ export function ChatNew() {
       d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
 
+  // ==================== 面板拖拽调宽 ====================
+  const [panelWidths, setPanelWidths] = useState(loadPanelWidths)
+  const [draggingPanel, setDraggingPanel] = useState(false)
+  const dragStateRef = useRef<{ key: PanelKey; startX: number; startWidth: number } | null>(null)
+
+  const startPanelDrag = (key: PanelKey) => (e: ReactPointerEvent) => {
+    e.preventDefault()
+    dragStateRef.current = { key, startX: e.clientX, startWidth: panelWidths[key] }
+    setDraggingPanel(true)
+  }
+
+  useEffect(() => {
+    if (!draggingPanel) return
+    const onMove = (e: PointerEvent) => {
+      const st = dragStateRef.current
+      if (!st) return
+      const [min, max] = PANEL_LIMITS[st.key]
+      const w = Math.min(max, Math.max(min, st.startWidth + PANEL_DRAG_DIR[st.key] * (e.clientX - st.startX)))
+      setPanelWidths(prev => (prev[st.key] === w ? prev : { ...prev, [st.key]: w }))
+    }
+    const onUp = () => {
+      dragStateRef.current = null
+      setDraggingPanel(false)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [draggingPanel])
+
+  // 拖拽结束（以及首次进入）时把宽度落盘
+  useEffect(() => {
+    if (draggingPanel) return
+    try { localStorage.setItem(PANEL_WIDTHS_KEY, JSON.stringify(panelWidths)) } catch { /* ignore */ }
+  }, [panelWidths, draggingPanel])
+
+  /** 栏间拖拽手柄：桌面端才有（手机端是 Tab 切换布局） */
+  const panelResizer = (key: PanelKey) => (
+    <div
+      onPointerDown={startPanelDrag(key)}
+      className={`hidden md:block w-1.5 flex-shrink-0 self-stretch cursor-col-resize rounded-full transition-colors ${
+        draggingPanel ? 'bg-blue-400/60' : 'bg-transparent hover:bg-blue-300/50 dark:hover:bg-blue-500/40'
+      }`}
+      title="拖拽调整宽度"
+    />
+  )
+
   // ==================== 渲染 ====================
   // 手机端各 Tab 对应未读 / 状态提示
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
@@ -2198,9 +2308,16 @@ export function ChatNew() {
         })}
       </div>
 
-      <div className="flex flex-1 min-h-0 flex-col md:flex-row gap-3">
+      <div
+        className={`flex flex-1 min-h-0 flex-col md:flex-row gap-3 ${draggingPanel ? 'select-none' : ''}`}
+        style={{
+          '--w-accounts': `${panelWidths.accounts}px`,
+          '--w-convs': `${panelWidths.convs}px`,
+          '--w-tools': `${panelWidths.tools}px`,
+        } as CSSProperties}
+      >
       {/* 左侧：账号列表 */}
-      <div className={`${mobileTab === 'accounts' ? 'flex' : 'hidden'} md:flex w-full md:w-56 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
+      <div className={`${mobileTab === 'accounts' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-accounts)] flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <span className="font-medium text-sm text-gray-700 dark:text-gray-300">账号列表</span>
           <button
@@ -2316,8 +2433,9 @@ export function ChatNew() {
         </div>
       </div>
 
+      {panelResizer('accounts')}
       {/* 中间：会话列表 */}
-      <div className={`${mobileTab === 'convs' ? 'flex' : 'hidden'} md:flex w-full md:w-72 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
+      <div className={`${mobileTab === 'convs' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-convs)] flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
           <div className="flex items-center justify-between">
             <span className="font-medium text-sm text-gray-700 dark:text-gray-300">会话列表</span>
@@ -2426,6 +2544,20 @@ export function ChatNew() {
                         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
                           {conv.otherUserName || conv.otherUserId || '未知用户'}
                         </span>
+                        {/* 有进行中订单的买家：昵称后挂状态胶囊，配色与右侧订单面板一致 */}
+                        {(() => {
+                          const mark = conv.otherUserId ? orderMarks[conv.otherUserId] : undefined
+                          if (!mark) return null
+                          const meta = getOrderStatusMeta(mark.status)
+                          return (
+                            <span
+                              className={`flex-shrink-0 ml-1.5 text-[11px] leading-none px-1.5 py-0.5 rounded ${meta.className}`}
+                              title={`与该买家有 ${mark.count} 笔进行中的订单`}
+                            >
+                              {meta.label}{mark.count > 1 ? ` ×${mark.count}` : ''}
+                            </span>
+                          )
+                        })()}
                         <span className="text-xs text-gray-400 flex-shrink-0 ml-2">
                           {formatTime(conv.lastMessageTime)}
                         </span>
@@ -2465,6 +2597,7 @@ export function ChatNew() {
       </div>
 
       {/* 右侧：聊天记录 */}
+      {panelResizer('convs')}
       <div className={`${mobileTab === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col`}>
         {/* 聊天头部 */}
         <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
@@ -2979,8 +3112,9 @@ export function ChatNew() {
         )}
       </div>
       {/* 图片预览弹窗 */}
+      {panelResizer('tools')}
       {/* 右侧工作区：客户订单 + 快捷短语 */}
-      <div className={`${mobileTab === 'tools' ? 'flex' : 'hidden'} md:flex w-full md:w-80 flex-shrink-0 min-h-0 flex-col gap-3 overflow-y-auto md:overflow-visible`}>
+      <div className={`${mobileTab === 'tools' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-tools)] flex-shrink-0 min-h-0 flex-col gap-3 overflow-y-auto md:overflow-visible`}>
         <CustomerOrdersPanel
           activeCid={activeCid}
           orders={customerOrders}
