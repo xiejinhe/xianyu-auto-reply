@@ -23,7 +23,13 @@ from app.services.xianyu.delivery_utils import (
     replace_order_context_variables as _replace_order_context_variables,
     recursive_replace_params
 )
-from app.services.xianyu.yifan_api_handler import YifanApiHandler
+try:
+    from app.services.xianyu.yifan_api_handler import YifanApiHandler
+except ModuleNotFoundError:  # pragma: no cover
+    # 该第三方卡密模块已在「与上游作者服务器彻底断链」提交中删除（硬编码第三方
+    # 卡密平台域名）。这里做导入降级：否则整个账号任务会因 ImportError 启动即退出，
+    # 连带自动回复、App 通道长连接全部不可用。
+    YifanApiHandler = None
 from common.db.compat import db_manager
 from common.services.order_service import OrderDetailService
 from common.utils.fish_nick_utils import get_buyer_fish_nick
@@ -52,8 +58,9 @@ class AutoDeliveryHandler:
             parent: XianyuLive实例，用于访问共享资源
         """
         self.parent = parent
-        # 初始化亦凡API处理器
-        self._yifan_api_handler = YifanApiHandler(self)
+        # 亦凡API处理器：对应模块已在「断链」提交中移除，为 None 时相关卡券规则
+        # 会走明确失败分支（不发货、记录原因），不影响其它卡券类型与自动回复。
+        self._yifan_api_handler = YifanApiHandler(self) if YifanApiHandler else None
         # 最近一次发货失败原因（用于记录到数据库）
         self._last_delivery_fail_reason = None
         # 最近一次获取的买家闲鱼明文昵称（pre_check 阶段获取，供写库及备注/API 变量复用）
@@ -3198,14 +3205,23 @@ class AutoDeliveryHandler:
 
     async def _get_yifan_api_card_content(self, rule, order_id=None, item_id=None, buyer_id=None, chat_id=None):
         """调用亦凡卡劵API获取内容 - 委托给YifanApiHandler处理"""
+        if self._yifan_api_handler is None:
+            logger.warning("亦凡API卡券模块已随「断链」移除，该规则无法发货（请改用固定文字/批量数据/API卡券）")
+            return None
         return await self._yifan_api_handler.get_yifan_api_card_content(rule, order_id, item_id, buyer_id, chat_id)
 
     async def _call_yifan_api_with_account(self, rule, account, order_id=None, item_id=None, buyer_id=None, chat_id=None):
         """使用确认的账号调用亦凡API - 委托给YifanApiHandler处理"""
+        if self._yifan_api_handler is None:
+            logger.warning("亦凡API卡券模块已随「断链」移除，跳过该调用")
+            return None
         return await self._yifan_api_handler.call_yifan_api_with_account(rule, account, order_id, item_id, buyer_id, chat_id)
 
     async def _ask_for_recharge_account(self, chat_id, buyer_id, rule, order_id=None, item_id=None):
         """询问客户充值账号并设置等待状态 - 委托给YifanApiHandler处理"""
+        if self._yifan_api_handler is None:
+            logger.warning("亦凡API卡券模块已随「断链」移除，跳过充值账号询问")
+            return None
         return await self._yifan_api_handler.ask_for_recharge_account(chat_id, buyer_id, rule, order_id, item_id)
 
     # ==================== API参数替换 ====================
