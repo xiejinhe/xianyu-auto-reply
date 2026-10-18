@@ -1018,7 +1018,16 @@ export function ChatNew() {
           }
         }
       }
-      if (isCurrent()) addToast({ message: error.message, type: 'error' })
+      // 已经有列表可显示（本账号内存缓存，或当前账号屏幕上的数据）时不再弹红色
+      // 错误：用户视角没有任何异常，只是这份数据稍旧，后端稍后会自动补拉；
+      // 真的一屏空白才提示。避免限流期间反复弹红错吓人——后端 Redis 兜底缓存
+      // 也可能刚好过期（TTL 只对新写入生效），那时前端本地缓存是唯一可见数据。
+      const hasDataToShow =
+        (convsCacheRef.current[accountId]?.convs?.length ?? 0) > 0 ||
+        (isActive() && conversationsRef.current.length > 0)
+      if (isCurrent() && !hasDataToShow) {
+        addToast({ message: error.message, type: 'error' })
+      }
     }).finally(() => {
       if (!append) {
         const left = (convInflightRef.current.get(accountId) ?? 1) - 1
