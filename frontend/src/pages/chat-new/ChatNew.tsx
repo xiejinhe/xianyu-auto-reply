@@ -729,7 +729,8 @@ export function ChatNew() {
     const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
     const summary = `${msg.isSelf ? '你' : '他'}：${body}`
     const isActiveAccount = accountId === activeAccountIdRef.current
-    // 新私聊提示音：只响买家发来的消息，自己发出去的不响
+    // 新私聊提示音：只响买家发来的消息，自己发出去的不响。
+    // 不限账号：两个账号都托管在同一个界面里，任何一个账号的买家消息漏响不得。
     if (!msg.isSelf) {
       ringOnce(accountId, cid, msg)
       // 同步响铃水位，避免断线兜底对账轮询对同一消息重复响
@@ -740,10 +741,14 @@ export function ChatNew() {
       setAccountUnread((prev) => ({ ...prev, [accountId]: (prev[accountId] || 0) + 1 }))
     }
 
-    // cid 归一化后比较：正打开的会话来了消息 = 已读，记水位防止服务端旧未读复活
-    const isViewingConv = isActiveAccount && normCid(cid) === normCid(activeCidRef.current)
+    // 闲鱼的会话 cid 可能跨账号共享（同一买家与多个卖家账号共用同一个 cid，
+    // 实测两个账号请求同一 cid 的消息都返回 200）：「是不是正在看的会话」
+    // 因此只按 cid 判断、不看消息所属账号。此前要求 accountId 等于当前账号，
+    // 导致手机 APP 登录另一个账号发的消息界面完全静默（isSelf 连角标都不加），
+    // 用户只能手动刷新会话列表才看到（2026-10-19 实测复现）。
+    const isViewingConv = normCid(cid) === normCid(activeCidRef.current)
     if (isViewingConv) {
-      markConvReadByKey(accountId, cid, msg.time)
+      markConvReadByKey(activeAccountIdRef.current, cid, msg.time)
       // 消息已经到达，输入提示立即撤掉（等下一个 0 帧太慢）；
       // 顺带清掉待执行的宽限计时器，否则它会把之后新一轮的「正在输入」也关掉
       if (typingTimerRef.current) {
@@ -752,29 +757,41 @@ export function ChatNew() {
       }
       setTypingConv(null)
     }
+    // 消息所属账号自己的会话缓存照常更新（切到该账号时摘要是新的）；
+    // 屏幕账号不是它时不算"正在看"，未读照常 +1
     const conversationCache = convsCacheRef.current[accountId]
     if (conversationCache) {
-      conversationCache.convs = updateConvList(conversationCache.convs, cid, summary, msg, isViewingConv)
+      conversationCache.convs = updateConvList(conversationCache.convs, cid, summary, msg, isViewingConv && isActiveAccount)
     }
-    let messageCache = msgsCacheRef.current[accountId]?.[cid]
-    if (!messageCache && isViewingConv) {
-      msgsCacheRef.current[accountId] ??= {}
-      messageCache = { msgs: messagesRef.current,
-        hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current }
-      msgsCacheRef.current[accountId][cid] = messageCache
-    }
-    // 当前账号的非当前会话也更新缓存；补偿边界保存在独立对象中。
-    if (messageCache) messageCache.msgs = appendMsg(messageCache.msgs, msg)
-    if (isActiveAccount) {
-      const nextConversations = conversationCache?.convs ??
-        updateConvList(conversationsRef.current, cid, summary, msg, isViewingConv)
+    if (isViewingConv) {
+      // 正在看的会话：无论这条推送属于哪个账号，都投影到当前窗口。
+      // 屏幕上下文是当前活跃账号的——消息缓存、消息列表、会话列表摘要
+      // 全部按活跃账号写，订单角标也一起刷。
+      const screenAccount = activeAccountIdRef.current
+      msgsCacheRef.current[screenAccount] ??= {}
+      let messageCache = msgsCacheRef.current[screenAccount][cid]
+      if (!messageCache) {
+        messageCache = { msgs: messagesRef.current,
+          hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current }
+        msgsCacheRef.current[screenAccount][cid] = messageCache
+      }
+      messageCache.msgs = appendMsg(messageCache.msgs, msg)
+      const screenCache = convsCacheRef.current[screenAccount]
+      const nextConversations = screenCache?.convs
+        ? updateConvList(screenCache.convs, cid, summary, msg, true)
+        : updateConvList(conversationsRef.current, cid, summary, msg, true)
+      if (screenCache) screenCache.convs = nextConversations
       conversationsRef.current = nextConversations
       setConversations(nextConversations)
-      if (isViewingConv && messageCache) {
-        messagesRef.current = messageCache.msgs
-        setMessages(messageCache.msgs)
-        window.setTimeout(() => reloadOrdersRef.current(), 900)
-      }
+      messagesRef.current = messageCache.msgs
+      setMessages(messageCache.msgs)
+      window.setTimeout(() => reloadOrdersRef.current(), 900)
+    } else if (isActiveAccount) {
+      // 当前账号的非当前会话：只更新屏幕上的列表摘要
+      const nextConversations = conversationCache?.convs ??
+        updateConvList(conversationsRef.current, cid, summary, msg, false)
+      conversationsRef.current = nextConversations
+      setConversations(nextConversations)
     }
   }, [markConvReadByKey])
 

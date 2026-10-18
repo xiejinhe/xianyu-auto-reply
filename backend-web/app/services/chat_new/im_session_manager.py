@@ -95,12 +95,23 @@ class ImSessionManager:
                 cookies_str,
                 account_row_id=account_row_id,
             )
+            # 先把 client 放进 clients（此时 is_connected=False）再连接：
+            # connect() 要花数秒，期间前端 WS 连上来时 clients.get() 能拿到
+            # 对象，走「已掉线仍允许订阅」路径保活；connect() 完成后的
+            # _setup_push_callback_after_connect 会发现前端已在等，补挂回调。
+            # 若等连接成功后再放，竞态窗口内前端 WS 被以 4404 拒绝，而补挂
+            # 回调又要求 _ws_clients 里已有该账号——两边都够不着，该账号的
+            # 推送回调永远挂不上，消息到了后端也送不到前端（2026-10-19 实测：
+            # 重启后端后账号①的 IM 恢复比前端 WS 重连慢一步，订阅被拒后
+            # 直到下次前端重连才恢复，期间完全静默）。
+            # 本方法全程持 self._lock，并发调用会排队，不会有两个连接互相打架。
+            self.clients[account_id] = client
             success = await client.connect()
             if not success:
+                # 连接失败：摘掉死对象，别让它挡住后续 get_or_connect 的重建
+                self.clients.pop(account_id, None)
                 raise Exception(f"IM连接失败: {account_id}")
 
-            self.clients[account_id] = client
-            # 连接成功后，如果有前端WS客户端在等待，挂载推送回调
             await self._setup_push_callback_after_connect(account_id, client)
             return client
 
@@ -230,6 +241,13 @@ class ImSessionManager:
             """将解析后的推送消息转发给所有前端 WebSocket 客户端"""
             ws_set = self._ws_clients.get(account_id)
             if not ws_set:
+                # 没有前端订阅这个账号的 WS：推送确实到过后端，但无人可投。
+                # 这条日志是「用户说没收到消息」时区分「后端没收到」与
+                # 「后端收到了没投出去」的关键证据，必须留痕。
+                logger.info(
+                    f"【{account_id}】推送到达但无前端WS订阅，未投递 "
+                    f"(event={parsed_msg.get('event')}, cid={parsed_msg.get('cid', '')})"
+                )
                 return
             # 已被系统内互发补偿投递过的消息，真实推送不再重复下发（反之亦然）
             if parsed_msg.get("event") == "new_message":
@@ -243,10 +261,12 @@ class ImSessionManager:
                     return
                 self._mark_delivered(account_id, cid, message)
             payload = json.dumps(parsed_msg, ensure_ascii=False)
+            sent = 0
             dead: List[WebSocket] = []
             for ws in ws_set:
                 try:
                     await ws.send_text(payload)
+                    sent += 1
                 except Exception:
                     dead.append(ws)
             # 清理已断开的连接
@@ -254,6 +274,20 @@ class ImSessionManager:
                 ws_set.discard(ws)
             if not ws_set and account_id in self._ws_clients:
                 del self._ws_clients[account_id]
+            # 投递结果留痕：与 App 通道的「已转发前端」日志对齐，
+            # 排查「消息收了但界面没反应」时四站（IM收到→回调→转发→前端
+            # 订阅）每站都有据可查
+            if dead:
+                logger.warning(
+                    f"【{account_id}】前端WS发送失败 {len(dead)} 条，已清理；"
+                    f"成功投递 {sent} 条 (cid={parsed_msg.get('cid', '')})"
+                )
+            elif sent:
+                logger.info(
+                    f"【{account_id}】推送已转发前端 "
+                    f"(event={parsed_msg.get('event')}, cid={parsed_msg.get('cid', '')}, "
+                    f"id={(parsed_msg.get('message') or {}).get('messageId', '')})"
+                )
 
         async def _broadcast_reconnected(aid: str):
             """IM 断线重连后广播给前端（断线期间的消息不会补推，需前端自行补拉）"""

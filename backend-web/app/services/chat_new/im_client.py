@@ -1434,6 +1434,15 @@ class GoofishImClient:
                             f"{json.dumps(decrypted, ensure_ascii=False)[:PUSH_DEBUG_MAX_CHARS]}"
                         )
                     continue
+                if not self._push_callbacks:
+                    # 推送解析成功但没有任何转发回调（前端WS从未连接过，
+                    # 或挂载回调的 client 已被重建）。静默丢弃会让
+                    # 「消息收了但界面没反应」完全无从排查，必须留痕。
+                    logger.info(
+                        f"【{self.account_id}】推送解析成功但无转发回调，未投递 "
+                        f"(cid={parsed.get('cid', '')})"
+                    )
+                    continue
                 for cb in self._push_callbacks:
                     try:
                         await cb(parsed)
