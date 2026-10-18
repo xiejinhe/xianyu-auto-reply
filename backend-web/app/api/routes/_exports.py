@@ -85,6 +85,7 @@ from . import (
     user_login_logs,
     users,
     version,
+    internal_chat_push,
 )
 
 # 创建API路由器
@@ -210,6 +211,8 @@ api_router.include_router(chat_quick_phrase.router, tags=["在线聊天(新)快�
 api_router.include_router(chat_customer_order.router, tags=["在线聊天(新)客户订单"])  # 已定义prefix="/chat-new"
 # 版本检测（公开接口，无需登录即可查询版本信息）
 api_router.include_router(version.router, tags=["版本检测"])  # 已定义prefix="/version"
+# 服务间内部接口（X-Internal-Token 鉴权，供 websocket / scheduler 回调）
+api_router.include_router(internal_chat_push.router, tags=["内部接口"])  # 已定义prefix="/internal"
 
 
 __all__ = ["api_router"]

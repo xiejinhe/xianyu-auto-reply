@@ -16,6 +16,7 @@ from loguru import logger
 from .utils import safe_str
 from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
+from app.services.backend_push_forwarder import schedule_chat_push
 
 
 class MessageHandler:
@@ -661,7 +662,11 @@ class MessageHandler:
                 if parsed:
                     # 打印解密后的消息（参照旧框架）
                     self._log_chat_message(parsed)
-                    
+
+                    # 转发给 backend-web：网页端会话列表/红点/窗口秒级更新。
+                    # 纯被动转发，失败不影响自动回复（见 backend_push_forwarder）。
+                    self._forward_to_backend(parsed, message_id)
+
                     send_message = parsed.get("send_message", "")
                     
                     # 参照旧框架：检查是否为卡片消息（reminderContent为[卡片消息]）
@@ -735,7 +740,64 @@ class MessageHandler:
                 logger.warning(f"[{msg_time}] 【收到】用户: {send_user_name}, 商品({item_id}): {send_message}")
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】打印消息日志失败: {safe_str(e)}")
-    
+
+    def _forward_to_backend(self, parsed: Dict[str, Any], message_id: Optional[str]) -> None:
+        """
+        把解析好的聊天消息转发给 backend-web（网页端秒级展示）
+
+        网页 IM 会话收 APP 来源消息的推送不稳定，而本服务 App 通道能收到全部帧，
+        所以在这里补一条转发。只处理真实聊天内容：卡片消息、系统提示、
+        空内容一律跳过，避免把占位文案当成聊天消息推到前端。
+
+        Args:
+            parsed: parse_chat_message 的返回值
+            message_id: 已提取的消息ID（用于前端去重）
+        """
+        try:
+            content = str(parsed.get("send_message") or "").strip()
+            if not content or content == "[卡片消息]":
+                return
+            chat_id = str(parsed.get("chat_id") or "").strip()
+            if not chat_id:
+                return
+
+            # 时间取原始报文里的毫秒时间戳（parsed["msg_time"] 是格式化字符串）
+            raw = parsed.get("raw_message") or {}
+            raw_body = raw.get("1") if isinstance(raw, dict) else None
+            time_ms = 0
+            if isinstance(raw_body, dict):
+                try:
+                    time_ms = int(raw_body.get("5") or 0)
+                except (TypeError, ValueError):
+                    time_ms = 0
+            if not time_ms:
+                time_ms = int(time.time() * 1000)
+
+            # 图片消息：解析阶段已把图片链接写进 send_message（多张以换行拼接），
+            # is_plain_text=False 且每行都是 http 链接时按图片类型转发
+            lines = [line.strip() for line in content.split("\n") if line.strip()]
+            is_image = (
+                bool(lines)
+                and not parsed.get("is_plain_text", True)
+                and all(line.startswith("http") for line in lines)
+            )
+
+            sender_id = str(parsed.get("send_user_id") or "")
+            schedule_chat_push(
+                account_id=self.cookie_id,
+                cid=chat_id,
+                message_id=message_id or "",
+                sender_id=sender_id,
+                sender_name=str(parsed.get("send_user_name") or ""),
+                is_self=bool(self.myid and sender_id == str(self.myid)),
+                msg_type="image" if is_image else "text",
+                text="" if is_image else content,
+                images=lines if is_image else [],
+                time_ms=time_ms,
+            )
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】转发消息到 backend-web 失败: {safe_str(e)}")
+
     async def schedule_debounced_reply(
         self,
         chat_id: str,

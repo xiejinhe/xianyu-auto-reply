@@ -437,6 +437,43 @@ class ImSessionManager:
         )
         return True
 
+    async def broadcast_app_channel_message(
+        self, account_id: str, cid: str, message: Dict[str, Any]
+    ) -> bool:
+        """
+        广播一条来自 App 通道（websocket 服务）的消息给前端
+
+        与网页 IM 推送、系统内互发补偿共用同一套去重（messageId 优先，
+        退化为内容+时间窗比对），所以三条来源同时到达也只投递一次。
+
+        Args:
+            account_id: 接收方账号ID
+            cid: 会话ID
+            message: 已按前端 ChatMessage 结构组装好的消息
+
+        Returns:
+            是否真正投递（无需投递或无前端订阅时为 False）
+        """
+        if not self._ws_clients.get(account_id):
+            return False
+        if self._is_duplicate_delivery(account_id, cid, message):
+            logger.debug(
+                f"【{account_id}】App通道推送与已投递消息重复，跳过 "
+                f"(cid={cid}, id={message.get('messageId', '')})"
+            )
+            return False
+        self._mark_delivered(account_id, cid, message)
+        await self._broadcast_event(account_id, {
+            "event": "new_message",
+            "cid": cid,
+            "message": message,
+        })
+        logger.info(
+            f"【{account_id}】App通道推送已转发前端 "
+            f"(cid={cid}, type={message.get('type')}, id={message.get('messageId', '')})"
+        )
+        return True
+
     async def _setup_push_callback_after_connect(
         self, account_id: str, client: GoofishImClient
     ):
