@@ -2538,9 +2538,9 @@ export function ChatNew() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      {/* pr-8：给右上角绝对定位的删除按钮留出宽度，
-                          否则时间戳会钻到按钮底下，悬停时出现重影 */}
-                      <div className="flex items-center justify-between pr-8">
+                      {/* 时间戳贴右对齐：桌面端不留 pr-8，悬停出删除按钮时把时间淡出让位；
+                          手机端删除按钮常显，保留 pr-8 防重叠 */}
+                      <div className="flex items-center justify-between pr-8 md:pr-0">
                         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
                           {conv.otherUserName || conv.otherUserId || '未知用户'}
                         </span>
@@ -2558,7 +2558,7 @@ export function ChatNew() {
                             </span>
                           )
                         })()}
-                        <span className="text-xs text-gray-400 flex-shrink-0 ml-2">
+                        <span className="text-xs text-gray-400 flex-shrink-0 ml-auto md:transition-opacity md:group-hover:opacity-0">
                           {formatTime(conv.lastMessageTime)}
                         </span>
                       </div>
