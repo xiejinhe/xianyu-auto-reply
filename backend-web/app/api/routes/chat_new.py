@@ -72,6 +72,12 @@ HIDDEN_CONVS_MAX = 300
 CONVS_LASTGOOD_PREFIX = "chat:convs_lastgood:"
 CONVS_LASTGOOD_TTL = 600
 
+# 进程内流控冷却：账号被闲鱼限流后 90 秒内的请求不再转发给闲鱼，
+# 直接回兜底缓存。前端冷却只对刷新后的新页面有效，旧页面的 15 秒轮询
+# 拦不住，必须在后端把闲鱼 shield 住，限流窗口才能自愈。
+CONVS_COOLDOWN_S = 90
+_convs_rate_limit_until: dict = {}
+
 
 def _is_valid_nick(name: str) -> bool:
     """
@@ -440,6 +446,23 @@ async def _filter_hidden_conversations(
     return kept
 
 
+async def _convs_lastgood_response(account_id: str) -> ApiResponse | None:
+    """读取流控兜底缓存，命中则返回带 rateLimited 标记的成功响应"""
+    try:
+        redis_client = await get_redis_client()
+        raw = await redis_client.get(f"{CONVS_LASTGOOD_PREFIX}{account_id}")
+        if raw:
+            cached = json.loads(raw)
+            logger.info(
+                f"【{account_id}】会话列表被闲鱼限流，回退最近一次缓存"
+                f"（{len(cached.get('conversations', []))} 条）"
+            )
+            return ApiResponse(success=True, data={**cached, "rateLimited": True})
+    except Exception as e:
+        logger.warning(f"【{account_id}】读取会话列表兜底缓存失败: {e}")
+    return None
+
+
 @router.get("/conversations/{account_id}")
 async def get_conversations(
     account_id: str,
@@ -461,6 +484,13 @@ async def get_conversations(
         if not client or not client.is_connected:
             return ApiResponse(success=False, message="账号未连接，请先连接")
 
+        # 冷却期内不再向闲鱼发请求（仅首页），直接回兜底缓存
+        if cursor is None and time.time() < _convs_rate_limit_until.get(account_id, 0):
+            fallback = await _convs_lastgood_response(account_id)
+            if fallback:
+                return fallback
+            return ApiResponse(success=False, message="请求过于频繁，请稍后再试")
+
         body = await client.get_conversations(
             start_timestamp=cursor, limit=limit
         )
@@ -473,21 +503,13 @@ async def get_conversations(
                 f"【{account_id}】IM会话列表返回错误, "
                 f"code={err_code}, reason={reason}"
             )
-            # 流控错误：优先回退最近一次成功的会话列表（仅首页），让界面有数据可看
+            # 流控错误：记冷却 + 优先回退最近一次成功的会话列表（仅首页）
             if err_code == "400600001":
+                _convs_rate_limit_until[account_id] = time.time() + CONVS_COOLDOWN_S
                 if cursor is None:
-                    try:
-                        redis_client = await get_redis_client()
-                        raw = await redis_client.get(f"{CONVS_LASTGOOD_PREFIX}{account_id}")
-                        if raw:
-                            cached = json.loads(raw)
-                            logger.info(
-                                f"【{account_id}】会话列表被闲鱼限流，回退最近一次缓存"
-                                f"（{len(cached.get('conversations', []))} 条）"
-                            )
-                            return ApiResponse(success=True, data={**cached, "rateLimited": True})
-                    except Exception as e:
-                        logger.warning(f"【{account_id}】读取会话列表兜底缓存失败: {e}")
+                    fallback = await _convs_lastgood_response(account_id)
+                    if fallback:
+                        return fallback
                 return ApiResponse(success=False, message="请求过于频繁，请稍后再试")
             return ApiResponse(success=False, message=f"IM服务异常: {reason or err_code}")
 
