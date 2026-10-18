@@ -72,10 +72,12 @@ HIDDEN_CONVS_MAX = 300
 CONVS_LASTGOOD_PREFIX = "chat:convs_lastgood:"
 CONVS_LASTGOOD_TTL = 600
 
-# 进程内流控冷却：账号被闲鱼限流后 90 秒内的请求不再转发给闲鱼，
-# 直接回兜底缓存。前端冷却只对刷新后的新页面有效，旧页面的 15 秒轮询
-# 拦不住，必须在后端把闲鱼 shield 住，限流窗口才能自愈。
-CONVS_COOLDOWN_S = 90
+# 进程内流控冷却：账号被闲鱼限流后 5 分钟内的请求不再转发给闲鱼，
+# 直接回兜底缓存。实测这个限流需要较长的安静期才自愈，90 秒碰一次
+# 都会把窗口一直重置；列表的实时更新有 App 通道推送兜着，冷却期长一点
+# 不影响消息及时性。前端冷却只对刷新后的新页面有效，旧页面的 15 秒轮询
+# 拦不住，必须在后端把闲鱼 shield 住。
+CONVS_COOLDOWN_S = 300
 _convs_rate_limit_until: dict = {}
 
 
