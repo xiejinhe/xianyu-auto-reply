@@ -2235,7 +2235,9 @@ export function ChatNew() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
+                      {/* pr-8：给右上角绝对定位的删除按钮留出宽度，
+                          否则时间戳会钻到按钮底下，悬停时出现重影 */}
+                      <div className="flex items-center justify-between pr-8">
                         <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
                           {conv.otherUserName || conv.otherUserId || '未知用户'}
                         </span>
