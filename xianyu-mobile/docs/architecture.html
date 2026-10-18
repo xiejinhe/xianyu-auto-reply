@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xianyu-mobile · 架构与模块流程图</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #fff;
+      --border: #e2e5ea;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #eff4ff;
+      --ext: #E6F1FB;
+      --ext-s: #185FA5;
+      --ext-t: #0C447C;
+      --cli: #FBEAF0;
+      --cli-s: #993556;
+      --cli-t: #72243E;
+      --svc: #EEEDFE;
+      --svc-s: #534AB7;
+      --svc-t: #3C3489;
+      --co: #E1F5EE;
+      --co-s: #0F6E56;
+      --co-t: #085041;
+      --db: #FAEEDA;
+      --db-s: #854F0B;
+      --db-t: #633806;
+      --sk: #F1EFE8;
+      --sk-s: #5F5E5A;
+      --sk-t: #444441;
+      --out: #FCEBEB;
+      --out-s: #A32D2D;
+      --out-t: #791F1F;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 28px 20px 60px
+    }
+
+    .wrap {
+      max-width: 1080px;
+      margin: 0 auto
+    }
+
+    h1 {
+      font-size: 21px;
+      font-weight: 600
+    }
+
+    .repo {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 13px;
+      color: var(--accent);
+      margin: 2px 0 6px
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 16px
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border)
+    }
+
+    .tab {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 9px 16px;
+      cursor: pointer;
+      font-family: inherit
+    }
+
+    .tab:hover {
+      color: var(--text)
+    }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 500
+    }
+
+    .chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 18px
+    }
+
+    .chip {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 13px;
+      font-size: 12px;
+      color: var(--muted)
+    }
+
+    .chip b {
+      color: var(--text);
+      font-weight: 600
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 296px;
+      gap: 18px;
+      align-items: start
+    }
+
+    @media(max-width:900px) {
+      .layout {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px
+    }
+
+    .panel+.panel {
+      margin-top: 14px
+    }
+
+    .panel h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 3px
+    }
+
+    .panel .path {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-bottom: 12px
+    }
+
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12.5px;
+      padding: 5px 0;
+      border-bottom: 1px solid #f2f4f6
+    }
+
+    .kv:last-child {
+      border: none
+    }
+
+    .kv span:first-child {
+      color: var(--muted)
+    }
+
+    .kv span:last-child {
+      font-weight: 500;
+      text-align: right
+    }
+
+    .note {
+      margin-top: 14px;
+      background: var(--db);
+      border: 1px solid #f0d9b5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--db-t)
+    }
+
+    .note code {
+      background: #fff;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto
+    }
+
+    .edge {
+      fill: none;
+      stroke: #a8adb5;
+      stroke-width: 1.3
+    }
+
+    .lay-lbl {
+      font-size: 11px;
+      fill: #9aa0a8
+    }
+
+    .pane {
+      display: none
+    }
+
+    .pane.active {
+      display: block
+    }
+
+    /* 页面地图 */
+    .mapsec {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      background: #fff
+    }
+
+    .mapsec h4 {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .mapsec h4 .badge {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-radius: 10px;
+      padding: 1px 8px
+    }
+
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px
+    }
+
+    .pill {
+      font-size: 12px;
+      color: #374151;
+      background: #f7f8fa;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 9px
+    }
+
+    .pill.admin {
+      color: var(--out-t);
+      background: var(--out);
+      border-color: #f2c9c9
+    }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 10px
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      margin-right: 5px;
+      vertical-align: -1px
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 26px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <h1>xianyu-mobile · 架构与模块流程图</h1>
+    <div class="repo">xianyu-mobile — Expo + React Native 客户端</div>
+    <div class="sub">四个视角：分层架构 · 启动与鉴权 · 消息实时链路 · 页面地图。数据来自仓库实际扫描（v1.0.11）。</div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="arch">分层架构</button>
+      <button class="tab" data-tab="boot">启动与鉴权</button>
+      <button class="tab" data-tab="ws">消息实时链路</button>
+      <button class="tab" data-tab="map">页面地图</button>
+    </div>
+
+    <!-- ===== Tab 1 分层架构 ===== -->
+    <div class="pane active" id="pane-arch">
+      <div class="chips">
+        <div class="chip">TS / TSX <b>121</b> 文件</div>
+        <div class="chip">代码 <b>6.2 万</b> 行</div>
+        <div class="chip">页面 <b>52</b> 个</div>
+        <div class="chip">API 封装 <b>32</b> 个</div>
+        <div class="chip">UI 组件 <b>13</b> 个</div>
+        <div class="chip">状态 store <b>3</b> 个</div>
+      </div>
+
+      <div class="layout">
+        <div class="panel">
+          <h3>客户端分层架构</h3>
+          <div class="path">运行时 → 路由 → 页面 → 组件 → 状态/能力 → API → 后端</div>
+          <svg viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg" role="img">
+            <title>移动端分层架构图</title>
+            <defs>
+              <marker id="ar1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+                orient="auto-start-reverse">
+                <path d="M2 1L8 5L2 9" fill="none" stroke="#a8adb5" stroke-width="1.4" stroke-linecap="round"
+                  stroke-linejoin="round" />
+              </marker>
+            </defs>
+            <g font-family="-apple-system,PingFang SC,sans-serif">
+
+              <text class="lay-lbl" x="14" y="34">运行时</text>
+              <text class="lay-lbl" x="14" y="118">导航</text>
+              <text class="lay-lbl" x="14" y="214">页面</text>
+              <text class="lay-lbl" x="14" y="318">组件</text>
+              <text class="lay-lbl" x="14" y="412">状态 / 能力</text>
+              <text class="lay-lbl" x="14" y="516">API</text>
+              <text class="lay-lbl" x="14" y="620">网络</text>
+
+              <!-- 运行时 -->
+              <g>
+                <rect x="60" y="16" width="280" height="56" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                  stroke-width="0.9" />
+                <text x="200" y="39" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--ext-t)">Expo Go / 开发构建</text>
+                <text x="200" y="57" text-anchor="middle" font-size="11" fill="var(--ext-s)">Metro 打包 JS Bundle ·
+                  SDK 57</text>
+              </g>
+              <g>
+                <rect x="360" y="16" width="280" height="56" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                  stroke-width="0.9" />
+                <text x="500" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ext-t)">iOS /
+                  Android 原生壳</text>
+                <text x="500" y="57" text-anchor="middle" font-size="11" fill="var(--ext-s)">expo prebuild · 新架构
+                  Fabric</text>
+              </g>
+              <g>
+                <rect x="660" y="16" width="300" height="56" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                  stroke-width="0.9" />
+                <text x="810" y="39" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--ext-t)">设备能力</text>
+                <text x="810" y="57" text-anchor="middle" font-size="11" fill="var(--ext-s)">SecureStore ·
+                  AsyncStorage · 相册/文件</text>
+              </g>
+
+              <!-- 导航 -->
+              <g>
+                <rect x="60" y="100" width="900" height="56" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                  stroke-width="0.9" />
+                <text x="510" y="123" text-anchor="middle" font-size="13" font-weight="600" fill="var(--cli-t)">
+                  expo-router 文件路由（typedRoutes）</text>
+                <text x="510" y="141" text-anchor="middle" font-size="11" fill="var(--cli-s)">(onboarding) 5 页 ·
+                  (tabs) 消息 / 订单 / 商品 / 我的 · messages/[id] 动态路由</text>
+              </g>
+
+              <!-- 页面 -->
+              <g>
+                <rect x="60" y="196" width="213" height="76" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="166" y="220" text-anchor="middle" font-size="13" font-weight="600" fill="var(--svc-t)">消息
+                  Tab</text>
+                <text x="166" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">会话列表 · 多账号切换</text>
+                <text x="166" y="256" text-anchor="middle" font-size="11" fill="var(--svc-s)">聊天详情 · WS 实时推送</text>
+              </g>
+              <g>
+                <rect x="289" y="196" width="213" height="76" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="395" y="220" text-anchor="middle" font-size="13" font-weight="600" fill="var(--svc-t)">订单
+                  Tab</text>
+                <text x="395" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">状态筛选 · 搜索</text>
+                <text x="395" y="256" text-anchor="middle" font-size="11" fill="var(--svc-s)">手动发货 · 拉黑 · 详情</text>
+              </g>
+              <g>
+                <rect x="518" y="196" width="213" height="76" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="624" y="220" text-anchor="middle" font-size="13" font-weight="600" fill="var(--svc-t)">商品
+                  Tab</text>
+                <text x="624" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">商品监控 / 卡券 / 发货规则</text>
+                <text x="624" y="256" text-anchor="middle" font-size="11" fill="var(--svc-s)">三段 Tab · 统计卡跳转</text>
+              </g>
+              <g>
+                <rect x="747" y="196" width="213" height="76" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                  stroke-width="0.9" />
+                <text x="853" y="220" text-anchor="middle" font-size="13" font-weight="600" fill="var(--svc-t)">我的</text>
+                <text x="853" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">9 分组 38 个入口</text>
+                <text x="853" y="256" text-anchor="middle" font-size="11" fill="var(--svc-s)">管理员项按角色过滤</text>
+              </g>
+
+              <!-- 组件 -->
+              <g>
+                <rect x="60" y="300" width="430" height="64" rx="9" fill="var(--co)" stroke="var(--co-s)"
+                  stroke-width="0.9" />
+                <text x="275" y="324" text-anchor="middle" font-size="13" font-weight="600" fill="var(--co-t)">UI
+                  组件库 · 13 个</text>
+                <text x="275" y="344" text-anchor="middle" font-size="11" fill="var(--co-s)">Button / Input / Card /
+                  Alert / FilterTabs / SwipeableRow / FAB</text>
+              </g>
+              <g>
+                <rect x="506" y="300" width="454" height="64" rx="9" fill="var(--co)" stroke="var(--co-s)"
+                  stroke-width="0.9" />
+                <text x="733" y="324" text-anchor="middle" font-size="13" font-weight="600" fill="var(--co-t)">业务组件
+                  · 6 个</text>
+                <text x="733" y="344" text-anchor="middle" font-size="11" fill="var(--co-s)">OrdersPanel ·
+                  PasswordLoginModal · GeetestCaptcha · ErrorBoundary</text>
+              </g>
+
+              <!-- 状态与能力 -->
+              <g>
+                <rect x="60" y="394" width="290" height="76" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                  stroke-width="0.9" />
+                <text x="205" y="418" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--db-t)">stores · zustand（3）</text>
+                <text x="205" y="438" text-anchor="middle" font-size="11" fill="var(--db-s)">config：多套服务器 profile</text>
+                <text x="205" y="454" text-anchor="middle" font-size="11" fill="var(--db-s)">auth：token/用户 · accounts：账号</text>
+              </g>
+              <g>
+                <rect x="366" y="394" width="290" height="76" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                  stroke-width="0.9" />
+                <text x="511" y="418" text-anchor="middle" font-size="13" font-weight="600" fill="var(--db-t)">lib
+                  能力层</text>
+                <text x="511" y="438" text-anchor="middle" font-size="11" fill="var(--db-s)">ws：每账号一条长连 · 心跳 20s</text>
+                <text x="511" y="454" text-anchor="middle" font-size="11" fill="var(--db-s)">logger · timeout · theme · orderStatus</text>
+              </g>
+              <g>
+                <rect x="672" y="394" width="288" height="76" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                  stroke-width="0.9" />
+                <text x="816" y="418" text-anchor="middle" font-size="13" font-weight="600" fill="var(--db-t)">lib/config
+                  本地存储</text>
+                <text x="816" y="438" text-anchor="middle" font-size="11" fill="var(--db-s)">SecureStore：token / refresh</text>
+                <text x="816" y="454" text-anchor="middle" font-size="11" fill="var(--db-s)">AsyncStorage：server_profiles</text>
+              </g>
+
+              <!-- API -->
+              <g>
+                <rect x="60" y="498" width="290" height="70" rx="9" fill="var(--sk)" stroke="var(--sk-s)"
+                  stroke-width="0.9" />
+                <text x="205" y="522" text-anchor="middle" font-size="13" font-weight="600"
+                  fill="var(--sk-t)">openapi-fetch client</text>
+                <text x="205" y="542" text-anchor="middle" font-size="11" fill="var(--sk-s)">注入 Bearer token · 401 清 token</text>
+                <text x="205" y="558" text-anchor="middle" font-size="11" fill="var(--sk-s)">baseUrl 取自当前 profile</text>
+              </g>
+              <g>
+                <rect x="366" y="498" width="290" height="70" rx="9" fill="var(--sk)" stroke="var(--sk-s)"
+                  stroke-width="0.9" />
+                <text x="511" y="522" text-anchor="middle" font-size="13" font-weight="600" fill="var(--sk-t)">32 个 API
+                  wrapper</text>
+                <text x="511" y="542" text-anchor="middle" font-size="11" fill="var(--sk-s)">chat / orders / cards / ai-listing …</text>
+                <text x="511" y="558" text-anchor="middle" font-size="11" fill="var(--sk-s)">统一 extractError → ApiError</text>
+              </g>
+              <g>
+                <rect x="672" y="498" width="288" height="70" rx="9" fill="var(--sk)" stroke="var(--sk-s)"
+                  stroke-width="0.9" />
+                <text x="816" y="522" text-anchor="middle" font-size="13" font-weight="600" fill="var(--sk-t)">类型由后端生成</text>
+                <text x="816" y="542" text-anchor="middle" font-size="11" fill="var(--sk-s)">openapi-typescript · types.ts</text>
+                <text x="816" y="558" text-anchor="middle" font-size="11" fill="var(--sk-s)">npm run sync-api 同步</text>
+              </g>
+
+              <!-- 网络 -->
+              <g>
+                <rect x="60" y="602" width="430" height="64" rx="9" fill="var(--out)" stroke="var(--out-s)"
+                  stroke-width="0.9" />
+                <text x="275" y="626" text-anchor="middle" font-size="13" font-weight="600" fill="var(--out-t)">后端
+                  API · 8089</text>
+                <text x="275" y="646" text-anchor="middle" font-size="11" fill="var(--out-s)">GET/POST /api/v1/*（与 Web
+                  端同一套接口）</text>
+              </g>
+              <g>
+                <rect x="506" y="602" width="454" height="64" rx="9" fill="var(--out)" stroke="var(--out-s)"
+                  stroke-width="0.9" />
+                <text x="733" y="626" text-anchor="middle" font-size="13" font-weight="600" fill="var(--out-t)">WebSocket
+                  · 8089</text>
+                <text x="733" y="646" text-anchor="middle" font-size="11" fill="var(--out-s)">ws://…/api/v1/chat-new/ws/{account}?token=…</text>
+              </g>
+
+              <!-- 层间箭头 -->
+              <path class="edge" d="M500 72 L500 96" marker-end="url(#ar1)" />
+              <path class="edge" d="M500 156 L500 192" marker-end="url(#ar1)" />
+              <path class="edge" d="M500 272 L500 296" marker-end="url(#ar1)" />
+              <path class="edge" d="M500 364 L500 390" marker-end="url(#ar1)" />
+              <path class="edge" d="M500 470 L500 494" marker-end="url(#ar1)" />
+              <path class="edge" d="M500 568 L500 598" marker-end="url(#ar1)" />
+            </g>
+          </svg>
+          <div class="legend">
+            <span><i style="background:var(--ext)"></i>运行时/平台</span>
+            <span><i style="background:var(--cli)"></i>导航</span>
+            <span><i style="background:var(--svc)"></i>页面</span>
+            <span><i style="background:var(--co)"></i>组件</span>
+            <span><i style="background:var(--db)"></i>状态/能力</span>
+            <span><i style="background:var(--sk)"></i>API</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="panel">
+            <h3>关键依赖</h3>
+            <div class="path">package.json</div>
+            <div class="kv"><span>Expo SDK</span><span>~57.0.16</span></div>
+            <div class="kv"><span>React Native</span><span>0.86.2</span></div>
+            <div class="kv"><span>React</span><span>19.2.3</span></div>
+            <div class="kv"><span>路由</span><span>expo-router（文件路由）</span></div>
+            <div class="kv"><span>状态</span><span>zustand 5</span></div>
+            <div class="kv"><span>API</span><span>openapi-fetch + 类型生成</span></div>
+          </div>
+          <div class="panel">
+            <h3>目录职责</h3>
+            <div class="path">xianyu-mobile/</div>
+            <div class="kv"><span>app/</span><span>路由与页面（52 屏）</span></div>
+            <div class="kv"><span>components/</span><span>UI 组件 + 业务组件</span></div>
+            <div class="kv"><span>api/wrappers/</span><span>32 个接口封装</span></div>
+            <div class="kv"><span>stores/</span><span>config / auth / accounts</span></div>
+            <div class="kv"><span>lib/</span><span>ws · config · logger · theme</span></div>
+            <div class="kv"><span>android/ ios/</span><span>prebuild 原生工程</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>一句话读懂</b>：页面只依赖 <code>api/wrappers</code> 和 <code>stores</code>，不直接拼 URL；所有请求走
+        <code>openapi-fetch</code> 客户端（自动带 token、401 自动登出）；实时消息单独走
+        <code>lib/ws.ts</code> 的多账号长连接，和 REST 完全分离。
+      </div>
+    </div>
+
+    <!-- ===== Tab 2 启动与鉴权 ===== -->
+    <div class="pane" id="pane-boot">
+      <div class="chips">
+        <div class="chip">入口 <b>app/_layout.tsx</b></div>
+        <div class="chip">本地配置 <b>AsyncStorage</b></div>
+        <div class="chip">凭据 <b>SecureStore</b></div>
+        <div class="chip">连通性检测 <b>/api/v1/health/ping</b></div>
+      </div>
+
+      <div class="panel">
+        <h3>启动 → 配置 → 鉴权 → 进入主界面</h3>
+        <div class="path">app/_layout.tsx · stores/config.ts · stores/auth.ts</div>
+        <svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>启动与鉴权流程</title>
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#a8adb5" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <!-- 主干 -->
+            <g>
+              <rect x="390" y="16" width="220" height="52" rx="9" fill="var(--ext)" stroke="var(--ext-s)"
+                stroke-width="0.9" />
+              <text x="500" y="38" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ext-t)">App
+                启动</text>
+              <text x="500" y="56" text-anchor="middle" font-size="11" fill="var(--ext-s)">expo-router entry</text>
+            </g>
+
+            <g>
+              <rect x="350" y="96" width="300" height="56" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                stroke-width="0.9" />
+              <text x="500" y="119" text-anchor="middle" font-size="13" font-weight="600"
+                fill="var(--cli-t)">RootLayout 初始化</text>
+              <text x="500" y="137" text-anchor="middle" font-size="11" fill="var(--cli-s)">initConfig() + initAuth() 读本地存储</text>
+            </g>
+
+            <g>
+              <rect x="380" y="180" width="240" height="52" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"
+                stroke-width="0.9" />
+              <text x="500" y="202" text-anchor="middle" font-size="13" font-weight="600" fill="#1d4ed8">已配置服务器地址？</text>
+              <text x="500" y="220" text-anchor="middle" font-size="11" fill="var(--accent)">server_profiles 是否为空</text>
+            </g>
+
+            <!-- 左：未配置 -->
+            <g>
+              <rect x="60" y="180" width="240" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="180" y="202" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">服务器配置页</text>
+              <text x="180" y="220" text-anchor="middle" font-size="11" fill="var(--svc-s)">填 URL + 名称（可多套）</text>
+            </g>
+            <g>
+              <rect x="60" y="262" width="240" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="180" y="284" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">测试连接</text>
+              <text x="180" y="302" text-anchor="middle" font-size="11" fill="var(--svc-s)">GET /api/v1/health/ping</text>
+            </g>
+            <g>
+              <rect x="60" y="344" width="240" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="180" y="366" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--svc-t)">保存
+                profile</text>
+              <text x="180" y="384" text-anchor="middle" font-size="11" fill="var(--svc-s)">写入 AsyncStorage 并激活</text>
+            </g>
+
+            <!-- 右：已配置 -->
+            <g>
+              <rect x="700" y="180" width="240" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="820" y="202" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">本地有 token？</text>
+              <text x="820" y="220" text-anchor="middle" font-size="11" fill="var(--svc-s)">SecureStore.getItemAsync</text>
+            </g>
+            <g>
+              <rect x="700" y="262" width="240" height="52" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="820" y="284" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">verifyToken()</text>
+              <text x="820" y="302" text-anchor="middle" font-size="11" fill="var(--svc-s)">GET /api/v1/auth/verify</text>
+            </g>
+            <g>
+              <rect x="700" y="344" width="240" height="52" rx="9" fill="var(--out)" stroke="var(--out-s)"
+                stroke-width="0.9" />
+              <text x="820" y="366" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--out-t)">无效 → logout</text>
+              <text x="820" y="384" text-anchor="middle" font-size="11" fill="var(--out-s)">清 token → 跳登录页</text>
+            </g>
+
+            <!-- 登录 -->
+            <g>
+              <rect x="330" y="446" width="240" height="56" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                stroke-width="0.9" />
+              <text x="450" y="469" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--db-t)">登录页
+                (onboarding)</text>
+              <text x="450" y="487" text-anchor="middle" font-size="11" fill="var(--db-s)">密码登录 / 注册 / 忘记密码</text>
+            </g>
+
+            <!-- 进入 -->
+            <g>
+              <rect x="700" y="446" width="240" height="56" rx="9" fill="var(--co)" stroke="var(--co-s)"
+                stroke-width="0.9" />
+              <text x="820" y="469" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--co-t)">进入 (tabs)/messages</text>
+              <text x="820" y="487" text-anchor="middle" font-size="11" fill="var(--co-s)">四 Tab + 建立 WS 长连</text>
+            </g>
+
+            <!-- 箭头 -->
+            <path class="edge" d="M500 68 L500 92" marker-end="url(#ar2)" />
+            <path class="edge" d="M500 152 L500 176" marker-end="url(#ar2)" />
+            <path class="edge" d="M380 206 L304 206" marker-end="url(#ar2)" />
+            <text x="330" y="198" text-anchor="middle" font-size="11" fill="#9aa0a8">否</text>
+            <path class="edge" d="M180 232 L180 258" marker-end="url(#ar2)" />
+            <path class="edge" d="M180 314 L180 340" marker-end="url(#ar2)" />
+            <path class="edge" d="M180 396 L180 418 L420 418 L420 442" marker-end="url(#ar2)" />
+            <path class="edge" d="M620 206 L696 206" marker-end="url(#ar2)" />
+            <text x="660" y="198" text-anchor="middle" font-size="11" fill="#9aa0a8">是</text>
+            <path class="edge" d="M820 232 L820 258" marker-end="url(#ar2)" />
+            <path class="edge" d="M820 314 L820 340" marker-end="url(#ar2)" />
+            <path class="edge" d="M820 396 L820 420 L480 420 L480 442" marker-end="url(#ar2)" />
+            <path class="edge" d="M570 474 L696 474" marker-end="url(#ar2)" />
+            <text x="633" y="466" text-anchor="middle" font-size="11" fill="#9aa0a8">登录成功 setToken</text>
+            <path class="edge" d="M820 258 L820 258" />
+          </g>
+        </svg>
+        <div class="legend">
+          <span><i style="background:var(--ext)"></i>启动</span>
+          <span><i style="background:var(--cli)"></i>初始化</span>
+          <span><i style="background:var(--svc)"></i>配置 / 校验</span>
+          <span><i style="background:var(--db)"></i>登录</span>
+          <span><i style="background:var(--co)"></i>主界面</span>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>要点</b>：<code>verifyToken()</code> 只在有 token 时才调；服务器不可达时<b>不清 token</b>（只告警），避免离线状态被踢出登录。
+        切换服务器 profile 会重新走一遍初始化，token 与 profile 是分开存的。
+      </div>
+    </div>
+
+    <!-- ===== Tab 3 消息实时 ===== -->
+    <div class="pane" id="pane-ws">
+      <div class="chips">
+        <div class="chip">连接粒度 <b>每账号一条</b></div>
+        <div class="chip">心跳 <b>20s</b></div>
+        <div class="chip">重连 <b>3s→30s 退避</b></div>
+        <div class="chip">最多重试 <b>10 次</b></div>
+      </div>
+
+      <div class="panel">
+        <h3>消息实时链路（WebSocket）</h3>
+        <div class="path">lib/ws.ts · app/(tabs)/messages/index.tsx</div>
+        <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" role="img">
+          <title>消息实时链路</title>
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="#a8adb5" stroke-width="1.4" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </marker>
+          </defs>
+          <g font-family="-apple-system,PingFang SC,sans-serif">
+
+            <g>
+              <rect x="360" y="16" width="280" height="56" rx="9" fill="var(--out)" stroke="var(--out-s)"
+                stroke-width="0.9" />
+              <text x="500" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="var(--out-t)">后端 WS ·
+                8089</text>
+              <text x="500" y="57" text-anchor="middle" font-size="11" fill="var(--out-s)">/api/v1/chat-new/ws/{account}?token=</text>
+            </g>
+
+            <g>
+              <rect x="330" y="96" width="340" height="64" rx="9" fill="var(--cli)" stroke="var(--cli-s)"
+                stroke-width="0.9" />
+              <text x="500" y="120" text-anchor="middle" font-size="13" font-weight="600"
+                fill="var(--cli-t)">WsManager（lib/ws.ts）</text>
+              <text x="500" y="140" text-anchor="middle" font-size="11" fill="var(--cli-s)">按 accountId 维护多条连接 · token 走 query</text>
+            </g>
+
+            <g>
+              <rect x="40" y="196" width="280" height="64" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="180" y="220" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">心跳 20s</text>
+              <text x="180" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">ping / pong 保活</text>
+            </g>
+            <g>
+              <rect x="360" y="196" width="280" height="64" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="500" y="220" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">new_message 事件</text>
+              <text x="500" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">解析为 ChatMessage</text>
+            </g>
+            <g>
+              <rect x="680" y="196" width="280" height="64" rx="9" fill="var(--svc)" stroke="var(--svc-s)"
+                stroke-width="0.9" />
+              <text x="820" y="220" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--svc-t)">断线重连</text>
+              <text x="820" y="240" text-anchor="middle" font-size="11" fill="var(--svc-s)">指数退避 3s→30s · 最多 10 次</text>
+            </g>
+
+            <g>
+              <rect x="330" y="292" width="340" height="60" rx="9" fill="var(--db)" stroke="var(--db-s)"
+                stroke-width="0.9" />
+              <text x="500" y="316" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--db-t)">messageListeners / statusListeners</text>
+              <text x="500" y="335" text-anchor="middle" font-size="11" fill="var(--db-s)">按 accountId 分发给订阅页面</text>
+            </g>
+
+            <g>
+              <rect x="40" y="380" width="280" height="64" rx="9" fill="var(--co)" stroke="var(--co-s)"
+                stroke-width="0.9" />
+              <text x="180" y="404" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--co-t)">会话列表 /
+                聊天页</text>
+              <text x="180" y="424" text-anchor="middle" font-size="11" fill="var(--co-s)">追加消息 · 未读角标 · 滚动</text>
+            </g>
+            <g>
+              <rect x="360" y="380" width="280" height="64" rx="9" fill="var(--co)" stroke="var(--co-s)"
+                stroke-width="0.9" />
+              <text x="500" y="404" text-anchor="middle" font-size="12.5" font-weight="600"
+                fill="var(--co-t)">AppState 回前台</text>
+              <text x="500" y="424" text-anchor="middle" font-size="11" fill="var(--co-s)">重连死连接（retryCount&gt;0）</text>
+            </g>
+            <g>
+              <rect x="680" y="380" width="280" height="64" rx="9" fill="var(--sk)" stroke="var(--sk-s)"
+                stroke-width="0.9" />
+              <text x="820" y="404" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--sk-t)">发送走
+                REST</text>
+              <text x="820" y="424" text-anchor="middle" font-size="11" fill="var(--sk-s)">POST /chat-new/send-message</text>
+            </g>
+
+            <path class="edge" d="M500 72 L500 92" marker-end="url(#ar3)" />
+            <path class="edge" d="M420 160 L200 192" marker-end="url(#ar3)" />
+            <path class="edge" d="M500 160 L500 192" marker-end="url(#ar3)" />
+            <path class="edge" d="M580 160 L800 192" marker-end="url(#ar3)" />
+            <path class="edge" d="M500 260 L500 288" marker-end="url(#ar3)" />
+            <path class="edge" d="M430 352 L200 376" marker-end="url(#ar3)" />
+            <path class="edge" d="M500 352 L500 376" marker-end="url(#ar3)" />
+            <path class="edge" d="M570 352 L800 376" marker-end="url(#ar3)" />
+          </g>
+        </svg>
+        <div class="note">
+          <b>和 Web 端的差别</b>：Web 一个页面开一条连接、切账号重连；移动端是<b>每个已连接账号各开一条</b>，
+          切 Tab 不断连，只在 App 退到后台/回前台时按 <code>AppState</code> 做重连判定。发消息不走 WS，走普通 REST。
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Tab 4 页面地图 ===== -->
+    <div class="pane" id="pane-map">
+      <div class="chips">
+        <div class="chip">总屏数 <b>52</b></div>
+        <div class="chip">(onboarding) <b>5</b></div>
+        <div class="chip">Tab 主屏 <b>4</b></div>
+        <div class="chip">「我的」入口 <b>38</b></div>
+        <div class="chip">子页/详情 <b>5</b></div>
+      </div>
+
+      <div class="panel">
+        <h3>页面地图（按 Tab 分组）</h3>
+        <div class="path">app/  文件路由即页面，目录层级即 URL 层级</div>
+
+        <div class="mapsec">
+          <h4>启动 / 引导 <span class="badge">(onboarding) · 5 屏</span></h4>
+          <div class="pills">
+            <span class="pill">服务器配置</span><span class="pill">登录</span><span class="pill">注册</span>
+            <span class="pill">忘记密码</span><span class="pill">密码登录弹窗（组件）</span>
+          </div>
+        </div>
+
+        <div class="mapsec">
+          <h4>消息 <span class="badge">(tabs)/messages · 2 屏</span></h4>
+          <div class="pills">
+            <span class="pill">会话列表（多账号 · WS · 搜索 · 左滑已读/删除）</span>
+            <span class="pill">聊天详情 messages/[id]（文本/图片/语音 · 发送 · 撤回）</span>
+          </div>
+        </div>
+
+        <div class="mapsec">
+          <h4>订单 <span class="badge">(tabs)/orders · 1 屏</span></h4>
+          <div class="pills">
+            <span class="pill">订单列表（状态筛选 · 搜索 · 手动发货 · 拉黑 · 复制单号 · 详情）</span>
+          </div>
+        </div>
+
+        <div class="mapsec">
+          <h4>商品 <span class="badge">(tabs)/products · 1 屏 3 段</span></h4>
+          <div class="pills">
+            <span class="pill">商品监控</span><span class="pill">卡券管理</span><span class="pill">发货规则</span>
+            <span class="pill">统计卡可点跳转</span>
+          </div>
+        </div>
+
+        <div class="mapsec">
+          <h4>我的 <span class="badge">(tabs)/mine · 9 分组 38 入口</span></h4>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">核心功能</div>
+          <div class="pills">
+            <span class="pill">仪表盘</span><span class="pill">商品搜索</span><span class="pill">账号管理</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 6px">消息与回复</div>
+          <div class="pills">
+            <span class="pill">关键词管理</span><span class="pill">消息过滤</span><span class="pill">卡券管理</span>
+            <span class="pill">黑名单管理</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 6px">通知</div>
+          <div class="pills">
+            <span class="pill">通知渠道</span><span class="pill">消息通知绑定</span><span class="pill">通知管理</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 6px">运营</div>
+          <div class="pills">
+            <span class="pill">公告</span><span class="pill">数据分析</span><span class="pill">风控日志</span>
+            <span class="pill">反馈</span><span class="pill">广告管理</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 6px">分销与推广</div>
+          <div class="pills">
+            <span class="pill">分销管理</span><span class="pill">爬虫任务</span><span class="pill">上新监控</span>
+            <span class="pill">监控分类</span><span class="pill">监控日志</span><span class="pill">兜底账号</span>
+            <span class="pill">商品发布</span><span class="pill">商品管理</span><span class="pill">AI 上架</span>
+            <span class="pill">上架历史</span><span class="pill">AI 配置</span><span class="pill">共享扫码</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 6px">设置 / 日志 / 管理 / 其他</div>
+          <div class="pills">
+            <span class="pill admin">系统设置 · 管理员</span><span class="pill">个人设置</span>
+            <span class="pill admin">日志查看 · 管理员</span><span class="pill">APP 日志</span>
+            <span class="pill admin">用户管理 · 管理员</span><span class="pill admin">定时任务 · 管理员</span>
+            <span class="pill admin">数据管理 · 管理员</span>
+            <span class="pill">免责声明</span><span class="pill">使用教程</span><span class="pill">关于</span>
+            <span class="pill">服务器配置</span>
+          </div>
+        </div>
+
+        <div class="mapsec">
+          <h4>不在菜单里的子页 <span class="badge">从列表/详情进入</span></h4>
+          <div class="pills">
+            <span class="pill">分销-供货</span><span class="pill">分销-下级</span><span class="pill">分销-提货</span>
+            <span class="pill">商品编辑 item-edit</span><span class="pill">卡券-商品关联</span>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span><i style="background:var(--out)"></i>红色 = 仅管理员可见（普通用户菜单里自动隐藏）</span>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>路由约定</b>：<code>app/(tabs)/mine/xxx.tsx</code> → <code>/(tabs)/mine/xxx</code>；新增页面只要放文件即可，
+        <code>typedRoutes</code> 会校验路径字面量，写完 <code>npx tsc --noEmit</code> 能立刻发现写错的跳转。
+      </div>
+    </div>
+
+    <footer>
+      xianyu-mobile v1.0.11 · 数据由仓库实际扫描（121 个 TS/TSX 文件、6.2 万行）· 直接在浏览器打开即可，无需构建
+    </footer>
+  </div>
+
+  <script>
+    document.querySelectorAll('.tab').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.tab').forEach(function (b) { b.classList.remove('active') })
+        document.querySelectorAll('.pane').forEach(function (p) { p.classList.remove('active') })
+        btn.classList.add('active')
+        document.getElementById('pane-' + btn.dataset.tab).classList.add('active')
+      })
+    })
+  </script>
+</body>
+
+</html>
