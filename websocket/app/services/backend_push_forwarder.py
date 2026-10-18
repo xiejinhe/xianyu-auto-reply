@@ -37,10 +37,10 @@ _pending_tasks: Set[asyncio.Task] = set()
 _auth_warned = False
 
 
-def _build_url() -> str:
+def _build_url(path: str = "/api/v1/internal/chat-push") -> str:
     """拼接 backend-web 的接收地址"""
     base = (get_settings().backend_web_service_url or "").strip().rstrip("/")
-    return f"{base}/api/v1/internal/chat-push"
+    return f"{base}{path}"
 
 
 def _build_headers() -> Optional[dict]:
@@ -55,7 +55,7 @@ def _build_headers() -> Optional[dict]:
     return {INTERNAL_AUTH_HEADER: token}
 
 
-async def _post(payload: dict) -> None:
+async def _post(payload: dict, path: str = "/api/v1/internal/chat-push") -> None:
     """实际发送（失败静默，只记 debug）"""
     headers = _build_headers()
     if not headers:
@@ -63,7 +63,7 @@ async def _post(payload: dict) -> None:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                _build_url(),
+                _build_url(path),
                 json=payload,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=_FORWARD_TIMEOUT),
@@ -121,6 +121,31 @@ def schedule_chat_push(
         task = asyncio.create_task(_post(payload))
     except RuntimeError:
         # 事件循环已关闭（服务停机中），直接放弃
+        return
+    _pending_tasks.add(task)
+    task.add_done_callback(_pending_tasks.discard)
+
+
+def schedule_typing_push(*, account_id: str, cid: str, typing: bool) -> None:
+    """
+    把「对方正在输入」状态转发给 backend-web
+
+    闲鱼的状态帧形如
+        {"1": [{"1": cid, "2": 1, "3": 1, "4": 本账号ID}]}
+    其中 "3" 为 1 = 正在输入、0 = 停止输入；"4" 是接收方（本账号），
+    所以这条帧描述的是「对端在这个会话里的输入状态」。
+
+    与消息转发同样 fire-and-forget：状态丢了只影响一个提示气泡，
+    绝不能影响自动回复主流程。
+    """
+    if not account_id or not cid:
+        return
+    if len(_pending_tasks) >= _MAX_PENDING:
+        return
+    payload = {"account_id": account_id, "cid": cid, "typing": bool(typing)}
+    try:
+        task = asyncio.create_task(_post(payload, "/api/v1/internal/chat-typing"))
+    except RuntimeError:
         return
     _pending_tasks.add(task)
     task.add_done_callback(_pending_tasks.discard)

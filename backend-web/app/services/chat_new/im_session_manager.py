@@ -474,6 +474,29 @@ class ImSessionManager:
         )
         return True
 
+    async def broadcast_typing(
+        self, account_id: str, cid: str, typing: bool
+    ) -> bool:
+        """广播「对方正在输入」状态给前端
+
+        这是状态而不是消息，**不参与消息去重**（1/0 交替本来就是正常序列），
+        也不写入任何缓存。前端收到后自行做几秒超时隐藏。
+
+        Returns:
+            是否有在线前端收到（没有订阅者时返回 False）
+        """
+        if not self._ws_clients.get(account_id):
+            return False
+        await self._broadcast_event(account_id, {
+            "event": "typing",
+            "cid": cid,
+            "typing": bool(typing),
+        })
+        logger.debug(
+            f"【{account_id}】输入状态已转发前端 (cid={cid}, typing={typing})"
+        )
+        return True
+
     async def _setup_push_callback_after_connect(
         self, account_id: str, client: GoofishImClient
     ):

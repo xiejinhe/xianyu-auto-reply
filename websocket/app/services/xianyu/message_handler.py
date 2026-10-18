@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import time
 from typing import Dict, Any, Optional, Callable
 
@@ -17,13 +16,20 @@ from loguru import logger
 from .utils import safe_str
 from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
-from app.services.backend_push_forwarder import schedule_chat_push
+from app.services.backend_push_forwarder import schedule_chat_push, schedule_typing_push
 
 # 原始帧调试开关（环境变量 IM_FRAME_DEBUG=1 开启）：把「不是聊天消息」的
 # 推送帧原样落日志。闲鱼的「对方正在输入」「对方已读」这类状态帧既不是
 # 聊天消息也没有卡片字段，默认在分发时整条丢弃，不开这个开关就完全看不到
 # 服务端到底有没有下发，也就无从判断相关功能能不能做。
-_FRAME_DEBUG = os.getenv("IM_FRAME_DEBUG", "0").strip().lower() in ("1", "true", "on")
+# 必须走 get_settings()：pydantic 只把 .env 读进配置对象，不会写进进程环境。
+def _frame_debug_enabled() -> bool:
+    try:
+        from app.core.config import get_settings
+
+        return bool(getattr(get_settings(), "im_frame_debug", False))
+    except Exception:
+        return False
 
 
 class MessageHandler:
@@ -568,7 +574,7 @@ class MessageHandler:
                         # 解密消息（参照旧框架）
                         message = self._decrypt_message(sync_data)
                         if message is not None and isinstance(message, dict):
-                            if _FRAME_DEBUG:
+                            if _frame_debug_enabled():
                                 self._log_unrecognized_frame(message)
                             await self._process_single_message(message, websocket)
                 return True
@@ -647,6 +653,43 @@ class MessageHandler:
             logger.debug(f"【{self.cookie_id}】消息解密失败: {safe_str(e)}")
             return None
     
+    def parse_typing_event(self, message: dict) -> Optional[Dict[str, Any]]:
+        """解析「对方正在输入」状态帧
+
+        帧结构（实测，App 通道）：
+            {"1": [{"1": "67673454243@goofish", "2": 1, "3": 1,
+                    "4": "2217728125233@goofish"}]}
+        - "1" 是**列表**（不是聊天消息那种 dict），元素里 "1" = 会话ID
+        - "2" 固定为 1，状态类型判别位
+        - "3" = 1 正在输入 / 0 停止输入
+        - "4" = 接收方（本账号），说明描述的是对端在该会话的输入状态
+
+        实测时间线：对端打字期间收到 3=1，停手后收到 3=0，全程没有消息发送，
+        因此可以确认 "3" 就是输入中状态，而不是已读回执。
+
+        Returns:
+            {"cid": 会话ID, "typing": bool}；不是状态帧返回 None
+        """
+        try:
+            inner = message.get("1")
+            if not isinstance(inner, list) or not inner:
+                return None
+            item = inner[0]
+            if not isinstance(item, dict):
+                return None
+            state = item.get("3")
+            if state not in (0, 1):
+                return None
+            # "2" 必须是 1：与同结构的其它列表型帧区分开，避免误判成输入状态
+            if str(item.get("2", "")) != "1":
+                return None
+            cid = str(item.get("1") or "").split("@")[0].strip()
+            if not cid:
+                return None
+            return {"cid": cid, "typing": state == 1}
+        except Exception:
+            return None
+
     def _log_unrecognized_frame(self, message: dict) -> None:
         """IM_FRAME_DEBUG=1 时，把不是聊天消息的推送帧原样落日志
 
@@ -656,6 +699,9 @@ class MessageHandler:
         """
         try:
             if self.is_chat_message(message) or self.is_card_update_message(message):
+                return
+            # 输入状态帧已单独解析成功能，不再当作「未识别」刷日志
+            if self.parse_typing_event(message):
                 return
             logger.info(
                 f"【{self.cookie_id}】[未识别帧] "
@@ -667,6 +713,21 @@ class MessageHandler:
     async def _process_single_message(self, message: dict, websocket) -> bool:
         """处理单条消息（参照旧框架message_handler_core.py）"""
         try:
+            # 「对方正在输入」状态帧：不是聊天消息，单独转发给 backend-web
+            # 让网页端显示输入提示，然后直接结束，不进入下面的消息处理流程
+            typing_event = self.parse_typing_event(message)
+            if typing_event:
+                schedule_typing_push(
+                    account_id=self.cookie_id,
+                    cid=typing_event["cid"],
+                    typing=typing_event["typing"],
+                )
+                logger.debug(
+                    f"【{self.cookie_id}】输入状态: cid={typing_event['cid']}, "
+                    f"typing={typing_event['typing']}"
+                )
+                return True
+
             # 提取消息ID进行去重
             message_id = self.extract_message_id(message)
             if message_id:

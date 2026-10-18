@@ -559,10 +559,12 @@ export const copyImageToClipboard = async (
 
 /** WebSocket 推送消息（新消息事件） */
 export interface WsPushMessage {
-  event: 'new_message' | 'connected' | 'pong' | 'reconnected'
+  event: 'new_message' | 'connected' | 'pong' | 'reconnected' | 'typing'
   cid?: string
   account_id?: string
   message?: ChatMessage
+  /** event==='typing' 时有效：true=对方正在输入，false=停止输入 */
+  typing?: boolean
 }
 
 /**

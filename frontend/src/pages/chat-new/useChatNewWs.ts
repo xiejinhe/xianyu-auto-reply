@@ -33,6 +33,8 @@ interface UseChatNewWsOptions {
   onDisconnect?: (accountId: string) => void
   /** 后端 IM 断线自动重连成功时的回调（断线期间的消息不补推，前端需自行补拉） */
   onReconnected?: (accountId: string) => void
+  /** 「对方正在输入」状态变化（typing=false 表示停止输入） */
+  onTyping?: (accountId: string, cid: string, typing: boolean) => void
 }
 
 /**
@@ -47,18 +49,21 @@ export function useChatNewWs({
   onConnected,
   onDisconnect,
   onReconnected,
+  onTyping,
 }: UseChatNewWsOptions) {
   const connectionsRef = useRef<Map<string, WsConnection>>(new Map())
   const onNewMessageRef = useRef(onNewMessage)
   const onConnectedRef = useRef(onConnected)
   const onDisconnectRef = useRef(onDisconnect)
   const onReconnectedRef = useRef(onReconnected)
+  const onTypingRef = useRef(onTyping)
 
   // 保持回调引用最新
   useEffect(() => { onNewMessageRef.current = onNewMessage }, [onNewMessage])
   useEffect(() => { onConnectedRef.current = onConnected }, [onConnected])
   useEffect(() => { onDisconnectRef.current = onDisconnect }, [onDisconnect])
   useEffect(() => { onReconnectedRef.current = onReconnected }, [onReconnected])
+  useEffect(() => { onTypingRef.current = onTyping }, [onTyping])
 
   /** 清理单个账号的连接 */
   const cleanupAccount = useCallback((aid: string) => {
@@ -102,6 +107,9 @@ export function useChatNewWs({
           // 只有 IM 订阅确认成功才重置退避；握手成功后仍可能收到 4404。
           retryAttempt = 0
           onConnectedRef.current?.(aid, isReconnect)
+        } else if (data.event === 'typing' && data.cid) {
+          // 对方正在输入（1/0 交替推送，前端自行做超时隐藏）
+          onTypingRef.current?.(aid, data.cid, !!data.typing)
         } else if (data.event === 'reconnected') {
           // 后端 IM 长连接掉过线又自动连回来了。掉线期间到达的消息服务端不补推，
           // 这里主动补拉一次，否则这些消息要等下次刷新页面才可见。

@@ -31,6 +31,12 @@ class WebSocketConfig(BaseConfig):
     
     # 启动时是否自动连接WebSocket
     auto_start_websocket: bool = Field(default=True, alias="AUTO_START_WEBSOCKET")
+
+    # 原始帧调试（默认关）：把「不是聊天消息」的推送帧原样落日志，
+    # 排查「对方正在输入 / 对方已读」这类状态帧是否下发时临时开启。
+    # 注意：配置由 pydantic 从 .env 读入，业务代码必须走 get_settings()，
+    # 不能用 os.getenv（.env 不会写进进程环境，读不到）。
+    im_frame_debug: bool = Field(default=False, alias="IM_FRAME_DEBUG")
     
     # 浏览器配置
     max_captcha_concurrent: int = Field(default=3, alias="MAX_CAPTCHA_CONCURRENT")

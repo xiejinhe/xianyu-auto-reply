@@ -488,6 +488,25 @@ export function ChatNew() {
     }
   }, [markConvReadByKey])
 
+  // ==================== 对方正在输入 ====================
+  // 后端只推「开始输入 / 停止输入」两个状态（闲鱼帧 3=1/0），
+  // 前端按 4 秒超时自动隐藏：对方停手时偶尔会漏掉 0 帧，
+  // 靠超时兜底不会让提示一直挂着。
+  const [typingConv, setTypingConv] = useState<{ accountId: string; cid: string } | null>(null)
+  const typingTimerRef = useRef<number | null>(null)
+  const handleWsTyping = useCallback((accountId: string, cid: string, typing: boolean) => {
+    if (typingTimerRef.current) {
+      window.clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+    if (!typing) {
+      setTypingConv(null)
+      return
+    }
+    setTypingConv({ accountId, cid: normCid(cid) })
+    typingTimerRef.current = window.setTimeout(() => setTypingConv(null), 4000)
+  }, [])
+
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     // 会话列表摘要带发送者前缀：自己的「你：」，对方的「他：」（性别拿不到，统一「他」）
     const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
@@ -506,7 +525,11 @@ export function ChatNew() {
 
     // cid 归一化后比较：正打开的会话来了消息 = 已读，记水位防止服务端旧未读复活
     const isViewingConv = isActiveAccount && normCid(cid) === normCid(activeCidRef.current)
-    if (isViewingConv) markConvReadByKey(accountId, cid, msg.time)
+    if (isViewingConv) {
+      markConvReadByKey(accountId, cid, msg.time)
+      // 消息已经到达，输入提示立即撤掉（等下一个 0 帧太慢）
+      setTypingConv(null)
+    }
     const conversationCache = convsCacheRef.current[accountId]
     if (conversationCache) {
       conversationCache.convs = updateConvList(conversationCache.convs, cid, summary, msg, isViewingConv)
@@ -582,6 +605,7 @@ export function ChatNew() {
     onConnected: handleWsConnected,
     onDisconnect: handleWsDisconnect,
     onReconnected: handleWsReconnected,
+    onTyping: handleWsTyping,
   })
 
   // ==================== 加载账号列表（分页） ====================
@@ -2290,6 +2314,18 @@ export function ChatNew() {
               ? conversations.find((c) => c.cid === activeCid)?.otherUserName || '聊天记录'
               : '聊天记录'}
           </span>
+          {/* 对方正在输入：来自闲鱼输入状态帧，4 秒无更新自动隐藏 */}
+          {typingConv && typingConv.accountId === activeAccountId &&
+            typingConv.cid === normCid(activeCid) && (
+            <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <span className="flex gap-0.5">
+                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-bounce [animation-delay:0ms]" />
+                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-bounce [animation-delay:150ms]" />
+                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-bounce [animation-delay:300ms]" />
+              </span>
+              对方正在输入
+            </span>
+          )}
           </div>
           {activeCid && (
             <button onClick={handleBlacklistCustomer} disabled={blacklisting} className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40" title={isOfficiallyBlocked ? '解除闲鱼官方黑名单' : '加入闲鱼官方黑名单'}>

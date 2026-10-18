@@ -40,6 +40,14 @@ class AppChannelPushRequest(BaseModel):
     time_ms: int = Field(default=0, description="消息时间（毫秒时间戳）")
 
 
+class AppChannelTypingRequest(BaseModel):
+    """websocket 服务转发的「对方正在输入」状态"""
+
+    account_id: str = Field(description="接收方账号ID（本系统的账号）")
+    cid: str = Field(description="会话ID")
+    typing: bool = Field(default=False, description="True=正在输入，False=停止输入")
+
+
 @router.post("/chat-push")
 async def receive_app_channel_push(
     req: AppChannelPushRequest,
@@ -81,6 +89,34 @@ async def receive_app_channel_push(
         )
     except Exception as exc:
         logger.warning(f"【{req.account_id}】App通道推送广播失败: {exc}")
+        return {"success": False, "delivered": False, "message": str(exc)}
+
+    return {"success": True, "delivered": delivered}
+
+
+@router.post("/chat-typing")
+async def receive_app_channel_typing(
+    req: AppChannelTypingRequest,
+    x_internal_token: Optional[str] = Header(default=None, alias=INTERNAL_AUTH_HEADER),
+):
+    """
+    接收「对方正在输入」状态并广播给前端
+
+    闲鱼的状态帧（{"1":[{"1":cid,"2":1,"3":1|0,...}]}）由 websocket 服务的
+    App 通道解析后转到此处。状态不做去重、不落缓存——1/0 交替是正常序列，
+    前端收到 True 后显示提示、收到 False 或超时后隐藏。
+    """
+    require_valid_internal_token(x_internal_token, get_settings().internal_api_token)
+
+    if not req.account_id or not req.cid:
+        return {"success": False, "delivered": False, "message": "缺少 account_id 或 cid"}
+
+    try:
+        delivered = await get_im_session_manager().broadcast_typing(
+            account_id=req.account_id, cid=req.cid, typing=req.typing
+        )
+    except Exception as exc:
+        logger.warning(f"【{req.account_id}】输入状态广播失败: {exc}")
         return {"success": False, "delivered": False, "message": str(exc)}
 
     return {"success": True, "delivered": delivered}
