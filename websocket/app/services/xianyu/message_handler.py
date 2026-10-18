@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import time
 from typing import Dict, Any, Optional, Callable
 
@@ -17,6 +18,12 @@ from .utils import safe_str
 from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
 from app.services.backend_push_forwarder import schedule_chat_push
+
+# 原始帧调试开关（环境变量 IM_FRAME_DEBUG=1 开启）：把「不是聊天消息」的
+# 推送帧原样落日志。闲鱼的「对方正在输入」「对方已读」这类状态帧既不是
+# 聊天消息也没有卡片字段，默认在分发时整条丢弃，不开这个开关就完全看不到
+# 服务端到底有没有下发，也就无从判断相关功能能不能做。
+_FRAME_DEBUG = os.getenv("IM_FRAME_DEBUG", "0").strip().lower() in ("1", "true", "on")
 
 
 class MessageHandler:
@@ -561,6 +568,8 @@ class MessageHandler:
                         # 解密消息（参照旧框架）
                         message = self._decrypt_message(sync_data)
                         if message is not None and isinstance(message, dict):
+                            if _FRAME_DEBUG:
+                                self._log_unrecognized_frame(message)
                             await self._process_single_message(message, websocket)
                 return True
             
@@ -638,6 +647,23 @@ class MessageHandler:
             logger.debug(f"【{self.cookie_id}】消息解密失败: {safe_str(e)}")
             return None
     
+    def _log_unrecognized_frame(self, message: dict) -> None:
+        """IM_FRAME_DEBUG=1 时，把不是聊天消息的推送帧原样落日志
+
+        闲鱼的「对方正在输入」「对方已读」这类状态帧不是聊天消息，
+        默认在分发时被整条丢弃，不开开关就完全不知道服务端有没有下发。
+        聊天消息与卡片更新帧不落日志，避免刷屏。
+        """
+        try:
+            if self.is_chat_message(message) or self.is_card_update_message(message):
+                return
+            logger.info(
+                f"【{self.cookie_id}】[未识别帧] "
+                f"{json.dumps(message, ensure_ascii=False)[:800]}"
+            )
+        except Exception:
+            pass
+
     async def _process_single_message(self, message: dict, websocket) -> bool:
         """处理单条消息（参照旧框架message_handler_core.py）"""
         try:
