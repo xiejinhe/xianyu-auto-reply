@@ -30,6 +30,7 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
 from app.services.chat_new.avatar_service import get_owner_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
+from app.services.chat_new.card_sampler import sample_card
 from app.services.chat_new.user_profile_service import (
     get_user_profile,
     _load_sibling_accounts,
@@ -735,7 +736,7 @@ async def get_messages(
         messages = []
         models = body.get("userMessageModels", [])
         for model in models:
-            msg_info = _parse_message(model, client.myid)
+            msg_info = _parse_message(model, client.myid, account_id, cid)
             if msg_info:
                 messages.append(msg_info)
         messages.reverse()
@@ -1374,7 +1375,7 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
         return None
 
 
-def _parse_message(model: dict, myid: str) -> dict | None:
+def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") -> dict | None:
     """
     解析单条消息
 
@@ -1389,6 +1390,8 @@ def _parse_message(model: dict, myid: str) -> dict | None:
     Args:
         model: userMessageModels 中的单条数据
         myid: 当前账号的用户ID
+        account_id: 账号标识（订单卡片采样用）
+        cid: 会话 id（订单卡片采样用）
 
     Returns:
         格式化后的消息字典
@@ -1416,6 +1419,7 @@ def _parse_message(model: dict, myid: str) -> dict | None:
         msg_type = "text"
         msg_text = ""
         msg_images = []
+        decoded = None  # custom.data 解码结果（卡片采样用；无 custom_data 时为 None）
 
         if custom_data:
             # 文本/图片/语音等通用内容解析统一走公共模块（HTTP 历史消息载荷为 base64）；
@@ -1467,6 +1471,16 @@ def _parse_message(model: dict, myid: str) -> dict | None:
         # 这类消息闲鱼以"方括号摘要"或卡片形式下发，前端据此渲染成居中事件卡，
         # 而非普通聊天气泡。纯文本规则，不依赖采样真实载荷。
         is_event, event_kind = classify_event(msg_text, msg_type)
+
+        # 订单卡片原始载荷采样（只读落盘，零风控）：卡片消息或方括号摘要，
+        # 把解密后的完整 decoded dict 原样写入采样文件，供后续分析卡片按钮 /
+        # action / 订单号等未解析字段的真实 key 名。采集到数据前，卡片按钮
+        # 映射（修改价格/去填写/提醒收货等）无从设计。
+        if msg_type == "card" or str(msg_text or "").startswith("["):
+            sample_card(
+                "http_history", account_id, cid,
+                str(message.get("messageId", "") or ""), msg_text, decoded,
+            )
 
         return {
             "messageId": str(message.get("messageId", "") or ""),

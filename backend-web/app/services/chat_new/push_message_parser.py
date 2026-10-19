@@ -21,6 +21,8 @@ from common.utils.xianyu_message_parser import (
     classify_event,
 )
 
+from app.services.chat_new.card_sampler import sample_card
+
 
 class PushMessageParser:
     """推送消息解析器，负责解密和解析 IM 主动推送的消息"""
@@ -119,6 +121,14 @@ class PushMessageParser:
             is_self = sender_id == self.myid
             preview = text_content or ("[语音]" if audio_url else "[图片]")
 
+            # 方括号开头 = 闲鱼系统/交易摘要（如 [买家已付款]），原始载荷采样，
+            # 供后续分析卡片按钮与结构化字段（只读落盘，零风控）
+            if str(reminder or "").startswith("["):
+                sample_card(
+                    "push_summary", self.account_id, cid,
+                    str(msg_1.get("3", "") or ""), str(reminder), msg_10,
+                )
+
             if is_self:
                 logger.info(
                     f"【{self.account_id}】[推送-发出] cid={cid}, 内容: {preview}"
@@ -170,6 +180,13 @@ class PushMessageParser:
                 f"【{self.account_id}】[推送-卡片] cid={cid}, 内容: {text_content}"
             )
 
+            # 订单卡片原始载荷采样：msg_6_3 是卡片内容 dict（标题在 ["2"]，
+            # 疑似还带按钮/action/订单号等未解析字段），原样落盘供后续分析
+            sample_card(
+                "push_card", self.account_id, cid,
+                str(msg_1.get("3", "") or ""), str(text_content), msg_6_3,
+            )
+
             return {
                 "event": "new_message",
                 "cid": cid,
@@ -204,6 +221,12 @@ class PushMessageParser:
             logger.info(
                 f"【{self.account_id}】[推送-卡片更新] cid={cid}, "
                 f"发送者={sender_name}, 内容: {reminder}"
+            )
+
+            # 卡片更新（付款状态变更等）原始载荷采样，整包 msg_4 落盘
+            sample_card(
+                "push_card_update", self.account_id, cid,
+                str(msg.get("3", "") or ""), str(reminder), msg_4,
             )
 
             return {
