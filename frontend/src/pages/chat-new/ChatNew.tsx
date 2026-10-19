@@ -77,6 +77,8 @@ interface OrderCardBubbleProps {
   onDeliver: (orderNo: string) => void
   onNoLogisticsDeliver: (orderNo: string) => void
   onAdjustPrice: (orderNo: string, currentPrice?: string) => void
+  /** 展示闲鱼 APP 深链弹窗（fleamarket:// 原生页面，电脑上打不开，需复制到手机唤起） */
+  onDeepLink: (url: string, title: string) => void
   onToast: (toast: { message: string; type: 'success' | 'error' | 'warning' | 'info' }) => void
 }
 
@@ -101,6 +103,7 @@ function OrderCardBubble({
   onDeliver,
   onNoLogisticsDeliver,
   onAdjustPrice,
+  onDeepLink,
   onToast,
 }: OrderCardBubbleProps) {
   // 待发货卡（门票-提醒发货-卖家）原始载荷不带订单号，从会话「待发货」订单兜底
@@ -143,7 +146,13 @@ function OrderCardBubble({
         onToast({ message: '未取到订单号，请在闲鱼 APP 里修改价格', type: 'warning' })
       }
     } else if (btn.action === 'smart_form') {
-      onToast({ message: '演出信息填写功能建设中，请先在闲鱼 APP 操作', type: 'warning' })
+      // 演出信息表单是闲鱼 APP 原生页面（fleamarket://smart_form），网页端无法代填，
+      // 但深链本身有效：弹窗给出链接，复制到手机上即可唤起 APP 直接打开该订单的表单页
+      if (btn.url && /^fleamarket:\/\//.test(btn.url)) {
+        onDeepLink(btn.url, card.title || '填写演出信息')
+      } else {
+        onToast({ message: '未取到表单深链，请在闲鱼 APP 里完成', type: 'warning' })
+      }
     } else if (btn.action === 'order_detail' && openUrl(card.target_url)) {
       // https 订单详情已直接打开
     } else {
@@ -525,6 +534,10 @@ export function ChatNew() {
   const [adjustingOrderNo, setAdjustingOrderNo] = useState('')
   const [adjustPriceInput, setAdjustPriceInput] = useState('')
   const [adjustingPrice, setAdjustingPrice] = useState(false)
+  // 闲鱼 APP 深链弹窗：fleamarket:// 原生页面（演出信息表单等）电脑上打不开，
+  // 弹出链接让复制到手机上唤起 APP
+  const [deepLink, setDeepLink] = useState<{ url: string; title: string } | null>(null)
+  const [deepLinkCopied, setDeepLinkCopied] = useState(false)
   const [cancellingOrderNo, setCancellingOrderNo] = useState('')
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
   const [loadingOrderDetail, setLoadingOrderDetail] = useState(false)
@@ -1882,6 +1895,34 @@ export function ChatNew() {
   const openAdjustPriceModal = (orderNo: string, currentPrice?: string) => {
     setAdjustingOrderNo(orderNo)
     setAdjustPriceInput(currentPrice || '')
+  }
+
+  // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
+  const openDeepLinkModal = (url: string, title: string) => {
+    setDeepLinkCopied(false)
+    setDeepLink({ url, title })
+  }
+
+  // 复制深链到剪贴板：Preferred clipboard API 在非安全上下文不可用（http 局域网访问），
+  // 退化到 execCommand 选中文本框再复制，保证局域网/反代部署时也能用
+  const copyDeepLink = async () => {
+    if (!deepLink) return
+    const text = deepLink.url
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const el = document.getElementById('deeplink-input') as HTMLInputElement | null
+        if (el) {
+          el.select()
+          document.execCommand('copy')
+        }
+      }
+      setDeepLinkCopied(true)
+      addToast({ message: '链接已复制，粘贴到手机浏览器/微信里打开即可唤起闲鱼 APP', type: 'success' })
+    } catch {
+      addToast({ message: '复制失败，请手动选中链接复制', type: 'warning' })
+    }
   }
 
   // 确认改价：走与发货/取消同一套 websocket 内部链路调闲鱼改价接口
@@ -3312,6 +3353,7 @@ export function ChatNew() {
                             onDeliver={handleDeliverOrder}
                             onNoLogisticsDeliver={handleNoLogisticsDelivery}
                             onAdjustPrice={openAdjustPriceModal}
+                            onDeepLink={openDeepLinkModal}
                             onToast={addToast}
                           />
                         ) : isEvent ? (
@@ -3689,6 +3731,58 @@ export function ChatNew() {
                 确认改价
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 闲鱼 APP 深链弹窗：演出信息表单等 fleamarket:// 原生页面网页端无法代填，
+          但深链本身有效，复制到手机上打开即可唤起 APP 直接到该订单的对应页面 */}
+      {deepLink && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setDeepLink(null)}
+          />
+          <div className="relative w-full max-w-md mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+            <div className="mb-1 flex items-start justify-between gap-2">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">打开闲鱼 APP</h3>
+              <button
+                type="button"
+                onClick={() => setDeepLink(null)}
+                className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700"
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mb-4 text-xs leading-5 text-slate-500 dark:text-slate-400">
+              {deepLink.title || '填写演出信息'} · 这是闲鱼 APP 的原生页面专属地址，
+              电脑浏览器打不开。复制到手机上，即可直接唤起 APP 打开该订单的对应页面。
+            </p>
+            <textarea
+              id="deeplink-input"
+              readOnly
+              rows={3}
+              value={deepLink.url}
+              onFocus={(e) => e.currentTarget.select()}
+              className="mb-3 w-full resize-none rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-[11px] leading-4 text-slate-700 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            />
+            <ul className="mb-4 space-y-1 text-[11px] leading-4 text-slate-400 dark:text-slate-500">
+              <li>1. 微信发给「文件传输助手」，在手机上点开即可唤起 APP</li>
+              <li>2. 或粘贴到手机浏览器地址栏，同样会跳转到闲鱼</li>
+              <li>3. 需已安装闲鱼 APP 并登录卖家账号</li>
+            </ul>
+            <button
+              type="button"
+              onClick={() => void copyDeepLink()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-orange-600"
+            >
+              {deepLinkCopied ? (
+                <CheckCircle className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              {deepLinkCopied ? '已复制链接' : '复制链接'}
+            </button>
           </div>
         </div>
       )}
