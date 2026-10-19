@@ -84,6 +84,11 @@ export interface AccountDetail extends Account {
   filter_count?: number  // 消息过滤规则数量
   today_reply_count?: number
   owner_username?: string  // 账号所属用户名（管理员查看全量时展示）
+  // 网页 Cookie 会话状态推断结果（无需新增字段/迁移）：
+  // normal=正常 / risk_control=风控中 / expired=失效需重登 / disabled=已禁用
+  cookie_status?: 'normal' | 'risk_control' | 'expired' | 'disabled'
+  last_login_at?: string | null
+  last_refresh_at?: string | null
 }
 
 // 关键词相关类型

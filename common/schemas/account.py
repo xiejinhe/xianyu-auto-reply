@@ -44,6 +44,11 @@ class AccountDetail(BaseModel):
     show_browser: bool = False
     disable_reason: str | None = None
     filter_count: int = 0  # 消息过滤规则数量
+    # 网页 Cookie 会话状态推断结果（无需新增字段/迁移）：
+    # normal=正常 / risk_control=风控中 / expired=失效需重登 / disabled=已禁用
+    cookie_status: str = "normal"
+    last_login_at: str | None = None
+    last_refresh_at: str | None = None
 
 
 class AccountOption(BaseModel):

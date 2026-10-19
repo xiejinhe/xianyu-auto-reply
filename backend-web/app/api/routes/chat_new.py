@@ -41,6 +41,8 @@ from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
+from common.services.account_cookie_status_service import compute_cookie_status_map
+from common.utils.time_utils import safe_isoformat
 from common.utils.xianyu_utils import trans_cookies
 from common.utils.xianyu_message_parser import (
     AUDIO_PLACEHOLDER_TEXT,
@@ -154,6 +156,10 @@ async def list_accounts(
         result = await db.execute(query)
         accounts = result.scalars().all()
 
+        # 推断每个账号的网页 Cookie 会话状态（normal/risk_control/expired/disabled），
+        # 供在线聊天页展示，无需新增数据库字段/迁移。
+        cookie_status_map = await compute_cookie_status_map(db, accounts)
+
         # 管理员场景批量查用户名
         owner_map: dict[int, str] = {}
         if is_admin:
@@ -192,6 +198,11 @@ async def list_accounts(
                 # 事件补拉历史并响铃（实现"断线也响"）。完整断开（无客户端）的账号不订阅。
                 "has_client": acc.account_id in manager.clients,
                 "status": acc.status or "active",
+                # 网页 Cookie 会话状态推断结果（无需新增字段/迁移）：
+                # normal=正常 / risk_control=风控中 / expired=失效需重登 / disabled=已禁用
+                "cookie_status": cookie_status_map.get(acc.account_id, "normal"),
+                "last_login_at": safe_isoformat(acc.last_login_at),
+                "last_refresh_at": safe_isoformat(acc.last_refresh_at),
             }
             if is_admin:
                 item["owner"] = owner_map.get(acc.owner_id, str(acc.owner_id))

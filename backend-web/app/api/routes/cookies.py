@@ -17,6 +17,7 @@ from app.api import deps
 from common.models.user import User
 from common.models.xy_account import XYAccount
 from common.utils.time_utils import safe_isoformat
+from common.services.account_cookie_status_service import compute_cookie_status_map
 from common.schemas.account import (
     AccountAutoConfirmUpdate,
     AccountAutoPolishUpdate,
@@ -189,6 +190,8 @@ async def list_cookie_details(
             filter_counts[row.account_id] = row.count
     
     details: list[AccountDetail] = []
+    # 推断每个账号的网页 Cookie 会话状态（normal/risk_control/expired/disabled）
+    cookie_status_map = await compute_cookie_status_map(session, accounts)
     for account in accounts:
         details.append(
             AccountDetail(
@@ -221,6 +224,9 @@ async def list_cookie_details(
                 show_browser=bool(account.show_browser),
                 disable_reason=account.disable_reason or "",
                 filter_count=filter_counts.get(account.account_id, 0),
+                cookie_status=cookie_status_map.get(account.account_id, "normal"),
+                last_login_at=safe_isoformat(account.last_login_at),
+                last_refresh_at=safe_isoformat(account.last_refresh_at),
             )
         )
     return details
@@ -287,6 +293,10 @@ async def list_cookie_details_paginated(
         online_account_ids=list(online_ids),
         owner_username=owner_username,
     )
+
+    # 推断每个账号的网页 Cookie 会话状态（normal/risk_control/expired/disabled），
+    # 供前端在「账号列表」「在线聊天」两处展示，无需新增数据库字段/迁移。
+    cookie_status_map = await compute_cookie_status_map(session, accounts)
     
     # 获取所有账号的消息过滤规则数量
     account_ids = [acc.account_id for acc in accounts]
@@ -374,6 +384,11 @@ async def list_cookie_details_paginated(
             "owner_username": owner_username_map.get(account.owner_id, ""),
             "created_at": safe_isoformat(account.created_at),
             "updated_at": safe_isoformat(account.updated_at),
+            # 网页 Cookie 会话状态推断结果（无需新增字段/迁移）：
+            # normal=正常 / risk_control=风控中 / expired=失效需重登 / disabled=已禁用
+            "cookie_status": cookie_status_map.get(account.account_id, "normal"),
+            "last_login_at": safe_isoformat(account.last_login_at),
+            "last_refresh_at": safe_isoformat(account.last_refresh_at),
         })
     
     return {

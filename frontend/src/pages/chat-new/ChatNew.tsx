@@ -58,6 +58,7 @@ import {
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, adjustOrderPrice, type OrderDetail } from '@/api/orders'
 import { getOrderStatusMeta, SHIPPABLE_STATUSES } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
+import { getCookieStatusMeta, formatRelativeTime } from '@/utils/cookieStatus'
 
 // ==================== 订单卡片富气泡 ====================
 /** 与闲鱼 APP 一致的订单卡片：标题/描述/演出信息/订单号 + 动作按钮。
@@ -2853,6 +2854,19 @@ export function ChatNew() {
                     <span className="text-xs text-gray-400">
                       {acc.connected ? '已连接' : acc.status !== 'active' ? '已禁用' : '未连接'}
                     </span>
+                    {(() => {
+                      const meta = getCookieStatusMeta(acc.cookie_status)
+                      const needWarn = acc.cookie_status === 'risk_control' || acc.cookie_status === 'expired'
+                      if (!needWarn) return null
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${meta.badgeClass}`}
+                          title={`${meta.desc}（最后登录：${formatRelativeTime(acc.last_login_at)}，最后刷新：${formatRelativeTime(acc.last_refresh_at)}）`}
+                        >
+                          {meta.label}
+                        </span>
+                      )
+                    })()}
                     {(accountUnread[acc.account_id] || 0) > 0 && (
                       <span
                         className="ml-auto inline-flex min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-medium"

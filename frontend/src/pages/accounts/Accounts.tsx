@@ -7,6 +7,7 @@ import { getDefaultReply, updateDefaultReply, uploadDefaultReplyImage } from '@/
 import { getAutoRateConfig, updateAutoRateConfig } from '@/api/autoRate'
 import { checkAdminDefaultPassword } from '@/api/auth'
 import { getApiErrorMessage } from '@/utils/request'
+import { getCookieStatusMeta, formatRelativeTime } from '@/utils/cookieStatus'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { useMenuVisibilityStore } from '@/store/menuVisibilityStore'
@@ -2407,6 +2408,7 @@ export function Accounts() {
                   <th className="whitespace-nowrap min-w-[80px]">过滤词</th>
                   <th className="whitespace-nowrap min-w-[80px]">今日回复</th>
                   <th className="whitespace-nowrap min-w-[120px]">状态</th>
+                  <th className="whitespace-nowrap min-w-[140px]">Cookie状态</th>
                   <th className="whitespace-nowrap min-w-[90px]">在线状态</th>
                   <th className="whitespace-nowrap min-w-[90px]">配置密码</th>
                   <th className="whitespace-nowrap min-w-[620px]">功能开关</th>
@@ -2417,7 +2419,7 @@ export function Accounts() {
               <tbody>
                 {accounts.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 12 : 11}>
+                    <td colSpan={isAdmin ? 13 : 12}>
                       <div className="empty-state py-8">
                         <p className="text-slate-500 dark:text-slate-400">暂无账号，请添加新账号</p>
                       </div>
@@ -2475,6 +2477,27 @@ export function Accounts() {
                             title={account.disable_reason}
                           >
                             {account.disable_reason}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="flex flex-col gap-0.5">
+                        {(() => {
+                          const meta = getCookieStatusMeta(account.cookie_status)
+                          return (
+                            <span
+                              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded ${meta.badgeClass}`}
+                              title={`${meta.desc}（最后登录：${formatRelativeTime(account.last_login_at)}，最后刷新：${formatRelativeTime(account.last_refresh_at)}）`}
+                            >
+                              <span className={`status-dot ${account.cookie_status === 'normal' ? 'status-dot-success' : account.cookie_status === 'disabled' ? 'status-dot-danger' : 'status-dot-warning'}`} />
+                              {meta.label}
+                            </span>
+                          )
+                        })()}
+                        {(account.cookie_status === 'risk_control' || account.cookie_status === 'expired') && (
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                            刷新于 {formatRelativeTime(account.last_refresh_at)}
                           </span>
                         )}
                       </div>

@@ -94,6 +94,10 @@ export const getAccountDetailsPaginated = async (
     owner_username?: string
     created_at?: string
     updated_at?: string
+    // 网页 Cookie 会话状态推断结果（normal/risk_control/expired/disabled）
+    cookie_status?: 'normal' | 'risk_control' | 'expired' | 'disabled'
+    last_login_at?: string | null
+    last_refresh_at?: string | null
   }
   
   // 构建查询参数
@@ -175,6 +179,9 @@ export const getAccountDetailsPaginated = async (
       use_default_reply: false,
       created_at: item.created_at,
       updated_at: item.updated_at,
+      cookie_status: item.cookie_status || 'normal',
+      last_login_at: item.last_login_at ?? null,
+      last_refresh_at: item.last_refresh_at ?? null,
     })),
     total: result.total,
     page: result.page,

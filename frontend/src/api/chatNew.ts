@@ -22,6 +22,10 @@ export interface ChatAccount {
    *  以便账号自动重连后补拉历史并响铃（断线也响）。 */
   has_client?: boolean
   status: string
+  /** 网页 Cookie 会话状态推断结果（normal/risk_control/expired/disabled） */
+  cookie_status?: 'normal' | 'risk_control' | 'expired' | 'disabled'
+  last_login_at?: string | null
+  last_refresh_at?: string | null
   /** 所属用户（管理员查看时返回） */
   owner?: string
 }
