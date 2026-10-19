@@ -38,6 +38,7 @@ class AppChannelPushRequest(BaseModel):
     text: str = Field(default="", description="文本内容")
     images: List[str] = Field(default_factory=list, description="图片URL列表")
     time_ms: int = Field(default=0, description="消息时间（毫秒时间戳）")
+    card: Optional[dict] = Field(default=None, description="订单卡片富数据（按钮/订单号/演出信息），非交易卡片为None")
 
 
 class AppChannelTypingRequest(BaseModel):
@@ -75,6 +76,10 @@ async def receive_app_channel_push(
         "text": req.text,
         "images": req.images or [],
         "time": req.time_ms or 0,
+        # 订单卡片富数据（修改价格/去填写/发货凭证等按钮 + 订单号 + 演出信息），
+        # 由 websocket 服务从 msg["1"]["6"]["3"]["5"] 的 dxCard 解析后转发。
+        # 前端有 card 时渲染富事件卡，无则退回纯文本。
+        "card": req.card,
         # 来源标记：App 通道的 messageId（bizTag 里的 32 位 hex）与 IM 网关
         # 历史接口的 messageId（如 4347684267508.PNM）是两套互不相通的 ID，
         # 同一条消息会以两个不同 ID 的副本到达前端。前端 mergeMessages

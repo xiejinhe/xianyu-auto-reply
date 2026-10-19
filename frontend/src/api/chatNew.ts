@@ -98,6 +98,46 @@ export interface XianyuUserProfile {
   replyInterval?: string
 }
 
+/** 订单卡片富数据（后端从闲鱼卡片载荷解析） */
+export interface OrderCardButton {
+  /** 按钮文案，如"修改价格" / "去填写" / "查看发货凭证" */
+  text: string
+  /** 按钮动作 URL（fleamarket:// scheme 或 https H5） */
+  url: string
+  /** 动作类型：adjust_price / smart_form / shipping_proof / order_detail / goto_pay */
+  action: string
+}
+
+export interface OrderCardShowInfo {
+  /** 演出名称（含"演出名称："前缀） */
+  concertName?: string
+  /** 门票数量（含"门票数量："前缀） */
+  ticketCount?: string
+  /** 演出时间（含"演出时间："前缀） */
+  date?: string
+}
+
+export interface OrderCardData {
+  /** 卡片类型：placed 已拍下 / price_modified 改价待付款 / to_fill_show 待填演出信息 /
+   * show_submitted 待确认演出信息 / show_confirmed 已确认演出信息 /
+   * to_ship 待发货 / shipped 已发货带凭证 / shipped_notice 发货通知 */
+  kind: string
+  title: string
+  desc: string
+  /** 闲鱼订单号 */
+  order_id: string
+  /** 卡片按钮（无按钮为 null） */
+  button: OrderCardButton | null
+  /** 演出信息字段（门票类卡片有） */
+  show_info: OrderCardShowInfo | null
+  /** bizTag.taskName 原始分类标签 */
+  task_name: string
+  /** 卡片整体点击 URL */
+  target_url: string
+  bg_color: string
+  template: string
+}
+
 /** 聊天消息 */
 export interface ChatMessage {
   messageId: string
@@ -119,6 +159,9 @@ export interface ChatMessage {
   /** 事件类别（后端 classify_event 给出）：performance / refund / shipping /
    * payment / done / generic，用于事件卡图标 */
   eventKind?: string
+  /** 订单卡片富数据（按钮/订单号/演出信息字段），非交易卡片为 undefined。
+   * 有值时前端渲染富事件卡（与闲鱼 APP 一致的按钮 + 演出信息） */
+  card?: OrderCardData
   time: number
   /** 读状态（IM 原始字段）：0=未读、2=已读；自己消息=对方是否已读，对方消息=自己是否已读 */
   readStatus?: number

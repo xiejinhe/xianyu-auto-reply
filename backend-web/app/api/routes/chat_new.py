@@ -49,6 +49,7 @@ from common.utils.xianyu_message_parser import (
     extract_audio_info,
     classify_event,
 )
+from common.utils.order_card_parser import parse_rich_card_decoded
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1476,11 +1477,15 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         # 把解密后的完整 decoded dict 原样写入采样文件，供后续分析卡片按钮 /
         # action / 订单号等未解析字段的真实 key 名。采集到数据前，卡片按钮
         # 映射（修改价格/去填写/提醒收货等）无从设计。
+        rich_card = None
         if msg_type == "card" or str(msg_text or "").startswith("["):
             sample_card(
                 "http_history", account_id, cid,
                 str(message.get("messageId", "") or ""), msg_text, decoded,
             )
+            # 富数据提取：历史载荷与推送一致（dxCard）时全量提取，
+            # 简化 {title/template} 形式时合成仅标题记录，前端统一按富卡片渲染
+            rich_card = parse_rich_card_decoded(decoded, msg_text)
 
         return {
             "messageId": str(message.get("messageId", "") or ""),
@@ -1495,6 +1500,8 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
             "time": msg_time,
             "isEvent": is_event,
             "eventKind": event_kind,
+            # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
+            "card": rich_card,
             # 读状态（IM 原始字段，实测 0=未读、2=已读）：
             # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
             "readStatus": model.get("readStatus"),

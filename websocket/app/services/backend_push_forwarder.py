@@ -92,12 +92,16 @@ def schedule_chat_push(
     text: str = "",
     images: Optional[List[str]] = None,
     time_ms: int = 0,
+    card: Optional[dict] = None,
 ) -> None:
     """
     安排一次转发（非阻塞）
 
     调用方（message_handler）解析完一条聊天消息后调用，本函数立即返回，
     真正的 HTTP 请求在后台任务里跑，失败不影响自动回复。
+
+    card: 订单卡片富数据（parse_rich_card 的返回值，非交易卡片为 None），
+    随消息一起转发给前端渲染富卡片（按钮/订单号/演出信息字段）。
     """
     if not account_id or not cid:
         return
@@ -116,6 +120,7 @@ def schedule_chat_push(
         "text": text or "",
         "images": images or [],
         "time_ms": int(time_ms or 0),
+        "card": card,
     }
     try:
         task = asyncio.create_task(_post(payload))

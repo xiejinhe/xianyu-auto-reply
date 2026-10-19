@@ -20,6 +20,7 @@ from common.utils.xianyu_message_parser import (
     parse_content_with_audio,
     classify_event,
 )
+from common.utils.order_card_parser import parse_rich_card
 
 from app.services.chat_new.card_sampler import sample_card
 
@@ -123,6 +124,7 @@ class PushMessageParser:
 
             # 方括号开头 = 闲鱼系统/交易摘要（如 [买家已付款]），原始载荷采样，
             # 供后续分析卡片按钮与结构化字段（只读落盘，零风控）
+            rich_card = parse_rich_card(msg_1)
             if str(reminder or "").startswith("["):
                 sample_card(
                     "push_summary", self.account_id, cid,
@@ -153,6 +155,8 @@ class PushMessageParser:
                     "audioUrl": audio_url,
                     "audioDuration": audio_duration,
                     "time": msg_time,
+                    # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
+                    "card": rich_card,
                 },
             }
         except Exception as e:
@@ -199,6 +203,8 @@ class PushMessageParser:
                     "text": str(text_content),
                     "images": [],
                     "time": msg_time,
+                    # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
+                    "card": parse_rich_card(msg_1),
                     **dict(zip(("isEvent", "eventKind"), classify_event(str(text_content), "card"))),
                 },
             }

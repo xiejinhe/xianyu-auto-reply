@@ -5,7 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
 const EVENT_ICONS: Record<string, typeof Info> = {
@@ -50,12 +50,201 @@ import {
   type ChatMessage,
   type CustomerOrder,
   type CustomerOrderMark,
+  type OrderCardData,
   type QuickPhrase,
   type XianyuUserProfile,
 } from '@/api/chatNew'
 import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
-import { getOrderStatusMeta } from './orderStatus'
+import { getOrderStatusMeta, SHIPPABLE_STATUSES } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
+
+// ==================== 订单卡片富气泡 ====================
+/** 与闲鱼 APP 一致的订单卡片：标题/描述/演出信息/订单号 + 动作按钮。
+ *  数据来自后端 order_card_parser 解析的卡片富载荷（msg.card）。
+ *  按钮分流：
+ *  - to_ship（待发货，如门票-提醒发货-卖家）走系统已有发货/无物流发货接口，
+ *    订单号缺失时从会话「待发货」订单兜底（该卡原始载荷不带订单号）；
+ *  - https 深链（发货凭证 H5）直接新窗口打开；
+ *  - 其余写侧动作（买家付款/订单改价/演出信息填写）系统未接，
+ *    点击弹 toast 引导去闲鱼 APP 完成。 */
+interface OrderCardBubbleProps {
+  card: OrderCardData
+  /** 会话当前订单列表：卡片没带订单号时，待发货卡从这里取「待发货」订单 */
+  sessionOrders: CustomerOrder[]
+  deliveringOrderNo: string
+  confirmingOrderNo: string
+  onDeliver: (orderNo: string) => void
+  onNoLogisticsDeliver: (orderNo: string) => void
+  onToast: (toast: { message: string; type: 'success' | 'error' | 'warning' | 'info' }) => void
+}
+
+/** 卡片类型 -> 状态小标：卖家一眼看出这张卡该干什么 */
+const ORDER_CARD_KIND_HINT: Record<string, string> = {
+  placed: '待付款',
+  price_modified: '待付款',
+  to_fill_show: '待填写演出信息',
+  show_submitted: '待确认演出信息',
+  show_confirmed: '演出信息已确认',
+  to_ship: '待发货',
+  shipped: '已发货',
+  shipped_notice: '已发货',
+}
+
+function OrderCardBubble({
+  card,
+  sessionOrders,
+  deliveringOrderNo,
+  confirmingOrderNo,
+  onDeliver,
+  onNoLogisticsDeliver,
+  onToast,
+}: OrderCardBubbleProps) {
+  // 待发货卡（门票-提醒发货-卖家）原始载荷不带订单号，从会话「待发货」订单兜底
+  const fallbackOrderNo =
+    card.kind === 'to_ship'
+      ? sessionOrders.find((o) => SHIPPABLE_STATUSES.includes(o.status))?.order_no || ''
+      : ''
+  const orderNo = card.order_id || fallbackOrderNo
+  const busy = !!orderNo && (deliveringOrderNo === orderNo || confirmingOrderNo === orderNo)
+  const kindHint = ORDER_CARD_KIND_HINT[card.kind] || ''
+
+  /** https 链接直接新窗口打开，返回是否打开成功 */
+  const openUrl = (url: string) => {
+    if (url && /^https?:\/\//.test(url)) {
+      window.open(url, '_blank', 'noopener,noreferrer')
+      return true
+    }
+    return false
+  }
+
+  const handleCardButton = () => {
+    const btn = card.button
+    if (!btn) return
+    // https 链接（发货凭证 H5 等）直接打开
+    if (openUrl(btn.url)) return
+    if (btn.action === 'goto_pay') {
+      onToast({ message: '买家付款动作，请在闲鱼 APP 里完成', type: 'info' })
+    } else if (btn.action === 'adjust_price') {
+      onToast({ message: '订单改价功能建设中，请先在闲鱼 APP 操作', type: 'warning' })
+    } else if (btn.action === 'smart_form') {
+      onToast({ message: '演出信息填写功能建设中，请先在闲鱼 APP 操作', type: 'warning' })
+    } else if (btn.action === 'order_detail' && openUrl(card.target_url)) {
+      // https 订单详情已直接打开
+    } else {
+      onToast({ message: '请前往闲鱼 APP 完成该操作', type: 'info' })
+    }
+  }
+
+  // 演出信息行：值形如「演出名称：北京张杰」，按「：」拆成标签 + 内容
+  const showInfoRows: Array<{ key: string; icon: typeof Info; value: string }> = []
+  if (card.show_info) {
+    if (card.show_info.concertName) showInfoRows.push({ key: 'concertName', icon: Mic, value: card.show_info.concertName })
+    if (card.show_info.ticketCount) showInfoRows.push({ key: 'ticketCount', icon: Ticket, value: card.show_info.ticketCount })
+    if (card.show_info.date) showInfoRows.push({ key: 'date', icon: Calendar, value: card.show_info.date })
+  }
+
+  return (
+    <div className="min-w-[240px] max-w-full">
+      {/* 头部：图标（用卡片自带底色）+ 标题 + 状态小标 */}
+      <div className="flex items-start gap-2">
+        <div
+          className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+          style={{ backgroundColor: card.bg_color || '#FFE60F' }}
+        >
+          <Ticket className="w-4 h-4 text-gray-800" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm font-semibold leading-5">{card.title || '订单卡片'}</span>
+            {kindHint ? (
+              <span className="flex-shrink-0 rounded bg-black/10 dark:bg-white/20 px-1.5 py-0.5 text-[10px] leading-none">
+                {kindHint}
+              </span>
+            ) : null}
+          </div>
+          {card.desc ? <div className="text-xs opacity-80 leading-4 mt-0.5">{card.desc}</div> : null}
+        </div>
+      </div>
+
+      {/* 演出信息（门票类卡片） */}
+      {showInfoRows.length > 0 ? (
+        <div className="mt-2 rounded-md bg-black/5 dark:bg-white/10 px-2.5 py-2 space-y-1">
+          {showInfoRows.map(({ key, icon: Icon, value }) => {
+            const idx = value.indexOf('：')
+            const label = idx > 0 ? value.slice(0, idx + 1) : value
+            const content = idx > 0 ? value.slice(idx + 1) : ''
+            return (
+              <div key={key} className="flex items-start gap-1.5 text-xs leading-4">
+                <Icon className="w-3 h-3 flex-shrink-0 opacity-70 mt-0.5" />
+                <span className="opacity-70 flex-shrink-0">{label}</span>
+                {content ? <span className="font-medium">{content}</span> : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+
+      {/* 订单号 */}
+      {orderNo ? <div className="text-[11px] opacity-60 mt-1.5">订单号 {orderNo}</div> : null}
+
+      {/* 按钮区 */}
+      <div className="flex flex-wrap gap-2 mt-2.5">
+        {/* 待发货卡：走系统已有发货接口（与客户订单面板一致） */}
+        {card.kind === 'to_ship' && orderNo ? (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDeliver(orderNo)}
+              className="inline-flex items-center gap-1 rounded-md bg-orange-500 hover:bg-orange-600 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-white transition-colors"
+            >
+              <Truck className="w-3.5 h-3.5" />
+              {deliveringOrderNo === orderNo ? '发货中…' : '去发货'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onNoLogisticsDeliver(orderNo)}
+              className="inline-flex items-center gap-1 rounded-md border border-current opacity-70 hover:opacity-100 disabled:opacity-50 px-3 py-1.5 text-xs font-medium transition-opacity"
+            >
+              <Package className="w-3.5 h-3.5" />
+              {confirmingOrderNo === orderNo ? '处理中…' : '无物流发货'}
+            </button>
+          </>
+        ) : null}
+
+        {/* 卡片自带按钮（修改价格/去付款/去填写/查看发货凭证等） */}
+        {card.button ? (
+          <button
+            type="button"
+            onClick={handleCardButton}
+            className="inline-flex items-center gap-1 rounded-md bg-orange-500 hover:bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            {card.button.text}
+          </button>
+        ) : null}
+
+        {/* 无自带按钮、但 APP 里整卡可点的确认类卡片：给一个引导按钮 */}
+        {!card.button && card.kind === 'show_submitted' ? (
+          <button
+            type="button"
+            onClick={() => onToast({ message: '请在闲鱼 APP 会话中点击该卡片，确认演出信息', type: 'info' })}
+            className="inline-flex items-center gap-1 rounded-md border border-current opacity-70 hover:opacity-100 px-3 py-1.5 text-xs font-medium transition-opacity"
+          >
+            <CheckCircle className="w-3.5 h-3.5" />
+            去确认
+          </button>
+        ) : null}
+
+        {/* 待发货但没拿到订单号（卡片载荷不带 + 订单同步失败）：引导去 APP */}
+        {card.kind === 'to_ship' && !orderNo ? (
+          <span className="text-xs opacity-60 self-center">未同步到订单号，请在闲鱼 APP 发货</span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
 
 /** cid 统一比较：推送与会话列表两条来源的 cid 偶有 @goofish 后缀差异，去掉再比。
  *  不做归一化时，正打开的会话会被推送误判成「非当前会话」——列表红点 +1、
@@ -2988,7 +3177,7 @@ export function ChatNew() {
                     <div className={`flex items-center gap-1.5 ${msg.isSelf ? 'flex-row-reverse' : ''}`}>
                       <div
                         className={`rounded-lg px-3 py-2 text-sm break-words ${
-                          isEvent
+                          isEvent || msg.card
                             ? msg.isSelf
                               ? 'bg-blue-50 border border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/60 dark:text-blue-200'
                               : 'bg-gray-50 border border-gray-200 text-gray-600 dark:bg-gray-700/50 dark:border-gray-600 dark:text-gray-300'
@@ -3045,6 +3234,17 @@ export function ChatNew() {
                               />
                             ))}
                           </div>
+                        ) : msg.card ? (
+                          // 订单卡片富气泡：与闲鱼 APP 一致的标题/描述/演出信息/订单号/按钮
+                          <OrderCardBubble
+                            card={msg.card}
+                            sessionOrders={customerOrders}
+                            deliveringOrderNo={deliveringOrderNo}
+                            confirmingOrderNo={confirmingOrderNo}
+                            onDeliver={handleDeliverOrder}
+                            onNoLogisticsDeliver={handleNoLogisticsDelivery}
+                            onToast={addToast}
+                          />
                         ) : isEvent ? (
                           // 事件卡气泡：图标 + 文本，浅底描边已在外层 className 处理
                           <span className="inline-flex items-start gap-1.5">

@@ -17,6 +17,7 @@ from .utils import safe_str
 from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
 from common.utils.card_sampler import sample_card
+from common.utils.order_card_parser import parse_rich_card
 from app.services.backend_push_forwarder import schedule_chat_push, schedule_typing_push
 
 # 原始帧调试开关（环境变量 IM_FRAME_DEBUG=1 开启）：把「不是聊天消息」的
@@ -375,6 +376,10 @@ class MessageHandler:
                 "msg_time": msg_time,
                 "is_plain_text": self.is_plain_text_message(message),
                 "raw_message": message,
+                # 订单卡片富数据（按钮/订单号/演出信息字段），非交易卡片为 None。
+                # 富内容在 msg["1"]["6"]["3"]["5"] 的 dxCard JSON 里，见
+                # common.utils.order_card_parser 说明。
+                "rich_card": parse_rich_card(message),
             }
             
         except Exception as e:
@@ -885,7 +890,10 @@ class MessageHandler:
         """
         try:
             content = str(parsed.get("send_message") or "").strip()
-            if not content or content == "[卡片消息]":
+            rich_card = parsed.get("rich_card")
+            # 纯 "[卡片消息]" 占位（解析不出富数据）仍跳过；带富数据的订单卡片
+            # 放行——前端要渲染的正是它（按钮 / 订单号 / 演出信息字段）
+            if rich_card is None and (not content or content == "[卡片消息]"):
                 return
             chat_id = str(parsed.get("chat_id") or "").strip()
             if not chat_id:
@@ -913,12 +921,19 @@ class MessageHandler:
             )
 
             sender_id = str(parsed.get("send_user_id") or "")
+            # 消息类型：图片 > 订单卡片 > 文本
+            if is_image:
+                fwd_type = "image"
+            elif rich_card:
+                fwd_type = "card"
+            else:
+                fwd_type = "text"
             # 打一行显式日志：App 通道是否真的被触发，只能靠它和 backend-web 的
             # `POST /api/v1/internal/chat-push` 两边对表确认（曾经因为没有日志，
             # 用户看到"5 秒"时无法判断到底是本通道生效还是 15 秒轮询撞上的）
             logger.info(
                 f"【{self.cookie_id}】App通道转发: cid={chat_id}, "
-                f"type={'image' if is_image else 'text'}, id={message_id or '-'}"
+                f"type={fwd_type}, id={message_id or '-'}"
             )
             schedule_chat_push(
                 account_id=self.cookie_id,
@@ -927,10 +942,11 @@ class MessageHandler:
                 sender_id=sender_id,
                 sender_name=str(parsed.get("send_user_name") or ""),
                 is_self=bool(self.myid and sender_id == str(self.myid)),
-                msg_type="image" if is_image else "text",
+                msg_type=fwd_type,
                 text="" if is_image else content,
                 images=lines if is_image else [],
                 time_ms=time_ms,
+                card=rich_card,
             )
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】转发消息到 backend-web 失败: {safe_str(e)}")
