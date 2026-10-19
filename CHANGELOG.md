@@ -37,8 +37,13 @@
   转换，避免浮点误差）→ websocket 内部路由 /internal/orders/adjust-price →
   auto_delivery_handler.adjust_order_price → mtop 调用。与手动发货/取消订单
   同一套 websocket_client 转发模式。
-- 接线测试通过：内部路由对未连接账号返回 404、backend 路由未登录返回 401；
-  真实改价需一笔未付款订单端到端验证（等用户拍下不付款后试点）。
+- 接线测试通过：内部路由对未连接账号返回 404、backend 路由未登录返回 401。
+- **真实验证通过（2026-10-19 20:48）**：用户拍下真实未付款订单
+  3317147580022070667（¥100.00），系统改价 ¥95.50 成功，日志显示首次调用
+  返回 FAIL_SYS_TOKEN_EXOIRED（mtop 令牌过期），Set-Cookie 写回后重试第 2 次
+  即 SUCCESS——自动重试机制顺带得到实战验证。买家侧「我已修改价格，等待你
+  付款」卡片 20:48:00 实时推送，ws_push + http_history 双落盘，
+  App 通道转发正常。
 
 ---
 
