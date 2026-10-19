@@ -122,6 +122,11 @@ export const cancelOrder = (orderNo: string): Promise<ApiResponse> => {
   return post(`${ORDER_PREFIX}/cancel`, { order_no: orderNo })
 }
 
+// 订单改价（仅待付款订单；price 单位：元，如 "95.50"）
+export const adjustOrderPrice = (orderNo: string, price: string): Promise<ApiResponse> => {
+  return post(`${ORDER_PREFIX}/adjust-price`, { order_no: orderNo, price })
+}
+
 export const fetchXianyuOrders = (cookieId?: string): Promise<FetchXianyuOrdersResponse> => {
   return post(`${ORDER_PREFIX}/fetch-xianyu`, { cookie_id: cookieId || null }, { timeout: 600000 })
 }

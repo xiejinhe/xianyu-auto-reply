@@ -5,7 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
 const EVENT_ICONS: Record<string, typeof Info> = {
@@ -54,7 +54,7 @@ import {
   type QuickPhrase,
   type XianyuUserProfile,
 } from '@/api/chatNew'
-import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, type OrderDetail } from '@/api/orders'
+import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, adjustOrderPrice, type OrderDetail } from '@/api/orders'
 import { getOrderStatusMeta, SHIPPABLE_STATUSES } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
 
@@ -73,8 +73,10 @@ interface OrderCardBubbleProps {
   sessionOrders: CustomerOrder[]
   deliveringOrderNo: string
   confirmingOrderNo: string
+  adjustingOrderNo: string
   onDeliver: (orderNo: string) => void
   onNoLogisticsDeliver: (orderNo: string) => void
+  onAdjustPrice: (orderNo: string, currentPrice?: string) => void
   onToast: (toast: { message: string; type: 'success' | 'error' | 'warning' | 'info' }) => void
 }
 
@@ -95,8 +97,10 @@ function OrderCardBubble({
   sessionOrders,
   deliveringOrderNo,
   confirmingOrderNo,
+  adjustingOrderNo,
   onDeliver,
   onNoLogisticsDeliver,
+  onAdjustPrice,
   onToast,
 }: OrderCardBubbleProps) {
   // 待发货卡（门票-提醒发货-卖家）原始载荷不带订单号，从会话「待发货」订单兜底
@@ -107,6 +111,13 @@ function OrderCardBubble({
   const orderNo = card.order_id || fallbackOrderNo
   const busy = !!orderNo && (deliveringOrderNo === orderNo || confirmingOrderNo === orderNo)
   const kindHint = ORDER_CARD_KIND_HINT[card.kind] || ''
+  // 会话订单里匹配的那笔（用于取当前价/判断是否仍待付款）
+  const matchedOrder = orderNo ? sessionOrders.find((o) => o.order_no === orderNo) : undefined
+  // 「已拍下」卡（待付款）才给修改价格入口：订单同步里有该单时要求仍未付款，
+  // 同步里没拉到（matchedOrder 为空）时默认展示，由接口侧最终校验
+  const canAdjustPrice =
+    card.kind === 'placed' && !!orderNo &&
+    (!matchedOrder || matchedOrder.status === 'pending_payment' || matchedOrder.status === '待付款')
 
   /** https 链接直接新窗口打开，返回是否打开成功 */
   const openUrl = (url: string) => {
@@ -125,7 +136,12 @@ function OrderCardBubble({
     if (btn.action === 'goto_pay') {
       onToast({ message: '买家付款动作，请在闲鱼 APP 里完成', type: 'info' })
     } else if (btn.action === 'adjust_price') {
-      onToast({ message: '订单改价功能建设中，请先在闲鱼 APP 操作', type: 'warning' })
+      // 订单改价已实现：有订单号直接开改价弹窗（与「已拍下」卡的修改价格按钮同一条路）
+      if (orderNo) {
+        onAdjustPrice(orderNo, matchedOrder?.amount)
+      } else {
+        onToast({ message: '未取到订单号，请在闲鱼 APP 里修改价格', type: 'warning' })
+      }
     } else if (btn.action === 'smart_form') {
       onToast({ message: '演出信息填写功能建设中，请先在闲鱼 APP 操作', type: 'warning' })
     } else if (btn.action === 'order_detail' && openUrl(card.target_url)) {
@@ -213,8 +229,21 @@ function OrderCardBubble({
           </>
         ) : null}
 
-        {/* 卡片自带按钮（修改价格/去付款/去填写/查看发货凭证等） */}
-        {card.button ? (
+        {/* 待付款卡（已拍下）：订单改价，议价后改订单总价（买家会收到改价通知） */}
+        {canAdjustPrice ? (
+          <button
+            type="button"
+            disabled={adjustingOrderNo === orderNo}
+            onClick={() => onAdjustPrice(orderNo, matchedOrder?.amount)}
+            className="inline-flex items-center gap-1 rounded-md bg-orange-500 hover:bg-orange-600 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-white transition-colors"
+          >
+            <Tag className="w-3.5 h-3.5" />
+            {adjustingOrderNo === orderNo ? '改价中…' : '修改价格'}
+          </button>
+        ) : null}
+
+        {/* 卡片自带按钮（去付款/去填写/查看发货凭证等；adjust_price 由上方修改价格按钮代替） */}
+        {card.button && card.button.action !== 'adjust_price' ? (
           <button
             type="button"
             onClick={handleCardButton}
@@ -492,6 +521,10 @@ export function ChatNew() {
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [deliveringOrderNo, setDeliveringOrderNo] = useState('')
   const [confirmingOrderNo, setConfirmingOrderNo] = useState('')
+  // 订单改价弹窗状态：adjustingOrderNo 非空即打开，adjustPriceInput 是新价格（元）
+  const [adjustingOrderNo, setAdjustingOrderNo] = useState('')
+  const [adjustPriceInput, setAdjustPriceInput] = useState('')
+  const [adjustingPrice, setAdjustingPrice] = useState(false)
   const [cancellingOrderNo, setCancellingOrderNo] = useState('')
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
   const [loadingOrderDetail, setLoadingOrderDetail] = useState(false)
@@ -1842,6 +1875,40 @@ export function ChatNew() {
       addToast({ message: e.message || '无物流发货失败', type: 'error' })
     } finally {
       setConfirmingOrderNo('')
+    }
+  }
+
+  // 打开订单改价弹窗（currentPrice 为会话订单里的当前总价，可能为空）
+  const openAdjustPriceModal = (orderNo: string, currentPrice?: string) => {
+    setAdjustingOrderNo(orderNo)
+    setAdjustPriceInput(currentPrice || '')
+  }
+
+  // 确认改价：走与发货/取消同一套 websocket 内部链路调闲鱼改价接口
+  const handleAdjustOrderPrice = async (orderNo: string, priceText: string) => {
+    const price = priceText.trim()
+    if (!price || isNaN(Number(price)) || Number(price) <= 0) {
+      addToast({ message: '请输入正确的价格', type: 'error' })
+      return
+    }
+    if (!(await requestConfirm({
+      message: `确认将订单 ${orderNo} 的价格修改为 ¥${price} 吗？改价后买家会收到通知。`,
+      confirmText: '确认改价',
+    }))) return
+    setAdjustingPrice(true)
+    try {
+      const res = await adjustOrderPrice(orderNo, price)
+      addToast({ message: res.message || (res.success ? '改价成功' : '改价失败'), type: res.success ? 'success' : 'error' })
+      if (res.success) {
+        setAdjustingOrderNo('')
+        await loadCustomerOrders(true)
+        // 订单金额变了，会话列表角标跟着刷一次
+        if (activeAccountId) void loadOrderMarks(activeAccountId)
+      }
+    } catch (e: any) {
+      addToast({ message: e.message || '改价失败', type: 'error' })
+    } finally {
+      setAdjustingPrice(false)
     }
   }
 
@@ -3241,8 +3308,10 @@ export function ChatNew() {
                             sessionOrders={customerOrders}
                             deliveringOrderNo={deliveringOrderNo}
                             confirmingOrderNo={confirmingOrderNo}
+                            adjustingOrderNo={adjustingOrderNo}
                             onDeliver={handleDeliverOrder}
                             onNoLogisticsDeliver={handleNoLogisticsDelivery}
+                            onAdjustPrice={openAdjustPriceModal}
                             onToast={addToast}
                           />
                         ) : isEvent ? (
@@ -3574,6 +3643,55 @@ export function ChatNew() {
         onConfirm={() => closeConfirm(true)}
         onCancel={() => closeConfirm(false)}
       />
+      {/* 订单改价弹窗：「已拍下」待付款卡片点「修改价格」打开，改价后买家会收到通知 */}
+      {adjustingOrderNo && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => { if (!adjustingPrice) setAdjustingOrderNo('') }}
+          />
+          <div className="relative w-full max-w-xs mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+            <h3 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">修改价格</h3>
+            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+              订单号 {adjustingOrderNo} · 改价后买家会收到通知
+            </p>
+            <label className="mb-1 block text-sm text-slate-600 dark:text-slate-300">改价后总价（元）</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              autoFocus
+              value={adjustPriceInput}
+              onChange={(e) => setAdjustPriceInput(e.target.value.replace(/[^\d.]/g, ''))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !adjustingPrice && adjustPriceInput) {
+                  void handleAdjustOrderPrice(adjustingOrderNo, adjustPriceInput)
+                }
+              }}
+              placeholder="0.00"
+              className="mb-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            />
+            <div className="flex gap-3">
+              <button
+                type="button"
+                disabled={adjustingPrice}
+                onClick={() => setAdjustingOrderNo('')}
+                className="flex-1 rounded-lg bg-slate-100 px-4 py-2.5 font-medium text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={adjustingPrice || !adjustPriceInput}
+                onClick={() => handleAdjustOrderPrice(adjustingOrderNo, adjustPriceInput)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+              >
+                {adjustingPrice && <Loader2 className="h-4 w-4 animate-spin" />}
+                确认改价
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <XianyuProfileModal
         isOpen={!!profileModal}
         userId={profileModal?.userId || ''}

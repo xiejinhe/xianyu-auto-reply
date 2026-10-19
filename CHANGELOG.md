@@ -8,12 +8,37 @@
 
 ---
 
-> **当前版本：`v1.0.35`**　｜　更新时间：**2026-10-19 19:40**
+> **当前版本：`v1.0.36`**　｜　更新时间：**2026-10-19 20:40**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.36 · 2026-10-19
+
+### 新增（用户可见）
+- **订单卡片「修改价格」按钮真正能用了（订单改价）**：v1.0.35 里「已拍下，
+  待付款」卡片的修改价格按钮还只是弹引导提示，现在走通真实接口——点击弹出
+  改价弹窗（自动预填当前订单价格），输入新价格确认后调用闲鱼改价接口
+  （mtop.taobao.idle.trade.user.adjust.price，与 APP「修改价格」同源），
+  改价后买家会收到「我已修改价格，等待你付款」通知。价格校验、待付款状态
+  校验、账号未连接校验齐全；只有待付款订单能改，已付款/已发货的旧卡片不会
+  再显示该按钮。
+- 接口参数经开源项目 Ydisks-Xianyu-Helper（Go，1.9k star，同样对接该接口）
+  交叉验证：modifyFee 单位为分、newTransportFee 固定 "0"、业务成功要求
+  ret 含 SUCCESS 且 data.success 为 true，重试策略与取消订单一致（set-cookie
+  写回后重签，最多 3 次）。
+
+### 技术说明（内部）
+- 全链路：前端改价弹窗 → POST /api/v1/orders/adjust-price（元→分用 Decimal
+  转换，避免浮点误差）→ websocket 内部路由 /internal/orders/adjust-price →
+  auto_delivery_handler.adjust_order_price → mtop 调用。与手动发货/取消订单
+  同一套 websocket_client 转发模式。
+- 接线测试通过：内部路由对未连接账号返回 404、backend 路由未登录返回 401；
+  真实改价需一笔未付款订单端到端验证（等用户拍下不付款后试点）。
 
 ---
 

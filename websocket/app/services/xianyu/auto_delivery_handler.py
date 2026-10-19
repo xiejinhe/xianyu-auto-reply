@@ -3822,3 +3822,140 @@ class AutoDeliveryHandler:
                 await asyncio.sleep(0.5)
                 return await self.close_order_by_seller(order_no, retry_count + 1)
             return False
+
+    async def adjust_order_price(self, order_no: str, price_cents: int, retry_count: int = 0) -> bool:
+        """卖家对待付款订单改价（议价后改订单总价，运费置 0）
+
+        调用闲鱼接口 mtop.taobao.idle.trade.user.adjust.price，与 APP「修改价格」
+        按钮（fleamarket://adjust_price?bizOrderId=<订单号>）同源。平台只接受
+        买家尚未付款的订单。参数口径：modifyFee 为改价后的订单总价（单位分），
+        newTransportFee 固定 "0"（免运费，与自动议价免邮场景一致）。
+        重试模式与 close_order_by_seller 相同：set-cookie 写回后用新 cookie 重签，
+        最多 3 次；业务成功要求 ret 含 SUCCESS 且 data.success 为 true。
+
+        Args:
+            order_no: 闲鱼订单号
+            price_cents: 改价后的订单总价，单位分（必须 > 0）
+            retry_count: 当前重试次数（递归内部使用）
+
+        Returns:
+            True 表示改价成功，False 表示失败或异常（不抛异常）
+        """
+        max_retry = 3
+
+        if not order_no:
+            logger.warning(f"【{self.cookie_id}】订单改价：order_no 为空，跳过")
+            return False
+        if not price_cents or price_cents <= 0:
+            logger.warning(f"【{self.cookie_id}】订单改价：价格必须大于 0，收到 {price_cents}")
+            return False
+        if not self.cookies_str:
+            logger.warning(f"【{self.cookie_id}】订单改价：未提供 Cookie，跳过")
+            return False
+
+        try:
+            from common.utils.xianyu_utils import trans_cookies, generate_sign
+
+            cookies = trans_cookies(self.cookies_str)
+            timestamp = str(int(time.time() * 1000))
+            # modifyFee 为整数分；订单号进 JSON 结构化字段，避免拼接破坏签名原文
+            data_payload = {
+                "modifyFee": int(price_cents),
+                "newTransportFee": "0",
+                "orderId": str(order_no),
+            }
+            data_val = json.dumps(data_payload, separators=(',', ':'), ensure_ascii=False)
+
+            token = cookies.get('_m_h5_tk', '').split('_')[0] if cookies.get('_m_h5_tk') else ''
+            if not token:
+                logger.warning(f"【{self.cookie_id}】订单改价：Cookie 中未找到 _m_h5_tk")
+
+            sign = generate_sign(timestamp, token, data_val)
+
+            params = {
+                'jsv': '2.7.2',
+                'appKey': '34839810',
+                't': timestamp,
+                'sign': sign,
+                'v': '1.0',
+                'type': 'originaljson',
+                'accountSite': 'xianyu',
+                'dataType': 'json',
+                'timeout': '20000',
+                'api': 'mtop.taobao.idle.trade.user.adjust.price',
+                'sessionOption': 'AutoLoginOnly',
+            }
+
+            headers = {
+                'accept': 'application/json',
+                'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'cache-control': 'no-cache',
+                'content-type': 'application/x-www-form-urlencoded',
+                'idle_site_biz_code': 'COMMONPRO',
+                'idle_user_group_member_id': '',
+                'pragma': 'no-cache',
+                'origin': 'https://seller.goofish.com',
+                'referer': 'https://seller.goofish.com/?site=COMMONPRO&spm=a21107h.44911108.0.0',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36',
+                'cookie': self.cookies_str.replace('\n', '').replace('\r', '') if self.cookies_str else '',
+            }
+
+            api_url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idle.trade.user.adjust.price/1.0/'
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    api_url,
+                    params=params,
+                    data={'data': data_val},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as response:
+                    res_json = await response.json()
+
+                    # 处理响应中的 set-cookie，更新本地 cookie（令牌过期时服务端会返回新 cookie）
+                    self._handle_response_cookies(response)
+
+                    ret_list = res_json.get('ret', []) or []
+                    data = res_json.get('data') or {}
+                    biz_success = bool(data.get('success')) if isinstance(data, dict) else False
+                    logger.info(
+                        f"【{self.cookie_id}】订单改价：order_no={order_no}, price_cents={price_cents}, "
+                        f"第{retry_count + 1}次响应 ret={ret_list}"
+                    )
+
+                    # 业务成功判定与 APP 一致：ret 含 SUCCESS 且 data.success 为 true
+                    if any('SUCCESS' in ret for ret in ret_list) and biz_success:
+                        logger.warning(
+                            f"【{self.cookie_id}】✅ 订单改价成功：order_no={order_no}, price_cents={price_cents}"
+                        )
+                        return True
+
+                    # 调用失败：使用更新后的 cookie 重试
+                    if retry_count < max_retry - 1:
+                        logger.info(
+                            f"【{self.cookie_id}】订单改价失败，准备重试({retry_count + 1}/{max_retry - 1})..."
+                        )
+                        await asyncio.sleep(0.5)
+                        return await self.adjust_order_price(order_no, price_cents, retry_count + 1)
+
+                    logger.warning(
+                        f"【{self.cookie_id}】订单改价多次失败：order_no={order_no}, ret={ret_list}"
+                    )
+                    return False
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"【{self.cookie_id}】订单改价超时（第{retry_count + 1}次）：order_no={order_no}"
+            )
+            if retry_count < max_retry - 1:
+                await asyncio.sleep(0.5)
+                return await self.adjust_order_price(order_no, price_cents, retry_count + 1)
+            return False
+        except Exception as e:
+            logger.error(
+                f"【{self.cookie_id}】订单改价异常（第{retry_count + 1}次）：order_no={order_no}, {self._safe_str(e)}"
+            )
+            if retry_count < max_retry - 1:
+                await asyncio.sleep(0.5)
+                return await self.adjust_order_price(order_no, price_cents, retry_count + 1)
+            return False

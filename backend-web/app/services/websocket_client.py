@@ -276,6 +276,17 @@ class WebSocketServiceClient:
             logger.error(f"取消订单失败: {order_no}, 错误: {e}")
             return {"success": False, "message": f"取消订单失败: {str(e)}"}
 
+    async def adjust_order_price(self, account_id: str, order_no: str, price_cents: int) -> dict:
+        """卖家对待付款订单改价（price_cents：改价后总价，单位分）"""
+        try:
+            return await self.http_client.post(
+                f"{self.base_url}/internal/orders/adjust-price",
+                json={"account_id": account_id, "order_no": order_no, "price_cents": price_cents},
+            )
+        except Exception as e:
+            logger.error(f"订单改价失败: {order_no}, 错误: {e}")
+            return {"success": False, "message": f"订单改价失败: {str(e)}"}
+
 
     async def solve_captcha(self, account_id: str, url: str, browser_timeout: int = 40,
                             call_type: str = "remote", call_user: str | None = None,

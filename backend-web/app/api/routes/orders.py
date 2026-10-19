@@ -36,6 +36,12 @@ class CancelOrderRequest(BaseModel):
     order_no: str
 
 
+class AdjustOrderPriceRequest(BaseModel):
+    """订单改价请求：price 为改价后的订单总价，单位元（如 "95.50"）"""
+    order_no: str
+    price: str
+
+
 class FetchXianyuOrdersRequest(BaseModel):
     """获取闲鱼订单请求"""
     cookie_id: str | None = None
@@ -430,6 +436,48 @@ async def cancel_order(
     if not result.get("success"):
         return ApiResponse(success=False, message=result.get("message", "取消订单失败"))
     return ApiResponse(success=True, message="订单已取消", data=result.get("data"))
+
+
+@router.post("/adjust-price")
+async def adjust_order_price(
+    request: AdjustOrderPriceRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    order_service: OrderService = Depends(deps.get_order_service),
+    account_service: AccountService = Depends(deps.get_account_service),
+):
+    """卖家对待付款订单改价（议价后改订单总价，运费置 0，买家会收到改价通知）"""
+    order = await order_service.get_order_by_no(request.order_no)
+    if not order:
+        return ApiResponse(success=False, message="订单不存在")
+    owner_id, is_admin = resolve_owner_scope(current_user)
+    if not is_admin and order.owner_id != current_user.id:
+        return ApiResponse(success=False, message="无权操作此订单")
+    if order.status not in {"pending_payment", "待付款"}:
+        return ApiResponse(success=False, message="只有待付款订单可以改价")
+    if not order.account_id:
+        return ApiResponse(success=False, message="订单缺少账号信息")
+    if not await account_service.get_account_for_user(owner_id, order.account_id):
+        return ApiResponse(success=False, message="账号不存在")
+
+    # 元 → 分：用 Decimal 避免浮点误差（如 95.5 * 100 = 9549.9999）
+    try:
+        price_cents = int((Decimal(request.price.strip()) * 100).to_integral_value())
+    except Exception:
+        return ApiResponse(success=False, message="价格格式不正确，请输入如 95.50 的金额")
+    if price_cents <= 0:
+        return ApiResponse(success=False, message="改价后的价格必须大于 0")
+
+    status_result = await websocket_client.get_account_status(order.account_id)
+    if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
+        return ApiResponse(success=False, message="账号未连接，请先启动账号")
+    result = await websocket_client.adjust_order_price(order.account_id, order.order_no, price_cents)
+    if not result.get("success"):
+        return ApiResponse(success=False, message=result.get("message", "改价失败"))
+    logger.info(
+        f"【订单改价】order_no={order.order_no}, price_cents={price_cents}, "
+        f"account={order.account_id}, operator={current_user.username}"
+    )
+    return ApiResponse(success=True, message="改价成功", data=result.get("data"))
 
 
 @router.post("/manual-delivery")

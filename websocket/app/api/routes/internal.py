@@ -95,6 +95,13 @@ class CancelOrderRequest(BaseModel):
     order_no: str
 
 
+class AdjustPriceRequest(BaseModel):
+    """订单改价请求：price_cents 为改价后的订单总价，单位分"""
+    account_id: str
+    order_no: str
+    price_cents: int
+
+
 class CreateChatRequest(BaseModel):
     """创建单聊会话请求
     
@@ -1143,6 +1150,31 @@ async def cancel_order(request: CancelOrderRequest):
         )
         await session.commit()
     return {"success": True, "code": 200, "message": "订单已取消", "data": {"order_no": request.order_no}}
+
+
+@router.post("/orders/adjust-price")
+async def adjust_price(request: AdjustPriceRequest):
+    """卖家对待付款订单改价（price_cents 单位：分，运费置 0）"""
+    from app.services.xianyu.cookie_manager import get_manager
+
+    xianyu_live = get_manager().instances.get(request.account_id)
+    if not xianyu_live:
+        return {"success": False, "code": 404, "message": "账号未连接", "data": None}
+
+    ok = await xianyu_live.auto_delivery_handler.adjust_order_price(request.order_no, request.price_cents)
+    if not ok:
+        return {
+            "success": False,
+            "code": 400,
+            "message": "改价失败，请确认订单处于待付款状态后重试",
+            "data": None,
+        }
+    return {
+        "success": True,
+        "code": 200,
+        "message": "改价成功",
+        "data": {"order_no": request.order_no, "price_cents": request.price_cents},
+    }
 
 
 async def _record_delivery_log(
