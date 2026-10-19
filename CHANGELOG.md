@@ -8,12 +8,35 @@
 
 ---
 
-> **当前版本：`v1.0.33`**　｜　更新时间：**2026-10-19 17:56**
+> **当前版本：`v1.0.34`**　｜　更新时间：**2026-10-19 18:55**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.34 · 2026-10-19
+
+### 修复
+- **订单卡片采样器漏采（v1.0.33 的采样覆盖不全）**：v1.0.33 只把采样器挂在
+  backend-web 的解析链路上，实测用户用手机 APP 走完整订单流程时
+  **backend-web 侧零推送、采样文件为空**。根因：backend-web 的 IM 是网页
+  会话（sendByReceiverScope），闲鱼不会把 APP 侧实时卡片 syncPush 给它；
+  真正收全部推送的是 websocket 服务那套自动回复长连接
+  （2026-10-19 18:43 实测：APP 里的 typing/消息帧全部出现在 websocket
+  服务日志，backend-web 静默）。
+- 修复：采样器实现上移到 `common/utils/card_sampler.py`（两个服务共用），
+  并在 websocket 服务的 `MessageHandler._process_single_message` 挂钩子
+  （chat/card/card-update 三类消息的原始解密 dict 落盘，source=ws_push，
+  主通道）。backend-web 侧原入口改为转发 shim，既有 import 不变。
+- 附带增强：关键词命中增加兜底——标题没命中交易关键词时扫描整个原始
+  JSON（订单卡片标题不一定在预期字段里，但载荷正文几乎必然含
+  「演出/付款/发货」等词）。
+- 仍为零风险设计：纯本地文件写入，不主动调用任何闲鱼接口；写入失败静默
+  降级不影响主链路；`ORDER_CARD_SAMPLE=0` 可关闭。合成载荷测试全过
+  （四来源落盘/去重/关键词过滤/兜底扫描/空 messageId 不崩）。
 
 ---
 

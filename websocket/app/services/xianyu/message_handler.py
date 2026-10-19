@@ -16,6 +16,7 @@ from loguru import logger
 from .utils import safe_str
 from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
+from common.utils.card_sampler import sample_card
 from app.services.backend_push_forwarder import schedule_chat_push, schedule_typing_push
 
 # 原始帧调试开关（环境变量 IM_FRAME_DEBUG=1 开启）：把「不是聊天消息」的
@@ -30,6 +31,40 @@ def _frame_debug_enabled() -> bool:
         return bool(getattr(get_settings(), "im_frame_debug", False))
     except Exception:
         return False
+
+
+def _sample_ws_message(account_id: str, message_id: str, message: dict) -> None:
+    """订单卡片原始载荷采样（只读落盘，零风控）。
+
+    这套长连接收到全部推送（backend-web 的网页 IM 连接收不到 APP 侧实时
+    卡片），是订单卡片采样的主通道。chat/card/card-update 三类消息的原始
+    解密 dict 原样交给共用采样器（common.utils.card_sampler），由它按
+    messageId 去重、按交易关键词过滤后落盘。任何异常都不能影响主链路。
+    """
+    try:
+        text = ""
+        cid = ""
+        msg_1 = message.get("1")
+        if isinstance(msg_1, dict):
+            # 聊天/卡片消息：cid 在 ["2"]，标题在 ["6"]["3"]["2"]，
+            # 系统摘要在 ["10"]["reminderContent"]
+            cid_raw = str(msg_1.get("2", "") or "")
+            cid = cid_raw.split("@")[0] if "@" in cid_raw else cid_raw
+            msg_6 = msg_1.get("6", {})
+            msg_6_3 = msg_6.get("3", {}) if isinstance(msg_6, dict) else {}
+            if isinstance(msg_6_3, dict):
+                text = str(msg_6_3.get("2", "") or "")
+            msg_10 = msg_1.get("10", {})
+            if isinstance(msg_10, dict) and msg_10.get("reminderContent"):
+                text = str(msg_10.get("reminderContent") or "")
+        elif isinstance(message.get("4"), dict):
+            # 卡片更新（付款状态变更等）：cid 在 ["2"]，摘要在 ["4"]
+            cid_raw = str(message.get("2", "") or "")
+            cid = cid_raw.split("@")[0] if "@" in cid_raw else cid_raw
+            text = str(message["4"].get("reminderContent", "") or "")
+        sample_card("ws_push", account_id, cid, message_id, text, message)
+    except Exception:
+        pass  # 采样失败绝不影响消息处理主链路
 
 
 class MessageHandler:
@@ -742,6 +777,14 @@ class MessageHandler:
             if self.is_system_tip_message(message):
                 logger.debug(f"【{self.cookie_id}】跳过系统提示/营销活动消息")
                 return True
+            
+            # 订单卡片原始载荷采样：chat/card/card-update 三类消息的原始解密
+            # dict 落盘（只读，零风控）。这套长连接是订单卡片采样的主通道——
+            # backend-web 的网页 IM 连接收不到 APP 侧实时卡片（2026-10-19 实测：
+            # 用户 APP 走完整流程，backend-web 侧零推送）。
+            if (self.is_chat_message(message) or self.is_card_message(message)
+                    or self.is_card_update_message(message)):
+                _sample_ws_message(self.cookie_id, message_id or "", message)
             
             # 判断消息类型并分发
             if self.is_chat_message(message):
