@@ -5,6 +5,7 @@
  * 支持多账号切换，基于WebSocket API获取数据
  */
 import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
@@ -3686,8 +3687,8 @@ export function ChatNew() {
         onCancel={() => closeConfirm(false)}
       />
       {/* 订单改价弹窗：「已拍下」待付款卡片点「修改价格」打开，改价后买家会收到通知 */}
-      {adjustingOrderNo && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      {adjustingOrderNo && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => { if (!adjustingPrice) setAdjustingOrderNo('') }}
@@ -3732,19 +3733,20 @@ export function ChatNew() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       {/* 闲鱼 APP 深链弹窗：演出信息表单等 fleamarket:// 原生页面网页端无法代填，
           但深链本身有效，复制到手机上打开即可唤起 APP 直接到该订单的对应页面 */}
-      {deepLink && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      {deepLink && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setDeepLink(null)}
           />
           <div className="relative w-full max-w-md mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
             <div className="mb-1 flex items-start justify-between gap-2">
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">打开闲鱼 APP</h3>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{deepLink.title || '打开闲鱼 APP'}</h3>
               <button
                 type="button"
                 onClick={() => setDeepLink(null)}
@@ -3754,9 +3756,17 @@ export function ChatNew() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="mb-4 text-xs leading-5 text-slate-500 dark:text-slate-400">
-              {deepLink.title || '填写演出信息'} · 这是闲鱼 APP 的原生页面专属地址，
-              电脑浏览器打不开。复制到手机上，即可直接唤起 APP 打开该订单的对应页面。
+
+            {deepLink.title && /演出信息/.test(deepLink.title) && (
+              <div className="mb-3 rounded-xl bg-orange-50 p-3 text-[12px] leading-5 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300">
+                闲鱼演出票标准流程：① 卖家在 APP 填写演出信息 → ② 买家在 APP 确认演出信息 → ③ 买家确认后订单自动进入「待发货」，回到本页即可发货。
+                <br />
+                当前由卖家操作第 ① 步，点下方按钮复制链接，在手机闲鱼打开填写页。
+              </div>
+            )}
+
+            <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+              这是闲鱼 APP 原生页面专属地址，电脑浏览器打不开。复制后发到手机，点开即可直接唤起 APP 打开该订单的对应页面。
             </p>
             <textarea
               id="deeplink-input"
@@ -3784,7 +3794,8 @@ export function ChatNew() {
               {deepLinkCopied ? '已复制链接' : '复制链接'}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       <XianyuProfileModal
         isOpen={!!profileModal}
