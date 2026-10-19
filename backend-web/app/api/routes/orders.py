@@ -477,6 +477,13 @@ async def adjust_order_price(
         f"【订单改价】order_no={order.order_no}, price_cents={price_cents}, "
         f"account={order.account_id}, operator={current_user.username}"
     )
+    # 本地金额同步为改价后的值：闲鱼订单列表同步对金额是「仅补缺」策略不会覆盖，
+    # 不主动写回的话订单列表/再次改价弹窗预填都会停留在下单时的旧价。
+    amount_updated = await order_service.update_order_amount(
+        order.order_no, (Decimal(price_cents) / 100).quantize(Decimal("0.01"))
+    )
+    if not amount_updated:
+        logger.warning(f"【订单改价】本地金额同步失败: order_no={order.order_no}")
     return ApiResponse(success=True, message="改价成功", data=result.get("data"))
 
 

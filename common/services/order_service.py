@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from typing import Optional, Dict
 
 import aiohttp
@@ -380,6 +381,46 @@ class OrderService:
             return result.rowcount > 0
         except Exception as e:
             logger.error(f"更新订单状态失败: {e}")
+            await self.session.rollback()
+            return False
+
+    async def update_order_amount(self, order_no: str, amount) -> bool:
+        """更新订单金额（元）
+
+        场景：卖家改价成功后，把本地金额同步为改价后的值。
+        注意：闲鱼订单列表同步（_upsert_order）对金额是「仅补缺」策略，
+        不会覆盖已有金额，所以改价后的新价只能由本方法主动写回，
+        否则订单列表/再次改价弹窗预填都会停留在下单时的旧价。
+
+        Args:
+            order_no: 订单号
+            amount: 新金额（元，Decimal/str/int 均可，None 或 <=0 拒绝）
+
+        Returns:
+            是否更新成功
+        """
+        if amount is None:
+            logger.warning(f"更新订单金额失败: amount 为空 (order_no={order_no})")
+            return False
+        try:
+            amount_dec = Decimal(str(amount))
+        except Exception:
+            logger.warning(f"更新订单金额失败: amount 格式不正确 (order_no={order_no}, amount={amount})")
+            return False
+        if amount_dec <= 0:
+            logger.warning(f"更新订单金额失败: amount 必须大于 0 (order_no={order_no}, amount={amount})")
+            return False
+        try:
+            stmt = (
+                update(XYOrder)
+                .where(XYOrder.order_no == order_no)
+                .values(amount=amount_dec)
+            )
+            result = await self.session.execute(stmt)
+            await self.session.commit()
+            return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"更新订单金额失败: order_no={order_no}, amount={amount}, 错误={e}")
             await self.session.rollback()
             return False
 
