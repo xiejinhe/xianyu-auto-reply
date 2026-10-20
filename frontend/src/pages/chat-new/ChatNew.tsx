@@ -2183,21 +2183,14 @@ export function ChatNew() {
       .catch(() => addToast({ message: '复制失败，浏览器不允许访问剪贴板', type: 'error' }))
   }
 
-  /** 菜单-回复（引用）：输入框上方挂引用条，发送时内容带引用前缀。
-   *  说明：闲鱼 APP 的「回复」在对方端是引用卡片，需要 IM 协议携带引用字段
-   *  （待抓包确认字段名，同演出信息表单）。当前用文本前缀实现「伪引用」——
-   *  本端有完整引用体验，对方端收到的是带前缀的普通文本。 */
+  /** 菜单-回复（引用）：输入框上方挂引用条，发送走真引用协议。
+   *  协议实证（2026-10-20）：被引用消息的 IM messageId 放进
+   *  message.extension.replyMessageId，正文仍是纯文本，对方 APP 渲染成
+   *  引用卡片；本端按 replyToMessageId 在本地消息列表查表渲染引用块。 */
   const startReply = (msg: ChatMessage) => {
     setMsgMenu(null)
     setReplyTo(msg)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }
-
-  /** 引用前缀：「回复 昵称：原文摘要」，图片类消息摘要为 [图片] */
-  const buildReplyPrefix = (msg: ChatMessage): string => {
-    const who = msg.isSelf ? '自己' : (msg.senderName || '对方')
-    const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
-    return `「回复 ${who}：${body}」\n`
   }
 
   /** 菜单-转发：打开目标会话选择弹窗 */
@@ -2408,12 +2401,16 @@ export function ChatNew() {
       return
     }
 
-    // 「回复」（引用）：内容带引用前缀一起发出，发完清掉引用状态
-    const replyPrefix = replyTo ? buildReplyPrefix(replyTo) : ''
-    const text = replyPrefix + rawText.trim()
+    // 「回复」（引用）：走真引用协议——正文纯文本，被引用消息的 IM
+    // messageId 由 sendTextMessage 放进 message.extension.replyMessageId，
+    // 对方 APP 渲染成引用卡片（协议实证 2026-10-20）。
+    // 仅当被引用消息带 IM 历史格式 ID（数字.PNM）时才传：App 通道推送的
+    // 孪生副本是 32 位 hex ID，与 IM 历史不是一套体系，传了对方也定位不到。
+    const replyMsgId = replyTo && /^\d+\.PNM$/.test(replyTo.messageId || '') ? replyTo.messageId : ''
+    const text = rawText.trim()
     setSending(true)
     try {
-      const res = await sendTextMessage(activeAccountId, activeCid, conv.otherUserId, text)
+      const res = await sendTextMessage(activeAccountId, activeCid, conv.otherUserId, text, replyMsgId)
       // 无论成功失败，都把这条消息展示在聊天记录中；
       // 失败时标记 failed + failReason，气泡前显示红色感叹号，点击查看原因
       const sentMsg: ChatMessage = {
@@ -2425,6 +2422,8 @@ export function ChatNew() {
         text,
         images: [],
         time: Date.now(),
+        // 真引用：本地立即按 replyToMessageId 渲染引用块（原消息就在列表里）
+        replyToMessageId: replyMsgId || undefined,
         failed: !res.success,
         failReason: res.success ? undefined : (res.message || '发送失败'),
       }
@@ -2456,6 +2455,7 @@ export function ChatNew() {
         text,
         images: [],
         time: Date.now(),
+        replyToMessageId: replyMsgId || undefined,
         failed: true,
         failReason,
       }
@@ -3472,11 +3472,26 @@ export function ChatNew() {
                 // 只是气泡换成事件卡样式（浅底 + 描边 + 图标），一眼能和打字消息区分开。
                 const isEvent = !!msg.isEvent
                 const EventIcon = EVENT_ICONS[msg.eventKind || 'generic'] || Info
-                // 引用消息（回复）：伪引用由前缀文本拆出（name/text/body 齐全）；
-                // 真引用协议字段 msg.quote 落地后，正文就是消息自身的 text
+                // 引用消息（回复）三种来源：
+                // 1. 真引用（msg.replyToMessageId，协议实证 2026-10-20）：
+                //    在本地消息列表按 messageId 找原消息，取发送者+摘要；
+                // 2. 伪引用旧消息（「回复 昵称：摘要」\n正文 前缀文本）：
+                //    parseFakeQuote 拆解（v1.0.50 前发出的历史消息）；
+                // 3. msg.quote 预留字段（后端直接下发引用结构时用）。
+                const quotedSrc = msg.type === 'text' && msg.replyToMessageId
+                  ? messages.find((m) => m.messageId === msg.replyToMessageId)
+                  : null
                 const fakeQuote = msg.type === 'text' ? parseFakeQuote(msg.text) : null
-                const msgQuote = fakeQuote
-                  || (msg.type === 'text' && msg.quote ? { name: msg.quote.name, text: msg.quote.text, body: msg.text } : null)
+                const msgQuote = quotedSrc
+                  ? {
+                      name: quotedSrc.isSelf ? '自己' : (quotedSrc.senderName || '对方'),
+                      text: quotedSrc.type === 'image' ? '[图片]' : (quotedSrc.text || '').slice(0, 50),
+                      body: msg.text,
+                    }
+                  : fakeQuote
+                    || (msg.type === 'text' && msg.quote
+                      ? { name: msg.quote.name, text: msg.quote.text, body: msg.text }
+                      : null)
                 // 对方头像：优先用户信息缓存，退回当前会话的头像
                 const otherAvatar =
                   userInfoCacheRef.current[msg.senderId]?.avatar || activeConversation?.otherUserAvatar || ''

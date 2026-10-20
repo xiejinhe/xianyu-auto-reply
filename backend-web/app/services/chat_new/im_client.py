@@ -378,7 +378,7 @@ class GoofishImClient:
         return response.get("body", {})
 
     async def send_text_message(
-        self, cid: str, to_user_id: str, text: str
+        self, cid: str, to_user_id: str, text: str, reply_to_message_id: str = ""
     ) -> Dict[str, Any]:
         """
         发送文本消息
@@ -389,6 +389,11 @@ class GoofishImClient:
             cid: 会话ID（不含@goofish后缀）
             to_user_id: 对方用户ID
             text: 消息文本
+            reply_to_message_id: 被引用消息的 IM messageId（如 4347684267508.PNM）。
+                引用消息的协议实证（2026-10-20 抓 APP 真实样本）：正文仍是普通
+                文本 contentType=1，引用关系放在 message.extension.replyMessageId
+                （APP 原生在 extension 顶层与 extJson 里各放一份，照抄）。
+                空串 = 普通消息。
 
         Returns:
             IM服务器响应
@@ -402,6 +407,11 @@ class GoofishImClient:
         data_b64 = base64.b64encode(
             json.dumps(payload).encode("utf-8")
         ).decode("utf-8")
+
+        # 引用消息：extension.replyMessageId（顶层 + extJson 双写，与 APP 原生一致）
+        ext_json: dict = {}
+        if reply_to_message_id:
+            ext_json["replyMessageId"] = reply_to_message_id
 
         mid = generate_mid()
         message_uuid = generate_uuid()
@@ -418,7 +428,10 @@ class GoofishImClient:
                         "custom": {"type": 1, "data": data_b64},
                     },
                     "redPointPolicy": 0,
-                    "extension": {"extJson": "{}"},
+                    "extension": {
+                        "extJson": json.dumps(ext_json),
+                        **({"replyMessageId": reply_to_message_id} if reply_to_message_id else {}),
+                    },
                     "ctx": {"appVersion": "1.0", "platform": "web"},
                     "mtags": {},
                     "msgReadStatusSetting": 1,
@@ -444,6 +457,60 @@ class GoofishImClient:
             if isinstance(raw_message_id, str):
                 message_id = raw_message_id
         return {"response": response, "messageId": message_id, "uuid": message_uuid}
+
+    async def send_raw_message(
+        self, cid: str, to_user_id: str, custom_type: int, payload: dict,
+        reply_to_message_id: str = "",
+    ) -> Dict[str, Any]:
+        """发送原始 payload 的消息（协议调研/盲测用，勿用于正常业务）。
+
+        与 send_text_message 的区别：custom.data 的 JSON 与 custom.type
+        由调用方完全控制，用于探测服务端支持的消息结构（如引用消息）。
+        reply_to_message_id 非空时按真引用协议写 extension.replyMessageId。
+        """
+        full_cid = cid if "@goofish" in cid else f"{cid}@goofish"
+        full_to = to_user_id if "@goofish" in to_user_id else f"{to_user_id}@goofish"
+        full_self = f"{self.myid}@goofish"
+
+        data_b64 = base64.b64encode(
+            json.dumps(payload).encode("utf-8")
+        ).decode("utf-8")
+
+        ext_json: dict = {}
+        if reply_to_message_id:
+            ext_json["replyMessageId"] = reply_to_message_id
+
+        mid = generate_mid()
+        message_uuid = generate_uuid()
+        msg = {
+            "lwp": "/r/MessageSend/sendByReceiverScope",
+            "headers": {"mid": mid},
+            "body": [
+                {
+                    "uuid": message_uuid,
+                    "cid": full_cid,
+                    "conversationType": 1,
+                    "content": {
+                        "contentType": 101,
+                        "custom": {"type": custom_type, "data": data_b64},
+                    },
+                    "redPointPolicy": 0,
+                    "extension": {
+                        "extJson": json.dumps(ext_json),
+                        **({"replyMessageId": reply_to_message_id} if reply_to_message_id else {}),
+                    },
+                    "ctx": {"appVersion": "1.0", "platform": "web"},
+                    "mtags": {},
+                    "msgReadStatusSetting": 1,
+                },
+                {"actualReceivers": [full_to, full_self]},
+            ],
+        }
+        response = await self._send_and_wait_with_retry(
+            lambda: (mid, msg), retry_after_reconnect=False
+        )
+        self._raise_if_send_rejected(response)
+        return {"response": response, "uuid": message_uuid}
 
     async def send_image_message(
         self,

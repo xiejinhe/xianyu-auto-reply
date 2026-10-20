@@ -95,6 +95,7 @@ def schedule_chat_push(
     card: Optional[dict] = None,
     revoked: bool = False,
     revoked_original: str = "",
+    reply_to_message_id: str = "",
 ) -> None:
     """
     安排一次转发（非阻塞）
@@ -128,6 +129,8 @@ def schedule_chat_push(
         "card": card,
         "revoked": bool(revoked),
         "revoked_original": revoked_original or "",
+        # 引用消息（回复）：被引用消息的 IM messageId，前端本地查表渲染引用块
+        "reply_to_message_id": reply_to_message_id or "",
     }
     try:
         task = asyncio.create_task(_post(payload))

@@ -418,6 +418,10 @@ class MessageHandler:
                 "chat_id": chat_id,
                 "item_id": item_id,
                 "msg_time": msg_time,
+                # 引用消息（回复）：被引用消息的 IM messageId（协议实证
+                # 2026-10-20，APP 样本：正文纯文本，引用关系在
+                # message.extension.replyMessageId）
+                "reply_to_message_id": str(message_10.get("replyMessageId", "") or ""),
                 "is_plain_text": self.is_plain_text_message(message),
                 "raw_message": message,
                 # 撤回占位标记（False = 普通消息）：True 时 send_message 已是撤回
@@ -1013,6 +1017,8 @@ class MessageHandler:
                 # 撤回元数据透传（前端渲染「对方撤回了一条消息 [显示]」用）
                 revoked=revoked,
                 revoked_original=str(parsed.get("revoked_original") or ""),
+                # 引用消息元数据透传（前端按 replyToMessageId 本地查表渲染引用块）
+                reply_to_message_id=str(parsed.get("reply_to_message_id") or ""),
             )
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】转发消息到 backend-web 失败: {safe_str(e)}")

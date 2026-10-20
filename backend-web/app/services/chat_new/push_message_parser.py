@@ -126,6 +126,10 @@ class PushMessageParser:
                 msg_10.get("senderNick") or msg_10.get("reminderTitle") or ""
             )
             reminder = msg_10.get("reminderContent", "")
+            # 引用消息（回复）：msg_10（即 message.extension）里的 replyMessageId
+            # 指向被引用的原消息。协议实证 2026-10-20：APP 引用消息正文仍是
+            # 普通文本，引用关系只放在这个字段，前端据此渲染「引用块+正文」
+            reply_to_message_id = str(msg_10.get("replyMessageId", "") or "")
             cid_raw = str(msg_1.get("2", ""))
             cid = cid_raw.split("@")[0] if "@" in cid_raw else cid_raw
             msg_time = msg_1.get("5", 0)
@@ -196,6 +200,8 @@ class PushMessageParser:
                     # 前端渲染「对方撤回了一条消息」带头像，旧摘要默认折叠
                     "revoked": revoked,
                     "revokedOriginal": revoked_original,
+                    # 引用消息（回复）：被引用消息的 IM messageId，前端本地查表渲染
+                    "replyToMessageId": reply_to_message_id,
                     # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
                     "card": rich_card,
                 },

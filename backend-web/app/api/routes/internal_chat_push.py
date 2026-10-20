@@ -41,6 +41,7 @@ class AppChannelPushRequest(BaseModel):
     card: Optional[dict] = Field(default=None, description="订单卡片富数据（按钮/订单号/演出信息），非交易卡片为None")
     revoked: bool = Field(default=False, description="是否为撤回占位消息（对方撤回了原消息）")
     revoked_original: str = Field(default="", description="撤回前原文线索（reminderContent 旧摘要），前端默认折叠、点「显示」展开")
+    reply_to_message_id: str = Field(default="", description="引用消息（回复）：被引用消息的 IM messageId，前端本地查表渲染引用块")
 
 
 class AppChannelTypingRequest(BaseModel):
@@ -87,6 +88,9 @@ async def receive_app_channel_push(
         # 带头像，旧摘要默认折叠、点「显示」才展开
         "revoked": req.revoked,
         "revokedOriginal": req.revoked_original,
+        # 引用消息（回复）：被引用消息的 IM messageId（协议实证 2026-10-20），
+        # 前端在本地消息列表按它找原消息，渲染「引用块 + 正文」
+        "replyToMessageId": req.reply_to_message_id,
         # 来源标记：App 通道的 messageId（bizTag 里的 32 位 hex）与 IM 网关
         # 历史接口的 messageId（如 4347684267508.PNM）是两套互不相通的 ID，
         # 同一条消息会以两个不同 ID 的副本到达前端。前端 mergeMessages
@@ -132,3 +136,70 @@ async def receive_app_channel_typing(
         return {"success": False, "delivered": False, "message": str(exc)}
 
     return {"success": True, "delivered": delivered}
+
+
+# ==================== 协议调研内部接口（勿删） ====================
+# 背景：闲鱼 IM 的部分消息结构（如 APP 的「引用/回复」卡片）没有公开协议，
+# 需要拉原始历史帧或盲测发送 payload 来逆向。这两个接口仅供协议调研使用，
+# 鉴权与上面两个推送接口同一套（X-Internal-Token）。
+
+
+class RawSendRequest(BaseModel):
+    """盲测发送：custom.data 的 JSON（base64 前）与 custom.type 由调用方给"""
+
+    cid: str = Field(description="会话ID（不含@goofish后缀）")
+    to_user_id: str = Field(description="对方用户ID")
+    custom_type: int = Field(description="custom.type（如文本=1、图片=2）")
+    payload: dict = Field(description="custom.data 的 JSON 内容（base64 编码前）")
+    reply_to_message_id: str = Field(default="", description="被引用消息的 IM messageId（真引用协议）")
+
+
+@router.get("/chat-new/raw-history/{account_id}")
+async def get_raw_history(
+    account_id: str,
+    cid: str,
+    limit: int = 50,
+    x_internal_token: Optional[str] = Header(default=None, alias=INTERNAL_AUTH_HEADER),
+):
+    """拉取指定会话的原始历史消息（userMessageModels 原文，不做解析）。
+
+    用于逆向没有公开协议的消息结构（如引用消息的 custom.data 字段）。
+    """
+    require_valid_internal_token(x_internal_token, get_settings().internal_api_token)
+
+    manager = get_im_session_manager()
+    client = manager.clients.get(account_id)
+    if not client or not client.is_connected:
+        return {"success": False, "message": "账号未连接，请先连接"}
+
+    body = await client.get_messages(cid=cid, start_timestamp=None, limit=limit)
+    if isinstance(body, dict) and "reason" in body:
+        return {"success": False, "message": body.get("developerMessage", body.get("reason", ""))}
+    return {"success": True, "data": body}
+
+
+@router.post("/chat-new/raw-send/{account_id}")
+async def raw_send_message(
+    account_id: str,
+    req: RawSendRequest,
+    x_internal_token: Optional[str] = Header(default=None, alias=INTERNAL_AUTH_HEADER),
+):
+    """盲测发送原始 payload（协议调研用）。
+
+    正常业务发送请走 /chat-new/send-message，勿用本接口。
+    """
+    require_valid_internal_token(x_internal_token, get_settings().internal_api_token)
+
+    manager = get_im_session_manager()
+    client = manager.clients.get(account_id)
+    if not client or not client.is_connected:
+        return {"success": False, "message": "账号未连接，请先连接"}
+
+    result = await client.send_raw_message(
+        cid=req.cid,
+        to_user_id=req.to_user_id,
+        custom_type=req.custom_type,
+        payload=req.payload,
+        reply_to_message_id=req.reply_to_message_id,
+    )
+    return {"success": True, "data": {"uuid": result.get("uuid", "")}}

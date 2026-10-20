@@ -177,6 +177,11 @@ export interface ChatMessage {
    *  2. 本端发出的伪引用，由「回复 昵称：摘要」前缀文本拆出。
    *  有值时前端把气泡渲染成 APP 样式：上方引用块 + 下方正文 */
   quote?: { name: string; text: string } | null
+  /** 真引用（2026-0-20 协议实证）：被引用消息的 IM messageId。
+   *  由 message.extension.replyMessageId 解析而来（历史/推送两条路径都有）。
+   *  有值时正文是纯文本，前端按本字段在本地消息列表找原消息渲染引用块；
+   *  找不到原消息时降级为普通文本。与 quote 字段等价，优先用本字段 */
+  replyToMessageId?: string
   time: number
   /** 读状态（IM 原始字段）：0=未读、2=已读；自己消息=对方是否已读，对方消息=自己是否已读 */
   readStatus?: number
@@ -257,17 +262,24 @@ export const hideConversation = async (accountId: string, cid: string): Promise<
   if (!res.success) throw new Error(res.message || '删除会话失败')
 }
 
-/** 发送文本消息 */
+/** 发送文本消息
+ *
+ * replyToMessageId: 引用（回复）某条消息时传被引用消息的 IM messageId。
+ * 协议实证（2026-010-20）：引用关系由 message.extension.replyMessageId 承载，
+ * 正文仍是纯文本，对方 APP 会渲染成引用卡片。
+ */
 export const sendTextMessage = async (
   accountId: string,
   cid: string,
   toUserId: string,
   text: string,
+  replyToMessageId = '',
 ): Promise<{ success: boolean; message: string; data?: { messageId: string } }> => {
   return post<{ success: boolean; message: string; data?: { messageId: string } }>(`${PREFIX}/send-message/${accountId}`, {
     cid,
     toUserId,
     text,
+    replyToMessageId,
   })
 }
 

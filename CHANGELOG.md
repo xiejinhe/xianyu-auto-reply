@@ -8,12 +8,43 @@
 
 ---
 
-> **当前版本：`v1.0.51`**　｜　更新时间：**2026-10-20**
+> **当前版本：`v1.0.52`**　｜　更新时间：**2026-10-20**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.52 · 2026-10-20（真·引用消息上线：回复 = 闲鱼 APP 同款引用卡片）
+
+### 功能（用户反馈「为啥是纯文字，不能像 APP 一样引用消息」）
+- **协议实证**（2026-10-20，APP 真实样本 + 内部接口盲测双向确认）：闲鱼的
+  引用消息**正文就是普通文本**（custom.data 里 contentType=1），引用关系放在
+  `message.extension.replyMessageId`（被引用消息的 IM messageId，形如
+  4360475618110.PNM）。此前本地无样本、上游 XianYuApis 也未实现该类型，
+  一直按「待抓包」用文本前缀伪引用；本次通过新增的内部调研接口
+  （raw-history 拉原始历史帧 / raw-send 盲测发送）双向确认字段与行为，
+  并抓取到用户 APP 手发的真实引用样本。
+- **实现**（端到端）：
+  1. 发送：`im_client.send_text_message(reply_to_message_id)`，extension 与
+     extJson 双写 replyMessageId（与 APP 原生结构一致）；
+  2. 历史 `_parse_message` 与网页推送 `push_message_parser` 提取
+     extension.replyMessageId，下发 `replyToMessageId`；
+  3. websocket `message_handler` → `backend_push_forwarder` →
+     `internal_chat_push` 透传（App 通道实时链路）；
+  4. 前端发送时传被引用消息的 IM messageId（仅 `数字.PNM` 格式；
+     App 通道推送的 32 位 hex 孪生 ID 不传，避免对方定位不到），
+     **正文不再带「回复 昵称：摘要」前缀**；
+  5. 前端渲染：有 replyToMessageId 时在本地消息列表按 messageId 查表，
+     渲染「引用块（昵称+摘要）+ 正文」；v1.0.50 前的伪引用旧消息仍按
+     前缀拆解兜底渲染。
+- **验证**：向自有账号（1620778109）发送实测消息——服务端历史完整保留
+  replyMessageId、两个账号长连接均收到回声、App 通道透传正常；
+  `tsc --noEmit` 通过。
+- 内部调研接口（`/internal/chat-new/raw-history`、`/internal/chat-new/raw-send`，
+  X-Internal-Token 鉴权）保留，供后续协议逆向复用。
 
 ---
 

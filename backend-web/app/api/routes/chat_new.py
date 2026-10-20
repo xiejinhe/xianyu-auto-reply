@@ -788,6 +788,9 @@ class SendMessageRequest(BaseModel):
     cid: str
     toUserId: str
     text: str
+    # 被引用消息的 IM messageId（回复/引用功能）。协议实证（2026-10-20）：
+    # 引用关系的载体是 message.extension.replyMessageId，正文仍是纯文本
+    replyToMessageId: str = ""
 
 
 class ForwardMessageRequest(BaseModel):
@@ -843,6 +846,7 @@ async def send_message(
             cid=req.cid,
             to_user_id=req.toUserId,
             text=req.text,
+            reply_to_message_id=req.replyToMessageId,
         )
         logger.info(
             f"【{account_id}】发送消息到 {req.toUserId}: {req.text[:50]}"
@@ -1545,6 +1549,10 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         # 接口也拉得到，只比 myid 会把托管账号发送者误判成买家——
         # 2026-10-20 事故：误渲染成左侧对方消息+署名、误响铃、误弹 toast）
         is_self = bool(myid and sender_id == myid) or is_managed_account(sender_id)
+        # 引用消息（回复）：extension.replyMessageId 指向被引用的原消息
+        # （协议实证 2026-10-20：APP 引用消息正文是纯文本，引用关系只放在
+        # extension.replyMessageId，前端据此在本地消息列表里找原消息渲染引用块）
+        reply_to_message_id = str(extension.get("replyMessageId", "") or "") if isinstance(extension, dict) else ""
 
         # 解析消息内容
         content = message.get("content", {})
@@ -1657,6 +1665,10 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
             # 可能为空），用户点「显示」才展开，默认折叠不泄露
             "revoked": revoked,
             "revokedOriginal": revoked_original,
+            # 引用消息（回复）：被引用消息的 IM messageId。前端在本地消息
+            # 列表里按它找原消息，渲染「引用块 + 正文」（协议实证见
+            # send_text_message 注释）；空串 = 普通消息
+            "replyToMessageId": reply_to_message_id,
             # 读状态（IM 原始字段，实测 0=未读、2=已读）：
             # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
             "readStatus": model.get("readStatus"),
