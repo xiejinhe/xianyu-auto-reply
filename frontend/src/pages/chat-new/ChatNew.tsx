@@ -3467,7 +3467,7 @@ export function ChatNew() {
                                   }
                                   className="flex-shrink-0 text-xs text-blue-500 hover:text-blue-600 hover:underline dark:text-blue-400"
                                 >
-                                  {revokedExpanded[msg.messageId || `idx-${idx}`] ? '隐藏' : '显示'}
+                                  {revokedExpanded[msg.messageId || `idx-${idx}`] ? '隐藏撤回的消息' : '查看撤回的消息'}
                                 </button>
                               )}
                             </span>
