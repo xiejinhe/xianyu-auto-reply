@@ -385,11 +385,14 @@ class MessageHandler:
                 if not _has_payload and str(reminder_content or "").strip():
                     revoked = True
                     revoked_original = str(reminder_content).strip()
-                reminder_content = (
-                    "你撤回了一条消息"
-                    if self._is_self_sender(send_user_id)
-                    else "对方撤回了一条消息"
-                )
+                    # 只有确认是撤回占位时才改写文案：这行必须在 if 块内。
+                    # v1.0.51 改 isSelf 判定时把它误缩进到 if 外面，导致**每一条**
+                    # 长连接推送的正文都被替换成「撤回」提示（2026-10-20 实测）。
+                    reminder_content = (
+                        "你撤回了一条消息"
+                        if self._is_self_sender(send_user_id)
+                        else "对方撤回了一条消息"
+                    )
             else:
                 # 卡片消息格式（如评价请求、确认收货等系统卡片）
                 # 结构: {"1": {"1": {"1": "xxx@goofish"}, "2": "xxx@goofish", "6": {"3": {"2": "消息内容"}}}}
