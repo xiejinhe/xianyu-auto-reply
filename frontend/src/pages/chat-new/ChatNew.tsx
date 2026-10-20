@@ -890,6 +890,9 @@ export function ChatNew() {
     if (time > prev) rungConvRef.current[key] = time
   }, [])
 
+  // 跨账号来消息的提示节流时间戳（铃声不限账号播放，靠 toast 告诉用户来源）
+  const crossAccountNoticeAtRef = useRef(0)
+
   // 实时推送通道的响铃：同一条消息被两条通道重复投递时只响一次。
   // 判定键不含时间戳（两侧时间可能差几毫秒），只看「谁发的 + 说了什么」，15 秒窗口。
   const ringOnce = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
@@ -988,8 +991,17 @@ export function ChatNew() {
       markRung(accountId, cid, msg.time)
     }
     // 非当前账号收到新消息：账号卡片累计未读角标（切到该账号时清零）
+    // 同时 toast 一声来源：铃声是不限账号播放的（防漏听，v1.0.32 起的设计），
+    // 但没有这条提示时，用户只听到铃响、当前窗口却不进消息，会以为系统漏
+    // 消息了（2026-10-20 实测反馈）。同账号 30 秒内只提示一次，避免连发刷屏。
     if (!isActiveAccount && !msg.isSelf) {
       setAccountUnread((prev) => ({ ...prev, [accountId]: (prev[accountId] || 0) + 1 }))
+      const now = Date.now()
+      if (now - (crossAccountNoticeAtRef.current ?? 0) > 30_000) {
+        crossAccountNoticeAtRef.current = now
+        const accName = accountsRef.current.find((a) => a.account_id === accountId)?.display_name || accountId
+        addToast({ message: `账号 ${accName} 收到新消息（非当前选中账号，切过去即可查看）`, type: 'info' })
+      }
     }
 
     // 闲鱼的会话 cid 可能跨账号共享（同一买家与多个卖家账号共用同一个 cid，
@@ -1353,9 +1365,10 @@ export function ChatNew() {
         }).catch((error: Error) => addToast({ message: error.message, type: 'error' }))
       }
     }).catch((error: Error) => {
+      const errMsg = String(error?.message || '')
       // 闲鱼流控：记 5 分钟冷却（对账轮询/读状态刷新都会跳过这个账号），
       // 手头一个会话都没有时用本地缓存顶上，别让界面空白
-      if (String(error?.message || '').includes('请求过于频繁')) {
+      if (errMsg.includes('请求过于频繁')) {
         rateLimitUntilRef.current[accountId] = Date.now() + 300_000
         if (isActive() && conversationsRef.current.length === 0) {
           const local = readConvCache(accountId)
@@ -1366,6 +1379,21 @@ export function ChatNew() {
             void loadOrderMarks(accountId)
           }
         }
+      }
+      // 账号 IM 未连接（Cookie 会话失效 / 被闲鱼风控 / 未手动连接过）：
+      // 这与「限流」完全不同——限流是稍后自愈的临时状态，而未连接时
+      // 界面上挂着的是本地缓存旧数据，用户点刷新会「毫无反应」。
+      // 必须明确告知，且立即把账号状态修正为未连接（账号卡片显示重连入口），
+      // 不能走下面「有旧数据就静默」的分支。
+      if (errMsg.includes('账号未连接')) {
+        setAccounts((prev) => prev.map((a) => (
+          a.account_id === accountId ? { ...a, connected: false } : a
+        )))
+        addToast({
+          message: `账号 ${accountId} 的 IM 未连接，列表是本地缓存旧数据。点击左侧账号卡片可重新连接`,
+          type: 'error',
+        })
+        return
       }
       // 已经有列表可显示（本账号内存缓存，或当前账号屏幕上的数据）时不再弹红色
       // 错误：用户视角没有任何异常，只是这份数据稍旧，后端稍后会自动补拉；
@@ -1386,6 +1414,21 @@ export function ChatNew() {
       if (requestId === convRequestIdRef.current[accountId] && isActive()) setLoadingConvs(false)
     })
   }, [addToast, applyReadMarks, loadOrderMarks])
+
+  /** 点「刷新会话」：账号 IM 已连接就直接拉列表；未连接时先自动重连
+   *  （连上后 selectAccount 的 effect 会自己拉列表），避免「点了没反应」——
+   *  后端此时只会回「账号未连接」，界面挂着的本地缓存旧数据原样不动。
+   *  定义在 loadConversations 之后：依赖数组引用它，避免 TDZ。 */
+  const handleRefreshConversations = useCallback((accountId: string) => {
+    setConvCursor(null)
+    const acc = accountsRef.current.find((a) => a.account_id === accountId)
+    if (acc && !acc.connected) {
+      addToast({ message: `账号 ${accountId} 的 IM 未连接，正在尝试重新连接...`, type: 'info' })
+      void handleConnect(accountId)
+      return
+    }
+    void loadConversations(accountId, false, false, true)
+  }, [addToast, handleConnect, loadConversations])
 
   // 用 ref 保持 accounts 最新引用，避免 effect 闭包取到旧值
   const accountsRef = useRef(accounts)
@@ -2969,7 +3012,7 @@ export function ChatNew() {
               <SoundPicker />
               {activeAccountId && (
                 <button
-                  onClick={() => { setConvCursor(null); loadConversations(activeAccountId, false, false, true) }}
+                  onClick={() => handleRefreshConversations(activeAccountId)}
                   className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
                   title="刷新会话"
                 >
@@ -3008,6 +3051,14 @@ export function ChatNew() {
             }
           }}
         >
+          {activeAccountId && !accounts.find((a) => a.account_id === activeAccountId)?.connected && (
+            <div className="mx-2 mt-2 flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-700 dark:border-amber-600/60 dark:bg-amber-900/30 dark:text-amber-200">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-[1px]" />
+              <span>
+                该账号 IM 未连接，以下为<b>本地缓存旧数据</b>。点上方刷新图标或左侧账号卡片可重新连接。
+              </span>
+            </div>
+          )}
           {!activeAccountId ? (
             <p className="text-center text-sm text-gray-400 py-12">请先选择账号</p>
           ) : loadingConvs && conversations.length === 0 ? (
