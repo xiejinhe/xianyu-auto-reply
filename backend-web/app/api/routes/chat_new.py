@@ -1511,6 +1511,37 @@ def _revoked_text(message: dict, myid: str) -> str:
     return "你撤回了一条消息" if is_self else "对方撤回了一条消息"
 
 
+def _peer_unread(message: dict, is_self: bool) -> int | None:
+    """
+    提取「对方是否还没读这条我发出的消息」。
+
+    数据源是 message.unreadCount，语义 = 这条消息对「非发送方」是否未读：
+    - 0   → 对方已读
+    - >0  → 对方未读
+    - 字段缺失 / 无法转成整数 → 返回 None（前端应不显示，而不是猜一个值）
+
+    ⚠️ 不能用外层的 readStatus 代替：那是「当前登录账号读没读过这条消息」，
+    对自己发出的消息恒为「已读」，拿它当对方已读回执会永远显示「已读」
+    （2026-10-20 用户反馈「不太准」，双向交叉验证后确认语义不同）。
+
+    Args:
+        message: model["message"]（IM 原始消息体）
+        is_self: 该消息是否为本账号（含托管账号）发出
+
+    Returns:
+        对方未读数；非自发消息或字段不可用时返回 None
+    """
+    if not is_self:
+        return None
+    raw = message.get("unreadCount")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") -> dict | None:
     """
     解析单条消息
@@ -1669,9 +1700,16 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
             # 列表里按它找原消息，渲染「引用块 + 正文」（协议实证见
             # send_text_message 注释）；空串 = 普通消息
             "replyToMessageId": reply_to_message_id,
-            # 读状态（IM 原始字段，实测 0=未读、2=已读）：
-            # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
+            # 读状态（IM 原始字段，实测 0=未读、2=已读）。
+            # ⚠️ 它的真实语义是「**当前登录账号**有没有读过这条消息」，与发送方无关
+            # （2026-10-20 双向交叉验证：同一批消息，发送方视角=2、从未打开的
+            #  接收方视角=0）。所以它**不能**用来表示「对方是否已读我发的消息」——
+            #  对自己发的消息恒为 2，会永远显示「已读」。保留下发仅为兼容。
             "readStatus": model.get("readStatus"),
+            # 对方是否已读（只有自己发出的消息才有意义）：
+            # 取 message.unreadCount = 这条消息对「非发送方」是否未读。
+            # 0 = 对方已读，>0 = 对方未读；字段缺失/无法转换时为 None（前端不显示）。
+            "peerUnread": _peer_unread(message, is_self),
         }
     except Exception as e:
         logger.warning(f"解析消息失败: {e}")

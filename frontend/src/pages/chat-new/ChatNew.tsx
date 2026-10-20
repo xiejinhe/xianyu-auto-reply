@@ -2308,12 +2308,19 @@ export function ChatNew() {
         if (cancelled) return
         // getMessages 直接返回 { messages, hasMore, nextCursor }，不包 success/data
         const fresh = res.messages || []
+        const byId = new Map(fresh.map((m) => [m.messageId, m]))
         setMessages((prev) => {
           if (!prev.length) return prev
-          const statusMap = new Map(fresh.map((m) => [m.messageId, m.readStatus]))
           return prev.map((m) => {
-            const s = statusMap.get(m.messageId)
-            return s === undefined || s === m.readStatus ? m : { ...m, readStatus: s }
+            const f = byId.get(m.messageId)
+            if (!f) return m
+            // 历史副本没带上某个字段（比如对方消息的 peerUnread 恒为空）时保持原值，
+            // 不要把已有数据擦成 undefined，否则标记会莫名消失
+            const nextStatus = f.readStatus === undefined ? m.readStatus : f.readStatus
+            const nextUnread =
+              f.peerUnread === undefined || f.peerUnread === null ? m.peerUnread : f.peerUnread
+            if (nextStatus === m.readStatus && nextUnread === m.peerUnread) return m
+            return { ...m, readStatus: nextStatus, peerUnread: nextUnread }
           })
         })
       } catch {
@@ -3690,16 +3697,21 @@ export function ChatNew() {
                         </button>
                       )}
                     </div>
-                    {/* 已读/未读：readStatus 来自 IM 原始数据（0=未读 2=已读），自己消息代表对方是否已读 */}
-                    {msg.isSelf && msg.type !== 'system' && (msg.readStatus === 0 || msg.readStatus === 2) && (
+                    {/* 已读/未读：用 peerUnread（message.unreadCount，= 这条消息对非发送方
+                        是否未读）。历史拉取才有值，推送副本和本端乐观副本都没有 → 不显示，
+                        等 20 秒静默轮询补齐，绝不拿不准就去猜一个状态。
+                        ⚠️ 不要用 readStatus：那是「我读没读过这条消息」，
+                        对自己发的消息恒为「已读」（详见 chatNew.ts 的类型注释） */}
+                    {msg.isSelf && msg.type !== 'system' && typeof msg.peerUnread === 'number' && (
                       <div
                         className={`text-xs mt-0.5 ${
-                          msg.readStatus === 2
-                            ? 'text-gray-400 dark:text-gray-500'
-                            : 'text-amber-500 dark:text-amber-400'
-                        } ${msg.isSelf ? 'text-right' : 'text-left'}`}
+                          msg.peerUnread > 0
+                            ? 'text-amber-500 dark:text-amber-400'
+                            : 'text-gray-400 dark:text-gray-500'
+                        } text-right`}
+                        title={msg.peerUnread > 0 ? '对方还没读这条消息' : '对方已读这条消息'}
                       >
-                        {msg.readStatus === 2 ? '已读' : '未读'}
+                        {msg.peerUnread > 0 ? '未读' : '已读'}
                       </div>
                     )}
                     {canRecallMessage(msg) && (
