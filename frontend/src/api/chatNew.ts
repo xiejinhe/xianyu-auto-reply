@@ -172,6 +172,11 @@ export interface ChatMessage {
   /** 撤回前原文线索（reminderContent 旧摘要，可能为空）：
    *  文本消息即原文，图片/语音为 [图片] 之类占位。用户点「显示」才展开 */
   revokedOriginal?: string
+  /** 引用消息（回复）：被引用的原消息。来源两种——
+   *  1. IM 协议自带引用字段时由后端解析填充（真引用，尚未落地）；
+   *  2. 本端发出的伪引用，由「回复 昵称：摘要」前缀文本拆出。
+   *  有值时前端把气泡渲染成 APP 样式：上方引用块 + 下方正文 */
+  quote?: { name: string; text: string } | null
   time: number
   /** 读状态（IM 原始字段）：0=未读、2=已读；自己消息=对方是否已读，对方消息=自己是否已读 */
   readStatus?: number

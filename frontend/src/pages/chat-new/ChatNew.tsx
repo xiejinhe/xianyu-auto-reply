@@ -61,6 +61,21 @@ import { getOrderStatusMeta, SHIPPABLE_STATUSES } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
 import { getCookieStatusMeta, formatRelativeTime } from '@/utils/cookieStatus'
 
+// ==================== 引用消息（回复）工具 ====================
+/**
+ * 伪引用前缀拆解：「回复 昵称：摘要」\n正文 → { name, text, body }。
+ * 命中不了（普通文本）返回 null。
+ * 用途：① 本端/历史里的引用消息按 APP 样式渲染成「引用块 + 正文」；
+ *      ② 会话列表摘要取正文部分，不再把「回复 昵称：摘要」糊在摘要里。
+ * 注意：摘要用非贪婪匹配吃到「」\n 为止，正文不允许出现换行后的「」结构，
+ * 否则拆不动（真引用协议落地后这条路径自然废弃，改用 msg.quote）。
+ */
+const parseFakeQuote = (text: string): { name: string; text: string; body: string } | null => {
+  const m = /^「回复 (.+?)：([\s\S]+?)」\n([\s\S]*)$/.exec(text || '')
+  if (!m) return null
+  return { name: m[1], text: m[2], body: m[3] }
+}
+
 // ==================== 订单卡片富气泡 ====================
 /** 与闲鱼 APP 一致的订单卡片：标题/描述/演出信息/订单号 + 动作按钮。
  *  数据来自后端 order_card_parser 解析的卡片富载荷（msg.card）。
@@ -845,7 +860,9 @@ export function ChatNew() {
   const syncConvFromMessages = (accountId: string, cid: string, msgs: ChatMessage[]): void => {
     const latest = msgs[msgs.length - 1]
     if (!latest) return
-    const body = latest.type === 'image' ? '[图片]' : (latest.text || '').slice(0, 50)
+    // 引用消息（回复）的列表摘要只取正文，「回复 昵称：摘要」前缀不上摘要
+    const fakeQuote = latest.type === 'text' ? parseFakeQuote(latest.text) : null
+    const body = latest.type === 'image' ? '[图片]' : ((fakeQuote ? fakeQuote.body : latest.text) || '').slice(0, 50)
     const summary = `${latest.isSelf ? '你' : '他'}：${body}`
     const key = normCid(cid)
     const isViewing = accountId === activeAccountIdRef.current && key === normCid(activeCidRef.current)
@@ -987,7 +1004,9 @@ export function ChatNew() {
 
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     // 会话列表摘要带发送者前缀：自己的「你：」，对方的「他：」（性别拿不到，统一「他」）
-    const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
+    // 引用消息（回复）的列表摘要只取正文，「回复 昵称：摘要」前缀不上摘要
+    const fakeQuote = msg.type === 'text' ? parseFakeQuote(msg.text) : null
+    const body = msg.type === 'image' ? '[图片]' : ((fakeQuote ? fakeQuote.body : msg.text) || '').slice(0, 50)
     const summary = `${msg.isSelf ? '你' : '他'}：${body}`
     const isActiveAccount = accountId === activeAccountIdRef.current
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响。
@@ -3453,6 +3472,11 @@ export function ChatNew() {
                 // 只是气泡换成事件卡样式（浅底 + 描边 + 图标），一眼能和打字消息区分开。
                 const isEvent = !!msg.isEvent
                 const EventIcon = EVENT_ICONS[msg.eventKind || 'generic'] || Info
+                // 引用消息（回复）：伪引用由前缀文本拆出（name/text/body 齐全）；
+                // 真引用协议字段 msg.quote 落地后，正文就是消息自身的 text
+                const fakeQuote = msg.type === 'text' ? parseFakeQuote(msg.text) : null
+                const msgQuote = fakeQuote
+                  || (msg.type === 'text' && msg.quote ? { name: msg.quote.name, text: msg.quote.text, body: msg.text } : null)
                 // 对方头像：优先用户信息缓存，退回当前会话的头像
                 const otherAvatar =
                   userInfoCacheRef.current[msg.senderId]?.avatar || activeConversation?.otherUserAvatar || ''
@@ -3617,6 +3641,19 @@ export function ChatNew() {
                                 {msg.revokedOriginal}
                               </span>
                             )}
+                          </span>
+                        ) : msgQuote ? (
+                          // 引用消息（回复）：对齐闲鱼 APP 的样式——气泡内上方
+                          // 是引用块（被引用者昵称 + 原文摘要，左侧竖线 + 浅底），
+                          // 下方是回复正文
+                          <span className="block max-w-full">
+                            <span className="mb-1 block rounded border-l-2 border-black/25 bg-black/5 px-2 py-1 text-xs leading-5 dark:border-white/30 dark:bg-white/10">
+                              <span className="block truncate font-medium opacity-70">{msgQuote.name}</span>
+                              <span className="line-clamp-2 block break-all opacity-70">{msgQuote.text}</span>
+                            </span>
+                            <span className="whitespace-pre-wrap">
+                              <ChatText text={msgQuote.body} emojiClassName="px-0.5 text-base align-middle" />
+                            </span>
                           </span>
                         ) : (
                           // 闲鱼的黄脸表情在消息里是 [中文名] 代码，这里翻译渲染
