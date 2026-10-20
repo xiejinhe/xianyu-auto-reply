@@ -8,12 +8,29 @@
 
 ---
 
-> **当前版本：`v1.0.42`**　｜　更新时间：**2026-10-20**
+> **当前版本：`v1.0.43`**　｜　更新时间：**2026-10-20**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.43 · 2026-10-20（热修：websocket 过滑块清理崩溃）
+
+### 修复（websocket 进程被沙箱守卫误杀）
+- **滑块临时目录清理的 SystemExit 兜底**：`common/services/captcha/slider_stealth.py` 的
+  `_cleanup()` 在过滑块成功后清理临时浏览器目录（`TemporaryDirectory.cleanup()` 内部调 `shutil.rmtree`），
+  沙箱 safe-delete 守卫会拦截 `rmtree` 并抛 `SystemExit(1)`。v1.0.42 只给 `/internal/captcha/solve`
+  这个 **HTTP handler** 加了 `BaseException` 兜底，**没覆盖 websocket 自身的
+  `cookie_refresh_loop → refresh_token → handle_captcha_verification → slider_stealth.run → close() → _cleanup()`
+  内部代码路径**，于是那次 `SystemExit` 沿调用栈上抛、整个 websocket 进程崩溃（端口 8090 返回 502）。
+  现于 `_cleanup()` 的临时目录清理处精确捕获 `SystemExit` 并忽略（沙箱特有误杀，真机无此守卫），
+  **过滑块成功与否都不再拖垮 websocket 进程**。
+- 影响：本环境（WorkBuddy 沙箱）下，账号触发过滑块且随后清理浏览器目录时，websocket 不再闪崩；
+  真机无沙箱守卫，此改动无副作用。
+- 配套：重启 websocket + frontend（沙箱会回收后台进程），四服务恢复在线。
 
 ---
 

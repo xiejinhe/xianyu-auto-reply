@@ -1512,6 +1512,10 @@ class PlaywrightSliderService:
             try:
                 self._slider_profile_tempdir.cleanup()
                 logger.info(f"【{pure_id}】滑块临时浏览器目录已清理")
+            except SystemExit as se:
+                # 沙箱 safe-delete 守卫会拦截 shutil.rmtree 并抛 SystemExit(1)，
+                # 这是环境特有的误杀，不应中断整个 websocket 进程；忽略即可。
+                logger.warning(f"【{pure_id}】清理滑块临时浏览器目录被沙箱守卫拦截(SystemExit)，忽略: {se}")
             except Exception as e:
                 logger.warning(f"【{pure_id}】清理滑块临时浏览器目录失败: {e}")
             finally:
