@@ -266,6 +266,25 @@ export const sendTextMessage = async (
   })
 }
 
+/** 转发消息：把一条已有消息（文本/图片）原样发到另一个会话 */
+export const forwardMessage = async (
+  accountId: string,
+  payload: {
+    toCid: string
+    toUserId: string
+    msgType: 'text' | 'image'
+    text?: string
+    imageUrl?: string
+    width?: number
+    height?: number
+  },
+): Promise<{ success: boolean; message: string; data?: { messageId: string } }> => {
+  return post<{ success: boolean; message: string; data?: { messageId: string } }>(
+    `${PREFIX}/forward-message/${accountId}`,
+    payload,
+  )
+}
+
 /** 发送图片消息（上传图片文件，后端转存闲鱼CDN后发送） */
 export const sendImageMessage = async (
   accountId: string,

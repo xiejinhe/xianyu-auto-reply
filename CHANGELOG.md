@@ -8,12 +8,35 @@
 
 ---
 
-> **当前版本：`v1.0.48`**　｜　更新时间：**2026-10-20**
+> **当前版本：`v1.0.49`**　｜　更新时间：**2026-10-20**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.49 · 2026-10-20（新增：消息长按菜单——复制 / 回复 / 转发）
+
+### 功能（对齐闲鱼 APP 消息长按菜单）
+- **入口**：聊天窗口内右键（或长按）任意对方消息气泡，弹出菜单——复制 / 回复 / 转发；
+  系统提示类消息（如「对方撤回了一条消息」除外的情况）不弹菜单，避免误触。
+- **复制**：文本消息复制正文到剪贴板；图片消息复制图片。
+- **回复（引用这条消息）**：输入框上方出现蓝色引用条，显示被引用消息的
+  发送者与摘要，点 × 取消；发送时正文自动带「「回复 昵称：摘要」」前缀。
+  ⚠️ 当前为**文本前缀式伪引用**——对方端收到的是普通文本，不是闲鱼 APP 的
+  引用卡片；真引用卡片需要抓包 IM 发送协议的引用字段后才能做（已列入待办）。
+- **转发**：弹窗选择当前账号下的目标会话（当前会话置灰禁用），确认后发送。
+  新增后端接口 `POST /api/v1/chat-new/forward-message/{account_id}`
+  （`ForwardMessageRequest`：toCid/toUserId/msgType/text/imageUrl/width/height）：
+  文本走 `send_text_message`、图片走 `send_image_message`，发送成功后
+  `notify_peer_account` 补偿推送，让对方端实时看到；语音与卡片消息暂不支持转发。
+- **改动文件**：`backend-web/app/api/routes/chat_new.py`（转发路由+模型）、
+  `frontend/src/api/chatNew.ts`（forwardMessage）、
+  `frontend/src/pages/chat-new/ChatNew.tsx`（菜单/引用条/转发弹窗，
+  同时清理了上一版遗留的 imageMenu 死代码）。
+- **验证**：`tsc --noEmit` 通过；转发路由冒烟（无登录态返回 401=路由已注册）。
 
 ---
 

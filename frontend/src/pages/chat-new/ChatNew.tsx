@@ -6,7 +6,7 @@
  */
 import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag, Reply, Forward } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
 const EVENT_ICONS: Record<string, typeof Info> = {
@@ -27,6 +27,7 @@ import {
   hideConversation,
   getMessages,
   sendTextMessage,
+  forwardMessage,
   sendImageMessage,
   queryUserInfos,
   getAccountProfile,
@@ -469,8 +470,7 @@ export function ChatNew() {
   // 图片预览
   const [previewImage, setPreviewImage] = useState('')
 
-  // 图片右键菜单：右键聊天图片/预览大图时弹出，菜单里提供「复制图片」
-  const [imageMenu, setImageMenu] = useState<{ x: number; y: number; url: string } | null>(null)
+  // 图片复制中的 URL（菜单/预览右键共用，用于按钮 Loading 态）
   const [copyingImageUrl, setCopyingImageUrl] = useState('')
 
   // 用户信息缓存（otherUserId -> {avatar, nick}）
@@ -560,6 +560,13 @@ export function ChatNew() {
   // 撤回消息「显示/隐藏」：记录哪些撤回占位消息展开了原文（按 messageId）。
   // 默认全部折叠——对方撤回了就只显示提示，原文由用户主动点开。
   const [revokedExpanded, setRevokedExpanded] = useState<Record<string, boolean>>({})
+  // 消息长按 / 右键菜单（对齐闲鱼 APP：复制 / 回复 / 转发）
+  const [msgMenu, setMsgMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null)
+  // 「回复」= 引用这条消息：输入框上方显示引用条，发送时内容带引用前缀
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
+  // 转发：选择目标会话的弹窗（转发内容 = 打开菜单时的那条消息）
+  const [forwardMsg, setForwardMsg] = useState<ChatMessage | null>(null)
+  const [forwarding, setForwarding] = useState(false)
   const [deletingConvCid, setDeletingConvCid] = useState('')
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string
@@ -2109,7 +2116,6 @@ export function ChatNew() {
 
   /** 右键图片菜单里的「复制图片」：走后端代理拿同源数据后写入剪贴板 */
   const handleCopyImage = async (url: string) => {
-    setImageMenu(null)
     if (!url || copyingImageUrl) return
     setCopyingImageUrl(url)
     try {
@@ -2122,12 +2128,12 @@ export function ChatNew() {
     }
   }
 
-  /** 图片右键菜单：点别处、滚动、按 Esc 或改窗口大小时关闭 */
+  /** 消息长按 / 右键菜单：点别处、滚动、按 Esc 或改窗口大小时关闭 */
   useEffect(() => {
-    if (!imageMenu) return
-    const close = () => setImageMenu(null)
+    if (!msgMenu) return
+    const close = () => setMsgMenu(null)
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setImageMenu(null)
+      if (e.key === 'Escape') setMsgMenu(null)
     }
     document.addEventListener('mousedown', close)
     document.addEventListener('scroll', close, true)
@@ -2139,7 +2145,83 @@ export function ChatNew() {
       document.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('resize', close)
     }
-  }, [imageMenu])
+  }, [msgMenu])
+
+  /** 菜单-复制：文本/语音转写/卡片标题复制文本；图片复制图片本身 */
+  const handleCopyMessage = (msg: ChatMessage) => {
+    setMsgMenu(null)
+    if (msg.type === 'image' && msg.images.length > 0) {
+      void handleCopyImage(msg.images[0])
+      return
+    }
+    const text = msg.text || ''
+    if (!text.trim()) {
+      addToast({ message: '这条消息没有可复制的文本', type: 'error' })
+      return
+    }
+    void navigator.clipboard.writeText(text)
+      .then(() => addToast({ message: '已复制', type: 'success' }))
+      .catch(() => addToast({ message: '复制失败，浏览器不允许访问剪贴板', type: 'error' }))
+  }
+
+  /** 菜单-回复（引用）：输入框上方挂引用条，发送时内容带引用前缀。
+   *  说明：闲鱼 APP 的「回复」在对方端是引用卡片，需要 IM 协议携带引用字段
+   *  （待抓包确认字段名，同演出信息表单）。当前用文本前缀实现「伪引用」——
+   *  本端有完整引用体验，对方端收到的是带前缀的普通文本。 */
+  const startReply = (msg: ChatMessage) => {
+    setMsgMenu(null)
+    setReplyTo(msg)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  /** 引用前缀：「回复 昵称：原文摘要」，图片类消息摘要为 [图片] */
+  const buildReplyPrefix = (msg: ChatMessage): string => {
+    const who = msg.isSelf ? '自己' : (msg.senderName || '对方')
+    const body = msg.type === 'image' ? '[图片]' : (msg.text || '').slice(0, 50)
+    return `「回复 ${who}：${body}」\n`
+  }
+
+  /** 菜单-转发：打开目标会话选择弹窗 */
+  const openForward = (msg: ChatMessage) => {
+    setMsgMenu(null)
+    if (msg.type === 'audio' || msg.type === 'card') {
+      addToast({ message: '暂不支持转发语音和卡片消息', type: 'error' })
+      return
+    }
+    setForwardMsg(msg)
+  }
+
+  /** 执行转发：把消息原样发到目标会话 */
+  const handleForwardMessage = async (targetCid: string, targetUserId: string) => {
+    if (!forwardMsg || !activeAccountId || forwarding) return
+    setForwarding(true)
+    try {
+      const res = await forwardMessage(activeAccountId, {
+        toCid: targetCid,
+        toUserId: targetUserId,
+        msgType: forwardMsg.type === 'image' ? 'image' : 'text',
+        text: forwardMsg.type === 'image' ? '' : (forwardMsg.text || ''),
+        imageUrl: forwardMsg.type === 'image' ? (forwardMsg.images[0] || '') : '',
+      })
+      if (res.success) {
+        addToast({ message: '已转发', type: 'success' })
+        setForwardMsg(null)
+        // 目标会话若在当前账号列表里，顺手更新它的摘要，不用等刷新
+        const preview = forwardMsg.type === 'image' ? '[图片]' : (forwardMsg.text || '').slice(0, 50)
+        setConversations((prev) => prev.map((c) => (
+          c.cid === targetCid
+            ? { ...c, lastMessageSummary: `你：${preview}`, lastMessageTime: Date.now() }
+            : c
+        )))
+      } else {
+        addToast({ message: res.message || '转发失败', type: 'error' })
+      }
+    } catch (e: any) {
+      addToast({ message: e.message || '转发失败', type: 'error' })
+    } finally {
+      setForwarding(false)
+    }
+  }
 
   /** 图片预览大图：按 Esc 或点空白处关闭 */
   useEffect(() => {
@@ -2147,8 +2229,6 @@ export function ChatNew() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setPreviewImage('')
-        // 预览图上开的右键菜单跟着一起关，避免 Esc 后留个孤立菜单
-        setImageMenu(null)
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -2309,7 +2389,9 @@ export function ChatNew() {
       return
     }
 
-    const text = rawText.trim()
+    // 「回复」（引用）：内容带引用前缀一起发出，发完清掉引用状态
+    const replyPrefix = replyTo ? buildReplyPrefix(replyTo) : ''
+    const text = replyPrefix + rawText.trim()
     setSending(true)
     try {
       const res = await sendTextMessage(activeAccountId, activeCid, conv.otherUserId, text)
@@ -2328,6 +2410,8 @@ export function ChatNew() {
         failReason: res.success ? undefined : (res.message || '发送失败'),
       }
       if (clearInput) setInputText('')
+      // 从输入框发出的（clearInput=true），发完清掉「回复」引用态
+      if (clearInput) setReplyTo(null)
       setMessages((prev) => appendMsg(prev, sentMsg))
       if (res.success) {
         // 成功才更新会话列表摘要
@@ -2357,6 +2441,8 @@ export function ChatNew() {
         failReason,
       }
       if (clearInput) setInputText('')
+      // 从输入框发出的（clearInput=true），发完清掉「回复」引用态
+      if (clearInput) setReplyTo(null)
       setMessages((prev) => appendMsg(prev, sentMsg))
       addToast({ message: failReason, type: 'error' })
     } finally {
@@ -3376,6 +3462,14 @@ export function ChatNew() {
                 <div
                   key={msg.messageId || idx}
                   className={`flex gap-2 ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
+                  onContextMenu={(e) => {
+                    // 消息长按 / 右键菜单（对齐闲鱼 APP：复制/回复/转发）。
+                    // 触屏长按多数浏览器也会触发 contextmenu；头像上的点击
+                    // 打开的是对方主页，与菜单互不干扰。
+                    if (isSystem && !msg.revoked) return  // 系统提示不给菜单
+                    e.preventDefault()
+                    setMsgMenu({ x: e.clientX, y: e.clientY, msg })
+                  }}
                 >
                   {/* 对方头像（普通系统消息不显示；撤回占位消息要显示——
                       和闲鱼 APP 一致，对方撤回了也能看到是谁撤的） */}
@@ -3469,10 +3563,6 @@ export function ChatNew() {
                                 className="max-w-full rounded max-h-48 object-contain cursor-pointer hover:opacity-80 transition-opacity"
                                 alt="图片消息"
                                 onClick={() => setPreviewImage(url)}
-                                onContextMenu={(e) => {
-                                  e.preventDefault()
-                                  setImageMenu({ x: e.clientX, y: e.clientY, url })
-                                }}
                               />
                             ))}
                           </div>
@@ -3609,6 +3699,27 @@ export function ChatNew() {
               className="hidden"
               onChange={handleImageSelected}
             />
+            {/* 「回复」引用条：输入框上方显示被引用的消息，Esc/点×取消 */}
+            {replyTo && (
+              <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-blue-400 bg-gray-50 px-2 py-1.5 dark:bg-gray-700/50">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-blue-500 dark:text-blue-400">
+                    回复 {replyTo.isSelf ? '自己' : (replyTo.senderName || '对方')}
+                  </div>
+                  <div className="truncate text-xs text-gray-500 dark:text-gray-400">
+                    {replyTo.type === 'image' ? '[图片]' : replyTo.text}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReplyTo(null)}
+                  className="flex-shrink-0 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  title="取消引用"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
             {pendingImage && (
               <div className="mb-2 inline-flex items-start gap-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-2">
                 <img
@@ -3813,30 +3924,47 @@ export function ChatNew() {
             alt="预览"
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => {
+              // 预览大图上右键 = 直接复制这张图（聊天流里的菜单走 msgMenu）
               e.preventDefault()
-              setImageMenu({ x: e.clientX, y: e.clientY, url: previewImage })
+              void handleCopyImage(previewImage)
             }}
           />
         </div>
       )}
-      {/* 图片右键菜单：右键聊天图片或预览大图时弹出，用于把图片复制进剪贴板 */}
-      {imageMenu && (
+      {/* 消息长按 / 右键菜单（对齐闲鱼 APP）：复制 / 回复（引用）/ 转发 */}
+      {msgMenu && (
         <div
-          className="fixed z-[300] min-w-[140px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-800"
+          className="fixed z-[300] min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-800"
           style={{
-            left: Math.min(imageMenu.x, window.innerWidth - 160),
-            top: Math.min(imageMenu.y, window.innerHeight - 60),
+            left: Math.min(msgMenu.x, window.innerWidth - 170),
+            top: Math.min(msgMenu.y, window.innerHeight - 150),
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <button
             type="button"
-            disabled={!!copyingImageUrl}
-            onClick={() => handleCopyImage(imageMenu.url)}
+            disabled={msgMenu.msg.type === 'image' && !!copyingImageUrl}
+            onClick={() => handleCopyMessage(msgMenu.msg)}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-200 dark:hover:bg-slate-700"
           >
             <Copy className="w-4 h-4" />
-            {copyingImageUrl === imageMenu.url ? '复制中...' : '复制图片'}
+            {msgMenu.msg.type === 'image' && copyingImageUrl ? '复制中...' : '复制'}
+          </button>
+          <button
+            type="button"
+            onClick={() => startReply(msgMenu.msg)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-slate-700"
+          >
+            <Reply className="w-4 h-4" />
+            回复
+          </button>
+          <button
+            type="button"
+            onClick={() => openForward(msgMenu.msg)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-slate-700"
+          >
+            <Forward className="w-4 h-4" />
+            转发
           </button>
         </div>
       )}
@@ -3849,6 +3977,81 @@ export function ChatNew() {
         onConfirm={() => closeConfirm(true)}
         onCancel={() => closeConfirm(false)}
       />
+      {/* 转发弹窗：选择目标会话，把菜单选中的消息原样发过去 */}
+      {forwardMsg && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => { if (!forwarding) setForwardMsg(null) }}
+          />
+          <div className="relative flex max-h-[70vh] w-full max-w-sm mx-4 flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+            <div className="border-b border-slate-200 p-4 dark:border-slate-700">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">转发消息</h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                将消息发送给以下会话（仅当前账号的会话）
+              </p>
+              <div className="mt-2 flex items-center gap-2 rounded-lg bg-slate-50 p-2 dark:bg-slate-700/50">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    转发：{forwardMsg.isSelf ? '自己' : (forwardMsg.senderName || '对方')} 的消息
+                  </div>
+                  <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {forwardMsg.type === 'image' ? '[图片]' : forwardMsg.text}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {conversations.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-400">暂无会话</p>
+              ) : (
+                conversations.map((conv) => {
+                  const isCurrent = normCid(conv.cid) === normCid(activeCid)
+                  return (
+                    <button
+                      key={conv.cid}
+                      type="button"
+                      disabled={forwarding || isCurrent}
+                      onClick={() => handleForwardMessage(conv.cid, conv.otherUserId)}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700"
+                    >
+                      {conv.otherUserAvatar ? (
+                        <img src={conv.otherUserAvatar} className="h-9 w-9 flex-shrink-0 rounded-full object-cover" alt="" />
+                      ) : (
+                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-600">
+                          <User className="h-4 w-4 text-slate-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm text-slate-700 dark:text-slate-200">
+                          {conv.otherUserName || conv.otherUserId}
+                        </div>
+                        <div className="truncate text-xs text-slate-400">
+                          {isCurrent ? '当前会话' : (conv.lastMessageSummary || '')}
+                        </div>
+                      </div>
+                      {forwarding && (
+                        <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-blue-500" />
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <div className="border-t border-slate-200 p-3 dark:border-slate-700">
+              <button
+                type="button"
+                disabled={forwarding}
+                onClick={() => setForwardMsg(null)}
+                className="w-full rounded-lg border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
       {/* 订单改价弹窗：「已拍下」待付款卡片点「修改价格」打开，改价后买家会收到通知 */}
       {adjustingOrderNo && createPortal(
         <div className="fixed inset-0 z-[1000] flex items-center justify-center">

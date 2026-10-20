@@ -789,6 +789,17 @@ class SendMessageRequest(BaseModel):
     text: str
 
 
+class ForwardMessageRequest(BaseModel):
+    """转发消息请求体：把一条已有消息（文本/图片）原样发到另一个会话"""
+    toCid: str
+    toUserId: str
+    msgType: str = "text"  # text / image
+    text: str = ""         # msgType=text 时的内容
+    imageUrl: str = ""     # msgType=image 时的闲鱼CDN图片地址
+    width: int = 800
+    height: int = 600
+
+
 class RecallMessageRequest(BaseModel):
     messageId: str
     messageTime: int
@@ -860,6 +871,76 @@ async def send_message(
         # 直接透传给前端展示（如"内容存在不当信息..."），便于用户调整后重发。
         logger.warning(f"【{account_id}】发送消息失败: {e}")
         return ApiResponse(success=False, message=f"发送失败：{str(e)}")
+
+
+@router.post("/forward-message/{account_id}")
+async def forward_message(
+    account_id: str,
+    req: ForwardMessageRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    转发消息：把一条已有消息（文本/图片）原样发到另一个会话
+
+    Args:
+        account_id: 账号ID
+        req: toCid/toUserId（目标会话）+ msgType/text/imageUrl（源消息内容）
+    """
+    try:
+        manager = get_im_session_manager()
+        client = manager.clients.get(account_id)
+        if not client or not client.is_connected:
+            return ApiResponse(success=False, message="账号未连接，请先连接")
+
+        if not req.toCid.strip() or not req.toUserId.strip():
+            return ApiResponse(success=False, message="目标会话信息缺失")
+
+        if req.msgType == "image":
+            if not req.imageUrl.strip():
+                return ApiResponse(success=False, message="图片地址缺失，无法转发")
+            send_result = await client.send_image_message(
+                cid=req.toCid,
+                to_user_id=req.toUserId,
+                image_url=req.imageUrl,
+                width=req.width,
+                height=req.height,
+            )
+            preview = "[图片]"
+        else:
+            if not req.text.strip():
+                return ApiResponse(success=False, message="消息内容不能为空")
+            send_result = await client.send_text_message(
+                cid=req.toCid,
+                to_user_id=req.toUserId,
+                text=req.text,
+            )
+            preview = req.text[:50]
+
+        logger.info(
+            f"【{account_id}】转发消息到 {req.toUserId} (cid={req.toCid}): {preview}"
+        )
+        # 与发送一致：系统内其他账号在线时做实时性补偿
+        try:
+            await manager.notify_peer_account(
+                account_id,
+                req.toCid,
+                req.toUserId,
+                message_id=send_result.get("messageId", ""),
+                msg_type=req.msgType if req.msgType in ("text", "image") else "text",
+                text=req.text,
+                images=[req.imageUrl] if req.msgType == "image" and req.imageUrl else None,
+            )
+        except Exception as notify_e:
+            logger.warning(f"【{account_id}】转发系统内互发补偿失败: {notify_e}")
+        return ApiResponse(
+            success=True,
+            message="转发成功",
+            data={"messageId": send_result.get("messageId", "")},
+        )
+
+    except Exception as e:
+        logger.warning(f"【{account_id}】转发消息失败: {e}")
+        return ApiResponse(success=False, message=f"转发失败：{str(e)}")
 
 
 @router.post("/recall-message/{account_id}")

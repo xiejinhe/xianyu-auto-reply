@@ -6,4 +6,4 @@
 """
 
 # 当前程序版本号
-CURRENT_VERSION = "1.0.48"
+CURRENT_VERSION = "1.0.49"
