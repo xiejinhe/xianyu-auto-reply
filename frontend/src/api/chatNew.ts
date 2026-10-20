@@ -533,6 +533,25 @@ export const getMessages = async (
   return res.data || { messages: [], hasMore: false, nextCursor: null }
 }
 
+/** 已读回执持久化记录（v1.0.56 起落库，刷新/重开会话后恢复「已读」标记） */
+export interface PeerReadRecord {
+  message_ids: string[]
+  read_at: number
+}
+
+export const getPeerReads = async (
+  accountId: string,
+  cid: string,
+): Promise<PeerReadRecord> => {
+  const res = await get<{
+    success: boolean
+    message?: string
+    data: PeerReadRecord
+  }>(`${PREFIX}/peer-read/${accountId}/${cid}`)
+  if (!res.success) throw new Error(res.message || '读取已读回执失败')
+  return res.data || { message_ids: [], read_at: 0 }
+}
+
 export const getCustomerOrders = async (
   accountId: string,
   buyerId: string,

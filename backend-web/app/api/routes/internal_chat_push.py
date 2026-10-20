@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.services.chat_new import get_im_session_manager
+from app.services.chat_new.peer_read_service import save_peer_reads
 from common.utils.internal_auth import INTERNAL_AUTH_HEADER, require_valid_internal_token
 
 router = APIRouter(prefix="/internal", tags=["内部接口"])
@@ -181,6 +182,22 @@ async def receive_app_channel_peer_read(
     except Exception as exc:
         logger.warning(f"【{req.account_id}】已读回执广播失败: {exc}")
         return {"success": False, "delivered": False, "message": str(exc)}
+
+    # 落库：即使没有前端在线（delivered=False）也要持久化，否则刷新后
+    # 「已读」标记会退回历史值。失败不影响本次广播结果。
+    try:
+        saved = await save_peer_reads(
+            account_id=req.account_id,
+            cid=req.cid,
+            message_ids=req.message_ids or [],
+            read_at=req.read_at or 0,
+        )
+        if saved:
+            logger.info(
+                f"【{req.account_id}】已读回执已落库 (cid={req.cid}, n={saved})"
+            )
+    except Exception as exc:
+        logger.warning(f"【{req.account_id}】已读回执落库失败(非致命): {exc}")
 
     return {"success": True, "delivered": delivered}
 

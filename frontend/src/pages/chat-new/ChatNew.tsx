@@ -26,6 +26,7 @@ import {
   getConversations,
   hideConversation,
   getMessages,
+  getPeerReads,
   sendTextMessage,
   forwardMessage,
   sendImageMessage,
@@ -1727,6 +1728,28 @@ export function ChatNew() {
     }, 15000)
     return () => clearInterval(timer)
   }, [activeAccountId, activeCid, loadMessages])
+
+  // 切换会话时从 MySQL 恢复「对方已读」标记（v1.0.56 落库）：刷新/重开页面后
+  // 仍能恢复，不再退回历史值。复用 handleWsPeerRead 的 ref 逻辑（按 cid 归并），
+  // 既填精确命中 IM messageId，又用 read_at 给 App 通道 hex 孪生副本做时间兜底。
+  // 只随会话切换跑一次，不进 15 秒兜底轮询，避免反复打库。
+  useEffect(() => {
+    if (!activeAccountId || !activeCid) return
+    let cancelled = false
+    getPeerReads(activeAccountId, activeCid)
+      .then((rec) => {
+        if (cancelled || !rec) return
+        if (rec.message_ids?.length || rec.read_at) {
+          handleWsPeerRead(activeAccountId, activeCid, rec.message_ids ?? [], rec.read_at ?? 0)
+        }
+      })
+      .catch(() => {
+        // 读不到就退回历史快照，不阻塞聊天
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeAccountId, activeCid, handleWsPeerRead])
 
   /** 账号和会话切换共用恢复入口，后台缓存待补偿时立即拉取缺失消息。 */
   const restoreConversation = useCallback((accountId: string, cid: string) => {

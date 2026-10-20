@@ -37,6 +37,7 @@ from app.services.chat_new.user_profile_service import (
     PROFILE_CACHE_PREFIX,
 )
 from app.services.chat_new.official_blacklist_service import official_blacklist_request
+from app.services.chat_new.peer_read_service import load_peer_reads
 from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
@@ -778,6 +779,33 @@ async def get_messages(
     except Exception as e:
         logger.error(f"【{account_id}】获取聊天记录失败: {e}")
         return ApiResponse(success=False, message=f"获取聊天记录失败: {str(e)}")
+
+
+@router.get("/peer-read/{account_id}/{cid}")
+async def get_peer_reads(
+    account_id: str,
+    cid: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    读取某会话已确认的「对方已读」回执（v1.0.56 起落库）。
+
+    前端切换会话时调用一次，用返回值初始化已读标记，使刷新/重开页面后
+    仍能恢复「已读」状态，不再退回历史值。返回被读消息的 message_id
+    集合与最大回执时间戳（毫秒，供 App 通道 hex 孪生副本时间兜底）。
+    """
+    try:
+        message_ids, read_at = await load_peer_reads(account_id, cid)
+        return ApiResponse(
+            success=True,
+            data={
+                "message_ids": sorted(message_ids),
+                "read_at": int(read_at or 0),
+            },
+        )
+    except Exception as e:
+        logger.error(f"【{account_id}】读取已读回执失败: {e}")
+        return ApiResponse(success=False, message=f"读取已读回执失败: {str(e)}")
 
 
 # ==================== 发送消息请求模型 ====================
