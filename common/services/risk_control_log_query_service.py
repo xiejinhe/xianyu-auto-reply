@@ -10,11 +10,18 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from sqlalchemy import exists, select
 
 from common.db.session import async_session_maker
 from common.models.risk_control_log import XYRiskControlLog
+
+
+# 判定“处理中占用”的时间窗口（分钟）：超过此时长的 processing 日志视为已 abandoned
+# （求解器崩溃/进程重启遗留），不再阻塞重连——避免任何卡死日志永久堵死账号的
+# Token 刷新与 IM 重连。
+PROCESSING_STALE_MINUTES = 10
 
 
 _ACCOUNT_RISK_CONTROL_LOCKS: dict[str, asyncio.Lock] = {}
@@ -73,6 +80,10 @@ async def check_account_processing_risk_control_log(
 
     attempts = max(1, int(max_attempts))
     last_error = ""
+    # 只把“近期”的 processing 日志视为占用：超过 PROCESSING_STALE_MINUTES 分钟的
+    # 视为已 abandoned（求解器崩溃/进程重启遗留），不再阻塞重连——避免任何卡死日志
+    # 永久堵死账号的 Token 刷新与 IM 重连。
+    since_fresh = datetime.now() - timedelta(minutes=PROCESSING_STALE_MINUTES)
     for attempt in range(1, attempts + 1):
         try:
             async with async_session_maker() as session:
@@ -84,6 +95,7 @@ async def check_account_processing_risk_control_log(
                                     XYRiskControlLog.account_identifier
                                     == clean_identifier,
                                     XYRiskControlLog.processing_status == "processing",
+                                    XYRiskControlLog.created_at >= since_fresh,
                                 )
                             )
                         )

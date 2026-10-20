@@ -62,7 +62,10 @@ HEARTBEAT_INTERVAL = 15
 # 风控滑块验证关键词：Token响应中出现任一关键词即表示被风控拦截（如"哎哟喂,被挤爆啦"），需过滑块
 # 与 websocket 进程 cookie_token_manager.need_captcha_verification 保持一致
 CAPTCHA_KEYWORDS = (
-    "FAIL_SYS_USER_VALIDATE",  # 用户验证失败
+    # 注意：FAIL_SYS_USER_VALIDATE 已从滑块关键词移除——它在 IM 登录 Token 网页接口上
+    # 表示「网页Cookie会话失效/被网页风控」，并非滑块挑战；盲目过滑块既解决不了问题，
+    # 又会留下 processing 卡死日志阻塞重连。改由 _fetch_im_token_from_api 单独处理
+    # （标记会话失效、提示重新登录）。
     "RGV587_ERROR",            # 风控错误
     "哎哟喂,被挤爆啦",          # 被挤爆了（英文逗号）
     "哎哟喂，被挤爆啦",         # 被挤爆了（中文逗号）
@@ -837,6 +840,21 @@ class GoofishImClient:
             # 检查令牌过期，使用新Cookie重试（最多1次）
             ret = result.get("ret", [])
             ret_str = str(ret)
+            # FAIL_SYS_USER_VALIDATE 在 IM 登录 Token 网页接口上表示「网页 Cookie 会话失效/
+            # 被网页风控」，并非滑块挑战（现场撞不到验证码、滑块求解器还会卡死）。盲目过滑块
+            # 既解决不了问题，又会留下 processing 卡死日志阻塞重连。正确做法：标记会话失效、
+            # 提示重新登录刷新网页 Cookie，本次直接放弃获取 Token。
+            if "FAIL_SYS_USER_VALIDATE" in ret_str:
+                logger.warning(
+                    f"【{self.account_id}】IM登录Token返回 FAIL_SYS_USER_VALIDATE，"
+                    f"视为网页Cookie会话失效，放弃过滑块并标记需重新登录"
+                )
+                try:
+                    from common.utils.cookie_refresh import mark_account_session_expired
+                    mark_account_session_expired(self.account_id)
+                except Exception:
+                    pass
+                return ""
             if is_token_expired_response(result):
                 if _retry < 1:
                     logger.warning(

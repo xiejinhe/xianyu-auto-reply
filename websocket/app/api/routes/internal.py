@@ -730,10 +730,10 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 slider_mode=selected_slider_mode,
             )
     except asyncio.CancelledError:
-        cancelled_cookies = refetched_token_result.get("new_cookies")
-        if isinstance(cancelled_cookies, dict) and cancelled_cookies:
-            await _persist_cookie_updates(cancelled_cookies, "重取Token")
         logger.warning(f"【过滑块接口】account_id={safe_id} 执行任务被取消")
+        # 任务被取消（如调用方超时断开）时，processing 日志必须结算为失败，
+        # 否则会永久阻塞该账号后续重连/过滑块。
+        _update_log("failed", "过滑块任务被取消/连接中断，标记处理失败", error="CancelledError")
         raise
     except Exception as e:
         logger.error(f"【过滑块接口】account_id={safe_id} 执行异常: {e}")
@@ -749,7 +749,7 @@ async def solve_captcha(request: SolveCaptchaRequest):
                 "cookie_message": exception_cookie_message,
             }
         _update_log(
-            "error",
+            "failed",
             f"过滑块执行异常，耗时: {_time.time() - start_ts:.2f}秒",
             error=str(e),
         )
@@ -760,6 +760,20 @@ async def solve_captcha(request: SolveCaptchaRequest):
             "data": exception_cookie_data or None,
             "_risk_log_id": log_id,
         }
+    except BaseException as be:
+        # SystemExit / KeyboardInterrupt 等非 Exception 异常（如沙箱 safe-delete 守卫拦截
+        # rmtree 抛出的 SystemExit）不会被 except Exception 捕获，会导致 processing 日志
+        # 永久卡死、阻塞账号重连。这里兜底标记为失败再原样抛出，避免卡死。
+        logger.error(
+            f"【过滑块接口】account_id={safe_id} 执行被非预期异常中断: "
+            f"{type(be).__name__}: {be}"
+        )
+        _update_log(
+            "failed",
+            f"过滑块任务被异常中断: {type(be).__name__}",
+            error=str(be)[:500],
+        )
+        raise
 
     duration = _time.time() - start_ts
     refetched_cookies = refetched_token_result.get("new_cookies")

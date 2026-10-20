@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from common.db.session import async_session_maker
 from common.models.risk_control_log import XYRiskControlLog
@@ -86,33 +86,56 @@ def _session_expired_for(account_id: str) -> bool:
         return False
 
 
+def _is_failed_active(account: XYAccount, failed_at: Optional[datetime]) -> bool:
+    """判断最近一次失败风控事件是否仍“有效”（应展示为风控中）。
+
+    规则：失败时间晚于账号最近一次成功刷新网页 Cookie（last_refresh_at）才视为有效。
+    即：用户重新登录（刷新网页会话）之后发生的失败才标风控中；重登之前的历史失败
+    已被新的网页会话“覆盖”，不再展示，避免“刚登完号却还显示风控中”的误报。
+    """
+    failed_at = _to_naive_local(failed_at)
+    if failed_at is None:
+        return False
+    last_refresh = _to_naive_local(account.last_refresh_at)
+    if last_refresh is None:
+        # 未记录过刷新时间：保守视为有效（历史上确有失败且无法确认已被新会话覆盖）。
+        return True
+    return failed_at > last_refresh
+
+
 async def get_recent_risk_control_account_ids(
     session,
     account_ids: Iterable[str],
     *,
     hours: int = RISK_CONTROL_WINDOW_HOURS,
-) -> set[str]:
-    """批量查询近 ``hours`` 小时内存在 processing/failed 风控日志的账号标识集合。
+) -> dict[str, datetime]:
+    """查询近 ``hours`` 小时内存在失败风控日志的账号及其最近失败时间。
 
     Args:
         session: 复用调用方的数据库会话（避免额外建连）。
         account_ids: 待查询的账号业务标识列表。
         hours: 时间窗口（小时），默认 24。
     Returns:
-        命中（近窗口内存在风控日志）的 account_identifier 集合。
+        ``{account_identifier: 最近一次失败日志的 created_at}``。
+
+        仅统计 ``failed`` / ``error``（已终结）状态；``processing``（进行中）不计入——
+        进行中日志若卡死会由求解器兜底标记失败，且 Dashboard 不应把“进行中”误报为风控中。
     """
     ids = [str(i) for i in account_ids]
     if not ids:
-        return set()
+        return {}
     since = datetime.now() - timedelta(hours=hours)
     rows = await session.execute(
-        select(XYRiskControlLog.account_identifier).where(
+        select(
+            XYRiskControlLog.account_identifier,
+            func.max(XYRiskControlLog.created_at),
+        ).where(
             XYRiskControlLog.account_identifier.in_(ids),
-            XYRiskControlLog.processing_status.in_(["processing", "failed"]),
+            XYRiskControlLog.processing_status.in_(["failed", "error"]),
             XYRiskControlLog.created_at >= since,
-        )
+        ).group_by(XYRiskControlLog.account_identifier)
     )
-    return {r[0] for r in rows.all() if r[0]}
+    return {r[0]: r[1] for r in rows.all() if r[0]}
 
 
 async def compute_cookie_status_map(
@@ -131,15 +154,16 @@ async def compute_cookie_status_map(
         return {}
     account_ids = [acc.account_id for acc in accounts]
     try:
-        recent_rc = await get_recent_risk_control_account_ids(session, account_ids)
+        recent_failed = await get_recent_risk_control_account_ids(session, account_ids)
     except Exception:
         # 风控日志查询失败：保守按“无风控”处理，不阻塞列表展示。
-        recent_rc = set()
+        recent_failed = {}
     result: dict[str, str] = {}
     for acc in accounts:
+        failed_at = recent_failed.get(acc.account_id)
         status = _status_from_parts(
             acc,
-            recent_risk_control=(acc.account_id in recent_rc),
+            recent_risk_control=_is_failed_active(acc, failed_at),
             session_expired=_session_expired_for(acc.account_id),
         )
         result[acc.account_id] = status
