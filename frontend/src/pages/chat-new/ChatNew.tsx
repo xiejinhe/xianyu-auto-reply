@@ -55,7 +55,7 @@ import {
   type QuickPhrase,
   type XianyuUserProfile,
 } from '@/api/chatNew'
-import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, adjustOrderPrice, type OrderDetail } from '@/api/orders'
+import { cancelOrder, fetchXianyuOrders, getOrderDetail, manualDelivery, noLogisticsDelivery, adjustOrderPrice, submitShowInfo, type OrderDetail } from '@/api/orders'
 import { getOrderStatusMeta, SHIPPABLE_STATUSES } from './orderStatus'
 import { useChatNewWs } from './useChatNewWs'
 import { getCookieStatusMeta, formatRelativeTime } from '@/utils/cookieStatus'
@@ -79,6 +79,8 @@ interface OrderCardBubbleProps {
   onDeliver: (orderNo: string) => void
   onNoLogisticsDeliver: (orderNo: string) => void
   onAdjustPrice: (orderNo: string, currentPrice?: string) => void
+  /** 打开系统内「填写演出信息」表单（拿得到订单号时优先，替代去 APP） */
+  onShowInfo: (orderNo: string) => void
   /** 展示闲鱼 APP 深链弹窗（fleamarket:// 原生页面，电脑上打不开，需复制到手机唤起） */
   onDeepLink: (url: string, title: string) => void
   onToast: (toast: { message: string; type: 'success' | 'error' | 'warning' | 'info' }) => void
@@ -105,6 +107,7 @@ function OrderCardBubble({
   onDeliver,
   onNoLogisticsDeliver,
   onAdjustPrice,
+  onShowInfo,
   onDeepLink,
   onToast,
 }: OrderCardBubbleProps) {
@@ -148,12 +151,14 @@ function OrderCardBubble({
         onToast({ message: '未取到订单号，请在闲鱼 APP 里修改价格', type: 'warning' })
       }
     } else if (btn.action === 'smart_form') {
-      // 演出信息表单是闲鱼 APP 原生页面（fleamarket://smart_form），网页端无法代填，
-      // 但深链本身有效：弹窗给出链接，复制到手机上即可唤起 APP 直接打开该订单的表单页
-      if (btn.url && /^fleamarket:\/\//.test(btn.url)) {
+      // 演出信息表单：优先在系统内填写（订单号齐全时）；拿不到订单号才退化为
+      // 复制 fleamarket:// 深链去 APP。表单弹窗内也保留「去 APP 填写」入口。
+      if (orderNo) {
+        onShowInfo(orderNo)
+      } else if (btn.url && /^fleamarket:\/\//.test(btn.url)) {
         onDeepLink(btn.url, card.title || '填写演出信息')
       } else {
-        onToast({ message: '未取到表单深链，请在闲鱼 APP 里完成', type: 'warning' })
+        onToast({ message: '未取到订单号或表单深链，请在闲鱼 APP 里完成', type: 'warning' })
       }
     } else if (btn.action === 'order_detail' && openUrl(card.target_url)) {
       // https 订单详情已直接打开
@@ -536,6 +541,12 @@ export function ChatNew() {
   const [adjustingOrderNo, setAdjustingOrderNo] = useState('')
   const [adjustPriceInput, setAdjustPriceInput] = useState('')
   const [adjustingPrice, setAdjustingPrice] = useState(false)
+  // 演出信息表单弹窗状态（门票订单「我已付款，请填写演出信息」）：
+  // showInfoOrderNo 非空即打开；字段约束与闲鱼卡片 schema 对齐
+  // （演出名称≤30字 / 门票数量1~99 / 演出时间今起365天内）
+  const [showInfoOrderNo, setShowInfoOrderNo] = useState('')
+  const [showInfoForm, setShowInfoForm] = useState({ concertName: '', ticketCount: '', date: '' })
+  const [submittingShowInfo, setSubmittingShowInfo] = useState(false)
   // 闲鱼 APP 深链弹窗：fleamarket:// 原生页面（演出信息表单等）电脑上打不开，
   // 弹出链接让复制到手机上唤起 APP
   const [deepLink, setDeepLink] = useState<{ url: string; title: string } | null>(null)
@@ -546,6 +557,9 @@ export function ChatNew() {
   const [blacklisting, setBlacklisting] = useState(false)
   const [isOfficiallyBlocked, setIsOfficiallyBlocked] = useState(false)
   const [recallingMessageId, setRecallingMessageId] = useState('')
+  // 撤回消息「显示/隐藏」：记录哪些撤回占位消息展开了原文（按 messageId）。
+  // 默认全部折叠——对方撤回了就只显示提示，原文由用户主动点开。
+  const [revokedExpanded, setRevokedExpanded] = useState<Record<string, boolean>>({})
   const [deletingConvCid, setDeletingConvCid] = useState('')
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string
@@ -1899,6 +1913,49 @@ export function ChatNew() {
     setAdjustPriceInput(currentPrice || '')
   }
 
+  // 打开演出信息表单弹窗（系统内填写，替代复制深链去 APP）
+  const openShowInfoModal = (orderNo: string) => {
+    setShowInfoOrderNo(orderNo)
+    setShowInfoForm({ concertName: '', ticketCount: '', date: '' })
+  }
+
+  // 提交演出信息：走与发货/改价同一套 websocket 内部链路调闲鱼提交接口
+  const handleSubmitShowInfo = async (orderNo: string) => {
+    const concertName = showInfoForm.concertName.trim()
+    const ticketCount = showInfoForm.ticketCount.trim()
+    const date = showInfoForm.date
+    if (!concertName || !ticketCount || !date) {
+      addToast({ message: '请完整填写演出名称、门票数量和演出时间', type: 'warning' })
+      return
+    }
+    if (concertName.length > 30) {
+      addToast({ message: '演出名称不能超过 30 字', type: 'warning' })
+      return
+    }
+    setSubmittingShowInfo(true)
+    try {
+      const res = await submitShowInfo(orderNo, {
+        concert_name: concertName,
+        ticket_count: ticketCount,
+        show_date: date,
+      })
+      addToast({
+        message: res.message || (res.success ? '演出信息已提交' : '提交失败'),
+        type: res.success ? 'success' : 'error',
+      })
+      if (res.success) {
+        setShowInfoOrderNo('')
+        await loadCustomerOrders(true)
+        // 订单状态变了，会话列表角标跟着刷一次
+        if (activeAccountId) void loadOrderMarks(activeAccountId)
+      }
+    } catch (e: any) {
+      addToast({ message: e.message || '提交失败', type: 'error' })
+    } finally {
+      setSubmittingShowInfo(false)
+    }
+  }
+
   // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
   const openDeepLinkModal = (url: string, title: string) => {
     setDeepLinkCopied(false)
@@ -2072,7 +2129,17 @@ export function ChatNew() {
       const res = await recallMessage(activeAccountId, msg.messageId, msg.time)
       if (!res.success) throw new Error(res.message || '撤回失败')
       setMessages((prev) => prev.map((item) => item.messageId === msg.messageId
-        ? { ...item, type: 'system', text: '你撤回了一条消息', images: [] }
+        // 本地即时反馈：换成「你撤回了一条消息」占位（带头像 + 原文可展开），
+        // 与后端历史/推送路径的撤回元数据（revoked/revokedOriginal）保持同格式，
+        // 刷新后拉到的历史占位能无缝替换。原文此时就在 item.text 里。
+        ? {
+            ...item,
+            type: 'system',
+            text: '你撤回了一条消息',
+            images: [],
+            revoked: true,
+            revokedOriginal: item.text || '',
+          }
         : item))
       addToast({ message: res.message || '消息已撤回', type: 'success' })
     } catch (e: any) {
@@ -3259,8 +3326,9 @@ export function ChatNew() {
                   key={msg.messageId || idx}
                   className={`flex gap-2 ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
                 >
-                  {/* 对方头像（系统消息不显示） */}
-                  {!msg.isSelf && !isSystem && (
+                  {/* 对方头像（普通系统消息不显示；撤回占位消息要显示——
+                      和闲鱼 APP 一致，对方撤回了也能看到是谁撤的） */}
+                  {!msg.isSelf && (!isSystem || msg.revoked) && (
                     <button
                       type="button"
                       title="查看 TA 的闲鱼主页"
@@ -3307,7 +3375,7 @@ export function ChatNew() {
                             : msg.isSelf
                             ? 'bg-blue-500 text-white'
                             : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
-                        } ${msg.type === 'system' ? '!bg-gray-200 dark:!bg-gray-600 text-center text-gray-500 dark:text-gray-400 text-xs' : ''}`}
+                        } ${msg.type === 'system' && !msg.revoked ? '!bg-gray-200 dark:!bg-gray-600 text-center text-gray-500 dark:text-gray-400 text-xs' : ''}`}
                       >
                         {msg.type === 'audio' && msg.audioUrl ? (
                           <div className="space-y-1 min-w-[140px]">
@@ -3368,6 +3436,7 @@ export function ChatNew() {
                             onDeliver={handleDeliverOrder}
                             onNoLogisticsDeliver={handleNoLogisticsDelivery}
                             onAdjustPrice={openAdjustPriceModal}
+                            onShowInfo={openShowInfoModal}
                             onDeepLink={openDeepLinkModal}
                             onToast={addToast}
                           />
@@ -3378,6 +3447,35 @@ export function ChatNew() {
                             <span className="whitespace-pre-wrap">
                               <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
                             </span>
+                          </span>
+                        ) : msg.revoked ? (
+                          // 撤回占位消息：提示文案 + 「显示/隐藏」按钮（有原文线索时才出现）。
+                          // 默认折叠——对方撤回了就只显示提示；展开后在提示下方
+                          // 展示撤回前的原文（reminderContent 旧摘要）。
+                          <span className="inline-block max-w-full">
+                            <span className="inline-flex items-center gap-1.5 whitespace-pre-wrap">
+                              <ChatText text={msg.text} emojiClassName="px-0.5 text-base align-middle" />
+                              {!!msg.revokedOriginal && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setRevokedExpanded((prev) => ({
+                                      ...prev,
+                                      [msg.messageId || `idx-${idx}`]:
+                                        !prev[msg.messageId || `idx-${idx}`],
+                                    }))
+                                  }
+                                  className="flex-shrink-0 text-xs text-blue-500 hover:text-blue-600 hover:underline dark:text-blue-400"
+                                >
+                                  {revokedExpanded[msg.messageId || `idx-${idx}`] ? '隐藏' : '显示'}
+                                </button>
+                              )}
+                            </span>
+                            {!!msg.revokedOriginal && revokedExpanded[msg.messageId || `idx-${idx}`] && (
+                              <span className="mt-1 block border-t border-gray-300/60 pt-1 text-xs opacity-80 dark:border-gray-500/60">
+                                {msg.revokedOriginal}
+                              </span>
+                            )}
                           </span>
                         ) : (
                           // 闲鱼的黄脸表情在消息里是 [中文名] 代码，这里翻译渲染
@@ -3744,6 +3842,71 @@ export function ChatNew() {
               >
                 {adjustingPrice && <Loader2 className="h-4 w-4 animate-spin" />}
                 确认改价
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {/* 演出信息表单弹窗（门票订单「我已付款，请填写演出信息」）：
+          系统内填写三字段提交到闲鱼；字段约束与闲鱼卡片 schema 对齐。
+          提交接口接入前后端会返回明确提示，此时用「去 APP 填写」兜底。 */}
+      {showInfoOrderNo && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => { if (!submittingShowInfo) setShowInfoOrderNo('') }}
+          />
+          <div className="relative w-full max-w-sm mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+            <h3 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">填写演出信息</h3>
+            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+              订单号 {showInfoOrderNo} · 提交后买家在 APP 确认，之后订单进入「待发货」
+            </p>
+            <label className="mb-1 block text-sm text-slate-600 dark:text-slate-300">演出名称（≤30字）</label>
+            <input
+              type="text"
+              autoFocus
+              maxLength={30}
+              value={showInfoForm.concertName}
+              onChange={(e) => setShowInfoForm({ ...showInfoForm, concertName: e.target.value })}
+              placeholder="如：北京张杰"
+              className="mb-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            />
+            <label className="mb-1 block text-sm text-slate-600 dark:text-slate-300">门票数量（1~99）</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={showInfoForm.ticketCount}
+              onChange={(e) => setShowInfoForm({ ...showInfoForm, ticketCount: e.target.value.replace(/[^\d]/g, '') })}
+              placeholder="如：2"
+              className="mb-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            />
+            <label className="mb-1 block text-sm text-slate-600 dark:text-slate-300">演出时间</label>
+            <input
+              type="date"
+              value={showInfoForm.date}
+              min={new Date().toISOString().slice(0, 10)}
+              max={new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10)}
+              onChange={(e) => setShowInfoForm({ ...showInfoForm, date: e.target.value })}
+              className="mb-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            />
+            <div className="flex gap-3">
+              <button
+                type="button"
+                disabled={submittingShowInfo}
+                onClick={() => setShowInfoOrderNo('')}
+                className="flex-1 rounded-lg bg-slate-100 px-4 py-2.5 font-medium text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={submittingShowInfo || !showInfoForm.concertName.trim() || !showInfoForm.ticketCount.trim() || !showInfoForm.date}
+                onClick={() => handleSubmitShowInfo(showInfoOrderNo)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+              >
+                {submittingShowInfo && <Loader2 className="h-4 w-4 animate-spin" />}
+                提交
               </button>
             </div>
           </div>

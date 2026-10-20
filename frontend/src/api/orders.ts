@@ -127,6 +127,14 @@ export const adjustOrderPrice = (orderNo: string, price: string): Promise<ApiRes
   return post(`${ORDER_PREFIX}/adjust-price`, { order_no: orderNo, price })
 }
 
+// 提交演出信息（门票订单「我已付款，请填写演出信息」环节）
+export const submitShowInfo = (
+  orderNo: string,
+  form: { concert_name: string; ticket_count: string; show_date: string },
+): Promise<ApiResponse> => {
+  return post(`${ORDER_PREFIX}/submit-show-info`, { order_no: orderNo, ...form })
+}
+
 export const fetchXianyuOrders = (cookieId?: string): Promise<FetchXianyuOrdersResponse> => {
   return post(`${ORDER_PREFIX}/fetch-xianyu`, { cookie_id: cookieId || null }, { timeout: 600000 })
 }

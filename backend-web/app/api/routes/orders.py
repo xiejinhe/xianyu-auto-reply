@@ -42,6 +42,14 @@ class AdjustOrderPriceRequest(BaseModel):
     price: str
 
 
+class SubmitShowInfoRequest(BaseModel):
+    """提交演出信息请求（门票订单「我已付款，请填写演出信息」环节）"""
+    order_no: str
+    concert_name: str
+    ticket_count: str
+    show_date: str
+
+
 class FetchXianyuOrdersRequest(BaseModel):
     """获取闲鱼订单请求"""
     cookie_id: str | None = None
@@ -485,6 +493,45 @@ async def adjust_order_price(
     if not amount_updated:
         logger.warning(f"【订单改价】本地金额同步失败: order_no={order.order_no}")
     return ApiResponse(success=True, message="改价成功", data=result.get("data"))
+
+
+@router.post("/submit-show-info")
+async def submit_show_info(
+    request: SubmitShowInfoRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    order_service: OrderService = Depends(deps.get_order_service),
+    account_service: AccountService = Depends(deps.get_account_service),
+):
+    """卖家提交演出信息（门票订单）：填写演出名称/门票数量/演出时间后提交到闲鱼"""
+    order = await order_service.get_order_by_no(request.order_no)
+    if not order:
+        return ApiResponse(success=False, message="订单不存在")
+    owner_id, is_admin = resolve_owner_scope(current_user)
+    if not is_admin and order.owner_id != current_user.id:
+        return ApiResponse(success=False, message="无权操作此订单")
+    if not order.account_id:
+        return ApiResponse(success=False, message="订单缺少账号信息")
+    if not await account_service.get_account_for_user(owner_id, order.account_id):
+        return ApiResponse(success=False, message="账号不存在")
+
+    status_result = await websocket_client.get_account_status(order.account_id)
+    if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
+        return ApiResponse(success=False, message="账号未连接，请先启动账号")
+
+    result = await websocket_client.submit_show_info(
+        order.account_id,
+        order.order_no,
+        request.concert_name,
+        request.ticket_count,
+        request.show_date,
+    )
+    if not result.get("success"):
+        return ApiResponse(success=False, message=result.get("message", "演出信息提交失败"))
+    logger.info(
+        f"【演出信息】order_no={order.order_no}, account={order.account_id}, "
+        f"operator={current_user.username}"
+    )
+    return ApiResponse(success=True, message="演出信息提交成功", data=result.get("data"))
 
 
 @router.post("/manual-delivery")

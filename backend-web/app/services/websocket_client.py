@@ -287,6 +287,30 @@ class WebSocketServiceClient:
             logger.error(f"订单改价失败: {order_no}, 错误: {e}")
             return {"success": False, "message": f"订单改价失败: {str(e)}"}
 
+    async def submit_show_info(
+        self,
+        account_id: str,
+        order_no: str,
+        concert_name: str,
+        ticket_count: str,
+        show_date: str,
+    ) -> dict:
+        """提交演出信息（门票订单）：演出名称/门票数量/演出时间"""
+        try:
+            return await self.http_client.post(
+                f"{self.base_url}/internal/orders/submit-show-info",
+                json={
+                    "account_id": account_id,
+                    "order_no": order_no,
+                    "concert_name": concert_name,
+                    "ticket_count": ticket_count,
+                    "show_date": show_date,
+                },
+            )
+        except Exception as e:
+            logger.error(f"演出信息提交失败: {order_no}, 错误: {e}")
+            return {"success": False, "message": f"演出信息提交失败: {str(e)}"}
+
 
     async def solve_captcha(self, account_id: str, url: str, browser_timeout: int = 40,
                             call_type: str = "remote", call_user: str | None = None,

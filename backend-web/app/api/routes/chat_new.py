@@ -1464,6 +1464,8 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         msg_text = ""
         msg_images = []
         decoded = None  # custom.data 解码结果（卡片采样用；无 custom_data 时为 None）
+        revoked = False  # 是否为「撤回」占位消息（原消息位置内容被掏空）
+        revoked_original = ""  # 撤回前原文线索：extension.reminderContent 旧摘要
 
         if custom_data:
             # 文本/图片/语音等通用内容解析统一走公共模块（HTTP 历史消息载荷为 base64）；
@@ -1495,11 +1497,19 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         else:
             # 没有 custom.data。先识别「撤回」占位（内容被掏空的原消息位置），
             # 命中则渲染为系统提示「对方撤回了一条消息」，而非 [系统消息] 兜底；
-            # extension.reminderContent 里的旧摘要不展示，避免泄露撤回内容。
+            # extension.reminderContent 仍保留撤回前的旧摘要，作为 revokedOriginal
+            # 随消息下发，前端默认折叠、用户点「显示」才展开（文本消息即原文，
+            # 图片/语音等为 [图片] 之类占位摘要）。
             summary = custom.get("summary", "")
             if _is_revoked_placeholder(message, content):
                 msg_type = "system"
                 msg_text = _revoked_text(message, myid)
+                revoked = True
+                revoked_original = (
+                    str(extension.get("reminderContent", "") or "").strip()
+                    if isinstance(extension, dict)
+                    else ""
+                )
             else:
                 msg_text = str(summary) if summary else "[系统消息]"
 
@@ -1551,6 +1561,11 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
             "eventKind": event_kind,
             # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
             "card": rich_card,
+            # 撤回占位元数据：revoked=True 时前端渲染「对方撤回了一条消息」并
+            # 带头像；revokedOriginal 为撤回前原文线索（reminderContent 旧摘要，
+            # 可能为空），用户点「显示」才展开，默认折叠不泄露
+            "revoked": revoked,
+            "revokedOriginal": revoked_original,
             # 读状态（IM 原始字段，实测 0=未读、2=已读）：
             # 自己发的消息 = 对方是否已读；对方发的消息 = 自己是否已读
             "readStatus": model.get("readStatus"),

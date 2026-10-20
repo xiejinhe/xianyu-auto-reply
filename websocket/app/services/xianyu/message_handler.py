@@ -319,6 +319,9 @@ class MessageHandler:
                 msg_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
             # 判断消息格式：有"10"字段且有reminderContent是普通聊天消息
+            # （revoked/revoked_original 先置位，两条分支都可能改写；见下方撤回识别）
+            revoked = False
+            revoked_original = ""
             if message_10 and message_10.get("reminderContent"):
                 # 普通聊天消息格式
                 send_user_id = message_10.get("senderUserId", "unknown")
@@ -346,6 +349,26 @@ class MessageHandler:
                     elif parsed_type == "text" and parsed_text:
                         # 用解码出的准确文本（回退保留 reminderContent）
                         reminder_content = parsed_text
+
+                # 撤回占位识别：正文载荷（文本/图片/语音 JSON）整个消失，只剩
+                # reminderContent 旧摘要——这是闲鱼「撤回」在长连接推送里的形态，
+                # 与 HTTP 历史路径实测形态一致（2026-10-20，账号 2217728125233）。
+                # 判据保守：正常聊天消息必有正文载荷，「载荷空 + 有摘要」只会
+                # 出现在撤回场景。命中的消息 send_message 换成撤回提示文案，
+                # 旧摘要随 revoked_original 下发，前端默认折叠、点「显示」才展开。
+                revoked = False
+                revoked_original = ""
+                _has_payload = any(
+                    isinstance(c, str) and c.strip() for c in _candidates
+                )
+                if not _has_payload and str(reminder_content or "").strip():
+                    revoked = True
+                    revoked_original = str(reminder_content).strip()
+                    reminder_content = (
+                        "你撤回了一条消息"
+                        if self.myid and send_user_id == str(self.myid)
+                        else "对方撤回了一条消息"
+                    )
             else:
                 # 卡片消息格式（如评价请求、确认收货等系统卡片）
                 # 结构: {"1": {"1": {"1": "xxx@goofish"}, "2": "xxx@goofish", "6": {"3": {"2": "消息内容"}}}}
@@ -376,6 +399,10 @@ class MessageHandler:
                 "msg_time": msg_time,
                 "is_plain_text": self.is_plain_text_message(message),
                 "raw_message": message,
+                # 撤回占位标记（False = 普通消息）：True 时 send_message 已是撤回
+                # 提示文案，revoked_original 为撤回前旧摘要。见上方识别逻辑。
+                "revoked": revoked,
+                "revoked_original": revoked_original,
                 # 订单卡片富数据（按钮/订单号/演出信息字段），非交易卡片为 None。
                 # 富内容在 msg["1"]["6"]["3"]["5"] 的 dxCard JSON 里，见
                 # common.utils.order_card_parser 说明。
@@ -803,7 +830,18 @@ class MessageHandler:
                     self._forward_to_backend(parsed, message_id)
 
                     send_message = parsed.get("send_message", "")
-                    
+
+                    # 撤回占位消息：上面已转发给 backend-web 做前端展示（带头像 +
+                    # 可展开原文），但**不触发自动回复**——对方撤回了消息，没有任何
+                    # 可回复的内容，对「对方撤回了一条消息」文案做关键词/AI 回复
+                    # 只会显得莫名其妙。
+                    if parsed.get("revoked"):
+                        logger.info(
+                            f"【{self.cookie_id}】对方撤回消息，仅展示不自动回复: "
+                            f"cid={parsed.get('chat_id')}"
+                        )
+                        return True
+
                     # 参照旧框架：检查是否为卡片消息（reminderContent为[卡片消息]）
                     # 小刀等卡片消息的reminderContent是[卡片消息]，需要提取card_title来判断具体类型
                     if send_message == '[卡片消息]' and self._on_card_message:
@@ -921,8 +959,11 @@ class MessageHandler:
             )
 
             sender_id = str(parsed.get("send_user_id") or "")
-            # 消息类型：图片 > 订单卡片 > 文本
-            if is_image:
+            revoked = bool(parsed.get("revoked"))
+            # 消息类型：撤回占位 > 图片 > 订单卡片 > 文本
+            if revoked:
+                fwd_type = "system"
+            elif is_image:
                 fwd_type = "image"
             elif rich_card:
                 fwd_type = "card"
@@ -947,6 +988,9 @@ class MessageHandler:
                 images=lines if is_image else [],
                 time_ms=time_ms,
                 card=rich_card,
+                # 撤回元数据透传（前端渲染「对方撤回了一条消息 [显示]」用）
+                revoked=revoked,
+                revoked_original=str(parsed.get("revoked_original") or ""),
             )
         except Exception as e:
             logger.debug(f"【{self.cookie_id}】转发消息到 backend-web 失败: {safe_str(e)}")

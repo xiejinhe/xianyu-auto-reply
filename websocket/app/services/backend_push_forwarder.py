@@ -93,6 +93,8 @@ def schedule_chat_push(
     images: Optional[List[str]] = None,
     time_ms: int = 0,
     card: Optional[dict] = None,
+    revoked: bool = False,
+    revoked_original: str = "",
 ) -> None:
     """
     安排一次转发（非阻塞）
@@ -102,6 +104,9 @@ def schedule_chat_push(
 
     card: 订单卡片富数据（parse_rich_card 的返回值，非交易卡片为 None），
     随消息一起转发给前端渲染富卡片（按钮/订单号/演出信息字段）。
+
+    revoked: 是否为「撤回」占位消息（对方撤回了原消息）。True 时 text 已是
+    撤回提示文案，revoked_original 为撤回前旧摘要，前端默认折叠、点「显示」展开。
     """
     if not account_id or not cid:
         return
@@ -121,6 +126,8 @@ def schedule_chat_push(
         "images": images or [],
         "time_ms": int(time_ms or 0),
         "card": card,
+        "revoked": bool(revoked),
+        "revoked_original": revoked_original or "",
     }
     try:
         task = asyncio.create_task(_post(payload))

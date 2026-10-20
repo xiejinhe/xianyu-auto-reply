@@ -90,6 +90,15 @@ class ConfirmNoLogisticsRequest(BaseModel):
     is_bargain: bool = False
 
 
+class SubmitShowInfoRequest(BaseModel):
+    """提交演出信息请求（门票订单「我已付款，请填写演出信息」环节）"""
+    account_id: str
+    order_no: str
+    concert_name: str
+    ticket_count: str
+    show_date: str
+
+
 class CancelOrderRequest(BaseModel):
     account_id: str
     order_no: str
@@ -1140,6 +1149,40 @@ async def confirm_no_logistics(request: ConfirmNoLogisticsRequest):
         )
 
     return {"success": True, "code": 200, "message": "无物流发货成功", "data": result}
+
+
+@router.post("/orders/submit-show-info")
+async def submit_show_info(request: SubmitShowInfoRequest):
+    """提交演出信息（门票订单）：填写演出名称/门票数量/演出时间"""
+    from app.services.xianyu.cookie_manager import get_manager
+    from common.db.session import async_session_maker
+    from app.services.shipping.show_info_service import ShowInfoService
+
+    xianyu_live = get_manager().instances.get(request.account_id)
+    if not xianyu_live:
+        return {"success": False, "code": 404, "message": "账号未连接", "data": None}
+
+    async with async_session_maker() as session:
+        import aiohttp
+        from common.db.compat import db_manager
+
+        account_pk = await db_manager.get_account_pk_by_cookie_id(request.account_id)
+        if not account_pk:
+            return {"success": False, "code": 404, "message": "未找到账号信息", "data": None}
+        async with aiohttp.ClientSession() as http_session:
+            service = ShowInfoService(session, http_session, account_pk)
+            result = await service.submit_show_info(
+                request.order_no,
+                request.concert_name,
+                request.ticket_count,
+                request.show_date,
+            )
+
+    if not result or not result.get("success"):
+        message = (result or {}).get("error") or "演出信息提交失败"
+        code = 501 if (result or {}).get("pending_api") else 400
+        return {"success": False, "code": code, "message": message, "data": result}
+    return {"success": True, "code": 200, "message": "演出信息提交成功", "data": result}
 
 
 @router.post("/orders/cancel")

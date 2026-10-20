@@ -115,9 +115,27 @@ class PushMessageParser:
             text_content, images, msg_type, audio_url, audio_duration = (
                 self._decode_content(msg_1)
             )
+            # 撤回占位识别：正文载荷（文本/图片/语音）全空、但 reminderContent
+            # 非空——这是闲鱼「撤回」的形态：原消息位置正文被掏空，仅留撤回前
+            # 的旧摘要（与 HTTP 历史路径实测形态一致，2026-10-20）。按撤回渲染，
+            # 旧摘要作为 revokedOriginal 下发，前端默认折叠、点「显示」才展开。
+            # 判据保守：正常聊天消息必有正文（文本/图片/语音至少其一），
+            # 「空正文 + 有摘要」只会出现在撤回场景。
+            revoked = False
+            revoked_original = ""
             if not text_content and not images and not audio_url:
-                text_content = reminder
-                msg_type = "text"
+                if str(reminder or "").strip():
+                    revoked = True
+                    revoked_original = str(reminder).strip()
+                    text_content = (
+                        "你撤回了一条消息"
+                        if sender_id == self.myid
+                        else "对方撤回了一条消息"
+                    )
+                    msg_type = "system"
+                else:
+                    text_content = reminder
+                    msg_type = "text"
 
             is_self = sender_id == self.myid
             preview = text_content or ("[语音]" if audio_url else "[图片]")
@@ -155,6 +173,10 @@ class PushMessageParser:
                     "audioUrl": audio_url,
                     "audioDuration": audio_duration,
                     "time": msg_time,
+                    # 撤回占位元数据（与历史路径 _parse_message 同格式）：
+                    # 前端渲染「对方撤回了一条消息」带头像，旧摘要默认折叠
+                    "revoked": revoked,
+                    "revokedOriginal": revoked_original,
                     # 订单卡片富数据（按钮/订单号/演出信息），非交易卡片为 None
                     "card": rich_card,
                 },

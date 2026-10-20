@@ -34,11 +34,13 @@ class AppChannelPushRequest(BaseModel):
     sender_id: str = Field(default="", description="发送者用户ID")
     sender_name: str = Field(default="", description="发送者昵称")
     is_self: bool = Field(default=False, description="是否本账号自己发出的消息")
-    msg_type: str = Field(default="text", description="text / image / card")
+    msg_type: str = Field(default="text", description="text / image / card / system")
     text: str = Field(default="", description="文本内容")
     images: List[str] = Field(default_factory=list, description="图片URL列表")
     time_ms: int = Field(default=0, description="消息时间（毫秒时间戳）")
     card: Optional[dict] = Field(default=None, description="订单卡片富数据（按钮/订单号/演出信息），非交易卡片为None")
+    revoked: bool = Field(default=False, description="是否为撤回占位消息（对方撤回了原消息）")
+    revoked_original: str = Field(default="", description="撤回前原文线索（reminderContent 旧摘要），前端默认折叠、点「显示」展开")
 
 
 class AppChannelTypingRequest(BaseModel):
@@ -80,6 +82,11 @@ async def receive_app_channel_push(
         # 由 websocket 服务从 msg["1"]["6"]["3"]["5"] 的 dxCard 解析后转发。
         # 前端有 card 时渲染富事件卡，无则退回纯文本。
         "card": req.card,
+        # 撤回占位元数据（与历史路径 _parse_message / 推送路径
+        # push_message_parser 同格式）：前端渲染「对方撤回了一条消息」
+        # 带头像，旧摘要默认折叠、点「显示」才展开
+        "revoked": req.revoked,
+        "revokedOriginal": req.revoked_original,
         # 来源标记：App 通道的 messageId（bizTag 里的 32 位 hex）与 IM 网关
         # 历史接口的 messageId（如 4347684267508.PNM）是两套互不相通的 ID，
         # 同一条消息会以两个不同 ID 的副本到达前端。前端 mergeMessages

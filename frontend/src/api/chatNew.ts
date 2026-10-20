@@ -166,6 +166,12 @@ export interface ChatMessage {
   /** 订单卡片富数据（按钮/订单号/演出信息字段），非交易卡片为 undefined。
    * 有值时前端渲染富事件卡（与闲鱼 APP 一致的按钮 + 演出信息） */
   card?: OrderCardData
+  /** 是否为「撤回」占位消息（对方/自己撤回了原消息，原位置只剩提示）。
+   *  为 true 时前端渲染「对方撤回了一条消息」并带头像 */
+  revoked?: boolean
+  /** 撤回前原文线索（reminderContent 旧摘要，可能为空）：
+   *  文本消息即原文，图片/语音为 [图片] 之类占位。用户点「显示」才展开 */
+  revokedOriginal?: string
   time: number
   /** 读状态（IM 原始字段）：0=未读、2=已读；自己消息=对方是否已读，对方消息=自己是否已读 */
   readStatus?: number
