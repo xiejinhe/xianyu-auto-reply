@@ -351,6 +351,10 @@ class AccountService:
             show_browser=False,
             unb=unb,
             last_login_at=datetime.now(tz=UTC),
+            # 登录成功即网页会话建立，等价于一次成功续期；必须写本地 naive 时间
+            # （与 scheduler 刷新任务、风控日志 created_at 同口径），供
+            # account_cookie_status_service 的「风控中/失效」判定做时间基准。
+            last_refresh_at=datetime.now(),
         )
         self.session.add(account)
         await self.session.commit()
@@ -485,6 +489,9 @@ class AccountService:
             account.login_method = login_method
             account.unb = unb
             account.last_login_at = datetime.now(tz=UTC)
+            # 扫码重登成功：同步视为一次会话刷新，覆盖登录前的历史风控失败日志，
+            # 否则 last_refresh_at 为 NULL 时判定服务会保守沿用旧失败 → 误报「风控中」。
+            account.last_refresh_at = datetime.now()
             if hasattr(account, "updated_at"):
                 account.updated_at = datetime.now(tz=UTC)
         else:
@@ -502,6 +509,7 @@ class AccountService:
                 show_browser=False,
                 unb=unb,
                 last_login_at=datetime.now(tz=UTC),
+                last_refresh_at=datetime.now(),
                 created_at=datetime.now(tz=UTC),
                 updated_at=datetime.now(tz=UTC),
             )
@@ -559,6 +567,8 @@ class AccountService:
             existing.status = "active"
             existing.disable_reason = None
             existing.last_login_at = now
+            # 密码登录成功同样视为一次会话刷新（本地 naive 口径，勿用 UTC 的 now）。
+            existing.last_refresh_at = datetime.now()
             if unb:
                 existing.unb = unb
             if hasattr(existing, "updated_at"):
@@ -579,6 +589,7 @@ class AccountService:
                 pause_duration=10,
                 unb=unb,
                 last_login_at=now,
+                last_refresh_at=datetime.now(),
                 created_at=now,
                 updated_at=now,
             )

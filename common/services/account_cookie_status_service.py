@@ -5,7 +5,7 @@
 推断账号的网页 Cookie 会话状态，供「账号列表」与「在线聊天」两处展示：
 
 - normal        : 正常
-- risk_control  : 风控中（近 24h 内有 processing/failed 的风控日志）
+- risk_control  : 风控中（近 24h 内有 failed/error 的风控日志，且失败晚于最近一次登录/续期）
 - expired       : 网页 Cookie 会话失效，需要重新登录
 - disabled      : 账号被禁用（非网页会话问题，仅作归类展示）
 
