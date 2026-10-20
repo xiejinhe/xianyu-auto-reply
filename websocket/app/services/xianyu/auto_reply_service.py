@@ -34,6 +34,7 @@ from common.models.xy_order import XYOrder
 from common.db.session import async_session_maker
 from common.db.redis_client import distributed_lock
 from common.utils.default_reply_api import call_reply_api
+from common.utils.managed_account_ids import is_managed_account
 from common.utils.notification_template import render_notification_template
 from common.services.remote_location_message_api import (
     RemoteLocationMessageError,
@@ -630,10 +631,17 @@ class AutoReplyService:
             msg_time = parsed_message.get("msg_time", "")
             
             # 1. 检查是否是自己发出的消息（手动发出）
-            # 使用myid判断（参照旧框架）
+            # 使用myid + 托管账号集合判断（参照旧框架，2026-10-20 扩展）：
+            # cid 跨账号共享时，别的托管账号发的消息本账号也收得到，
+            # 只比 myid 会漏判，导致本账号再自动回复一轮（买家收到双份回复）
             myid = getattr(self.xianyu_instance, 'myid', self.cookie_id)
             self._merge_log_context(log_payload, myid=myid)
-            if send_user_id == myid:
+            _sender_id = str(send_user_id or "").strip()
+            _is_self_message = _sender_id == myid or (
+                _sender_id not in ("", "unknown")
+                and is_managed_account(_sender_id)
+            )
+            if _is_self_message:
                 # 手动发出消息。启用 AI 专用暂停时，仅暂停同买家同商品的 AI；
                 # 未启用时保留原有按会话暂停全部自动回复的行为。
                 log_payload["process_status"] = "skipped"

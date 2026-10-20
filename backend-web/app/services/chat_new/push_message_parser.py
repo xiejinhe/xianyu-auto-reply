@@ -39,6 +39,25 @@ class PushMessageParser:
         self.account_id = account_id
         self.myid = myid
 
+    def _is_self_sender(self, sender_id: str) -> bool:
+        """是否「自己」发出的消息（同 MessageHandler._is_self_sender）。
+
+        cid 跨账号共享：别的托管账号发的消息本账号的 IM 推送/历史也拉得到，
+        只比 myid 会把托管账号发送者误判成买家（2026-10-20 事故：误渲染成
+        左侧对方消息、误弹跨账号 toast、误响铃）。
+        """
+        sid = str(sender_id or "").strip()
+        if not sid:
+            return False
+        if sid == self.myid:
+            return True
+        try:
+            from common.utils.managed_account_ids import is_managed_account
+
+            return is_managed_account(sid)
+        except Exception:
+            return False
+
     def decrypt_push_data(self, data: str) -> Optional[dict]:
         """
         解密推送消息数据
@@ -129,7 +148,7 @@ class PushMessageParser:
                     revoked_original = str(reminder).strip()
                     text_content = (
                         "你撤回了一条消息"
-                        if sender_id == self.myid
+                        if self._is_self_sender(sender_id)
                         else "对方撤回了一条消息"
                     )
                     msg_type = "system"
@@ -137,7 +156,7 @@ class PushMessageParser:
                     text_content = reminder
                     msg_type = "text"
 
-            is_self = sender_id == self.myid
+            is_self = self._is_self_sender(sender_id)
             preview = text_content or ("[语音]" if audio_url else "[图片]")
 
             # 方括号开头 = 闲鱼系统/交易摘要（如 [买家已付款]），原始载荷采样，
@@ -220,7 +239,7 @@ class PushMessageParser:
                     "messageId": str(msg_1.get("3", "") or ""),
                     "senderId": sender_id,
                     "senderName": "系统",
-                    "isSelf": sender_id == self.myid,
+                    "isSelf": self._is_self_sender(sender_id),
                     "type": "card",
                     "text": str(text_content),
                     "images": [],
@@ -264,7 +283,7 @@ class PushMessageParser:
                     "messageId": str(msg.get("3", "") or ""),
                     "senderId": sender_id,
                     "senderName": sender_name,
-                    "isSelf": sender_id == self.myid,
+                    "isSelf": self._is_self_sender(sender_id),
                     "type": "text",
                     "text": reminder,
                     "images": [],

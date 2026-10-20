@@ -41,6 +41,7 @@ from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
+from common.utils.managed_account_ids import is_managed_account
 from common.services.account_cookie_status_service import compute_cookie_status_map
 from common.utils.time_utils import safe_isoformat
 from common.utils.xianyu_utils import trans_cookies
@@ -1447,7 +1448,8 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
         # 摘要加发送者前缀：自己的消息「你：」，对方的「他：」。
         # 性别数据拿不到，对方统一用「他」；系统消息 sender 为空不加前缀。
         if last_msg_summary and sender_user_id:
-            prefix = "你" if sender_user_id == myid else "他"
+            # 托管账号发送也算「你」（cid 跨账号共享，同上）
+            prefix = "你" if (sender_user_id == myid or is_managed_account(sender_user_id)) else "他"
             last_msg_summary = f"{prefix}：{last_msg_summary}"
 
         return {
@@ -1494,10 +1496,15 @@ def _is_revoked_placeholder(message: dict, content: dict) -> bool:
 
 
 def _revoked_text(message: dict, myid: str) -> str:
-    """按发送者返回撤回提示文案（自己撤的 vs 对方撤的）。"""
+    """按发送者返回撤回提示文案（自己撤的 vs 对方撤的）。
+
+    发送者是任一托管账号即「自己撤的」——cid 跨账号共享，别的托管账号
+    撤的消息本账号历史里也看得到（2026-10-20 isSelf 误判事故同源）。
+    """
     sender = message.get("sender", {}) if isinstance(message, dict) else {}
     sender_uid = str(sender.get("uid", "") or "").split("@")[0]
-    return "你撤回了一条消息" if myid and sender_uid == myid else "对方撤回了一条消息"
+    is_self = bool(myid and sender_uid == myid) or is_managed_account(sender_uid)
+    return "你撤回了一条消息" if is_self else "对方撤回了一条消息"
 
 
 def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") -> dict | None:
@@ -1534,7 +1541,10 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         # 去掉 @goofish 后缀，保证与 myid 比较和前端显示一致
         sender_id = sender_id_raw.split("@")[0] if "@" in sender_id_raw else sender_id_raw
         sender_name = str(extension.get("reminderTitle", "") or "") if isinstance(extension, dict) else ""
-        is_self = sender_id == myid
+        # isSelf：本账号或任一托管账号（cid 跨账号共享，A 发的消息 B 的历史
+        # 接口也拉得到，只比 myid 会把托管账号发送者误判成买家——
+        # 2026-10-20 事故：误渲染成左侧对方消息+署名、误响铃、误弹 toast）
+        is_self = bool(myid and sender_id == myid) or is_managed_account(sender_id)
 
         # 解析消息内容
         content = message.get("content", {})

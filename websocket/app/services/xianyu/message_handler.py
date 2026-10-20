@@ -87,12 +87,33 @@ class MessageHandler:
         """
         self.cookie_id = cookie_id
         self.myid = myid or cookie_id  # 如果没有传入myid，使用cookie_id作为备选
-        
+
         # 消息去重
         self.processed_message_ids: Dict[str, float] = {}
         self.processed_message_ids_lock = asyncio.Lock()
         self.processed_message_ids_max_size = 10000
         self.message_expire_time = self._load_message_expire_time()  # 从数据库加载
+
+    def _is_self_sender(self, sender_id: str) -> bool:
+        """是否「自己」发出的消息。
+
+        cid 跨账号共享（实测：同一买家与多个卖家账号共用同一个 cid）：
+        账号 A 发的消息，本账号的长连接同样收得到。只比 myid 会把同为
+        托管账号的发送者误判成买家——2026-10-20 事故：误响铃、误弹
+        「账号收到新消息」toast、消息被渲染成左侧对方消息并署名。
+        因此发送者是任一托管账号（含本账号）即视为自己发出。
+        """
+        sid = str(sender_id or "").strip()
+        if not sid:
+            return False
+        if self.myid and sid == str(self.myid):
+            return True
+        try:
+            from common.utils.managed_account_ids import is_managed_account
+
+            return is_managed_account(sid)
+        except Exception:
+            return False
         
         # 消息防抖
         self.message_debounce_tasks: Dict[str, Dict] = {}
@@ -364,11 +385,11 @@ class MessageHandler:
                 if not _has_payload and str(reminder_content or "").strip():
                     revoked = True
                     revoked_original = str(reminder_content).strip()
-                    reminder_content = (
-                        "你撤回了一条消息"
-                        if self.myid and send_user_id == str(self.myid)
-                        else "对方撤回了一条消息"
-                    )
+                reminder_content = (
+                    "你撤回了一条消息"
+                    if self._is_self_sender(send_user_id)
+                    else "对方撤回了一条消息"
+                )
             else:
                 # 卡片消息格式（如评价请求、确认收货等系统卡片）
                 # 结构: {"1": {"1": {"1": "xxx@goofish"}, "2": "xxx@goofish", "6": {"3": {"2": "消息内容"}}}}
@@ -906,8 +927,9 @@ class MessageHandler:
             # 打印chat_id用于调试
             logger.info(f"【{self.cookie_id}】解析消息: chat_id={chat_id}, send_user_id={send_user_id}")
             
-            # 判断是否是自己发出的消息（参照旧框架，使用myid判断）
-            if send_user_id == self.myid:
+            # 判断是否是自己发出的消息（托管账号集合：cid 跨账号共享时
+            # 别的托管账号发的消息本连接也收得到，不能误判成买家）
+            if self._is_self_sender(send_user_id):
                 logger.info(f"[{msg_time}] 【手动发出】 商品({item_id}): {send_message}")
             else:
                 logger.warning(f"[{msg_time}] 【收到】用户: {send_user_name}, 商品({item_id}): {send_message}")
@@ -982,7 +1004,7 @@ class MessageHandler:
                 message_id=message_id or "",
                 sender_id=sender_id,
                 sender_name=str(parsed.get("send_user_name") or ""),
-                is_self=bool(self.myid and sender_id == str(self.myid)),
+                is_self=self._is_self_sender(sender_id),
                 msg_type=fwd_type,
                 text="" if is_image else content,
                 images=lines if is_image else [],
