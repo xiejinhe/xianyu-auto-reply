@@ -189,12 +189,15 @@ export interface ChatMessage {
    *  从未打开的接收方视角=0。对自己发出的消息恒为 2，用它显示会永远「已读」。
    *  判「对方是否已读我发的消息」请用下面的 peerUnread */
   readStatus?: number
-  /** 对方是否已读我发出的这条消息（取自 message.unreadCount，
-   *  语义 = 这条消息对「非发送方」是否未读）：
+  /** 对方是否已读我发出的这条消息。
+   *  ⚠️ 后端给的是 message.unreadCount，它**不是实时回执**，而是这条消息
+   *  **发出那一刻**的快照（v1.0.54 用它当判据，当晚被实测证伪：买家连回 5 条
+   *  之后数据纹丝不动）。所以它只能当初始值：
    *  - 0   → 对方已读
-   *  - >0  → 对方未读
-   *  - undefined / null → 暂无数据（推送副本与本端乐观副本都没有），此时不显示标记，
-   *    等 20 秒轮询拉历史补齐后再显示，避免拿不准就去猜 */
+   *  - >0  → 对方未读（只是"发的时候未读"，之后可能已读但这里不会变）
+   *  - undefined / null → 暂无数据（推送副本与本端乐观副本都没有），不显示标记
+   *  真正的实时开关是 WS 事件 peer_read（IM 长连接推来的已读回执），
+   *  由 ChatNew.tsx 的 handleWsPeerRead 落到本地、在渲染层强制覆盖本字段。 */
   peerUnread?: number | null
   /** 发送是否失败（仅本地发送的消息可能为 true） */
   failed?: boolean
@@ -684,12 +687,16 @@ export const copyImageToClipboard = async (
 
 /** WebSocket 推送消息（新消息事件） */
 export interface WsPushMessage {
-  event: 'new_message' | 'connected' | 'pong' | 'reconnected' | 'typing'
+  event: 'new_message' | 'connected' | 'pong' | 'reconnected' | 'typing' | 'peer_read'
   cid?: string
   account_id?: string
   message?: ChatMessage
   /** event==='typing' 时有效：true=对方正在输入，false=停止输入 */
   typing?: boolean
+  /** event==='peer_read' 时有效：被对方读掉的消息 ID 列表（IM messageId） */
+  message_ids?: string[]
+  /** event==='peer_read' 时有效：回执时间戳（毫秒） */
+  read_at?: number
 }
 
 /**

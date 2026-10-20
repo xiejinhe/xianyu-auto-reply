@@ -18,7 +18,11 @@ from common.utils.xianyu_utils import decrypt
 from common.utils.xianyu_message_parser import decode_first_content, interpret_content
 from common.utils.card_sampler import sample_card
 from common.utils.order_card_parser import parse_rich_card
-from app.services.backend_push_forwarder import schedule_chat_push, schedule_typing_push
+from app.services.backend_push_forwarder import (
+    schedule_chat_push,
+    schedule_peer_read_push,
+    schedule_typing_push,
+)
 
 # 原始帧调试开关（环境变量 IM_FRAME_DEBUG=1 开启）：把「不是聊天消息」的
 # 推送帧原样落日志。闲鱼的「对方正在输入」「对方已读」这类状态帧既不是
@@ -798,12 +802,86 @@ class MessageHandler:
             # 输入状态帧已单独解析成功能，不再当作「未识别」刷日志
             if self.parse_typing_event(message):
                 return
+            # 已读回执帧同理（parse_peer_read_frame 见 _process_single_message）
+            if self.parse_peer_read_frame(message):
+                return
             logger.info(
                 f"【{self.cookie_id}】[未识别帧] "
                 f"{json.dumps(message, ensure_ascii=False)[:800]}"
             )
         except Exception:
             pass
+
+    def parse_peer_read_frame(self, message: dict) -> Optional[Dict[str, Any]]:
+        """识别「对方已读回执」帧并解析（2026-10-20 协议实证）。
+
+        闲鱼把已读做在 IM 长连接上：对端一打开会话，服务端就把被读消息的
+        ID 推给**发送方**。日志里抓到两种形态，都处理：
+
+        形态A（批量，部分账号/版本）：
+            {"1": ["4351812252653.PNM", ...], "2": 2, "3": "cid@goofish",
+             "4": 1, "5": 1792501465057}
+        形态B（单条）：
+            {"1": "4351730144026.PNM", "2": 2, "3": 0,
+             "4": "68391672401@goofish", "5": 1, "6": 1792505206817}
+
+        形态B 实证：消息 4351730144026.PNM 创建于 20:36:56，回执帧在
+        22:06:46 到达（**晚 89.8 分钟**），且 36 秒后同一 cid 出现「对方
+        正在输入」——说明是买家打开了会话把它读了，绝不是发送确认/送达回执
+        （那种只会在发送后几秒内到）。之前它被当作未识别帧丢弃。
+
+        共同判据："2" == 2。区分聊天消息（"2":1）和其他同步帧（"1" 是
+        字符串且 "3"/"4" 都不含 @goofish）。
+        """
+        try:
+            if str(message.get("2", "")) != "2":
+                return None
+
+            def _cid_of(value) -> str:
+                text = str(value or "")
+                return text.split("@")[0] if "@goofish" in text else ""
+
+            raw_ids = message.get("1")
+
+            # 形态A："1" 是列表、"3" 是 cid
+            if isinstance(raw_ids, list) and raw_ids:
+                cid = _cid_of(message.get("3"))
+                if not cid:
+                    return None
+                ids = [str(i) for i in raw_ids if str(i).strip()]
+                read_at = self._as_int(message.get("5"))
+                shape = "A"
+
+            # 形态B："1" 是单个 ID 字符串、"4" 是 cid、"6" 是时间戳
+            elif isinstance(raw_ids, str) and raw_ids.strip():
+                cid = _cid_of(message.get("4"))
+                if not cid:
+                    return None
+                ids = [raw_ids.strip()]
+                read_at = self._as_int(message.get("6"))
+                shape = "B"
+
+            else:
+                return None
+
+            if not ids:
+                return None
+            return {
+                "cid": cid,
+                "message_ids": ids,
+                "read_at": read_at,
+                "shape": shape,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _as_int(value) -> int:
+        """时间戳字段转毫秒整数（闲鱼有时给字符串，有时给数字）"""
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
 
     async def _process_single_message(self, message: dict, websocket) -> bool:
         """处理单条消息（参照旧框架message_handler_core.py）"""
@@ -820,6 +898,26 @@ class MessageHandler:
                 logger.debug(
                     f"【{self.cookie_id}】输入状态: cid={typing_event['cid']}, "
                     f"typing={typing_event['typing']}"
+                )
+                return True
+
+            # 「对方已读回执」帧：对方打开会话后，服务端把被读消息的 ID
+            # 逐条推给发送方。转发给前端把对应消息标记成「已读」，
+            # 这就是闲鱼 APP 气泡下已读/未读的数据源（此前一直当
+            # 未识别帧丢弃，2026-10-20 实证后接入）。
+            peer_read = self.parse_peer_read_frame(message)
+            if peer_read:
+                schedule_peer_read_push(
+                    account_id=self.cookie_id,
+                    cid=peer_read["cid"],
+                    message_ids=peer_read["message_ids"],
+                    read_at=peer_read["read_at"],
+                )
+                logger.info(
+                    f"【{self.cookie_id}】对方已读回执(形态{peer_read['shape']}): "
+                    f"cid={peer_read['cid']}, "
+                    f"n={len(peer_read['message_ids'])}, "
+                    f"ids={peer_read['message_ids'][:3]}"
                 )
                 return True
 

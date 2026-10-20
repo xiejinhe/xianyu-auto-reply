@@ -4,7 +4,7 @@
  * 三栏布局：左侧账号列表 | 中间会话列表 | 右侧聊天记录
  * 支持多账号切换，基于WebSocket API获取数据
  */
-import { useEffect, useState, useRef, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag, Reply, Forward } from 'lucide-react'
 
@@ -1002,6 +1002,60 @@ export function ChatNew() {
     }, TYPING_MAX_MS)
   }, [])
 
+  // ==================== 真·已读回执 ====================
+  // 闲鱼把已读做在 IM 长连接上：对端打开会话时，服务端把被读消息的 ID
+  // 推给**发送方**（{"1":[messageId...],"2":2,"3":"cid@goofish"}）。
+  // 这才是 APP 气泡下「已读/未读」的数据源；历史接口给不了实时值——
+  //   外层 readStatus  = 我方有没有读过（对自己发的恒为真）
+  //   message.unreadCount = 发送那一刻的静态快照，之后不再变（v1.0.54 曾
+  //   用它做判据，当晚就被实测证伪：买家回了 5 条后它纹丝不动）。
+  // 这里把回执结果叠在渲染层，绝不让上面那个过期快照把已读翻回未读。
+  const peerReadIdsRef = useRef<Set<string>>(new Set())
+  // 会话级最新回执时间戳（毫秒）：App 通道自转发的消息用的是另一套 hex
+  // messageId，命中不了 IM 的 ID，用「早于此刻发出的自己的消息也算已读」兜。
+  const peerReadAtRef = useRef<Map<string, number>>(new Map())
+  // ref 变化不会触发重渲染，用它手动通知派生列表重算
+  const [peerReadVersion, setPeerReadVersion] = useState(0)
+
+  const handleWsPeerRead = useCallback(
+    // 回执天然属于「发送方账号」，但闲鱼的 cid 跨账号共享（同一买家与多个
+    // 卖家账号共用一个 cid），对方打开会话时几条账号的消息是一起被读的，
+    // 所以这里按 cid 归并、不看账号。
+    (_accountId: string, cid: string, messageIds: string[], readAt: number) => {
+      const key = normCid(cid)
+      for (const id of messageIds) {
+        if (id) peerReadIdsRef.current.add(`${key}::${id}`)
+      }
+      if (readAt > 0) {
+        peerReadAtRef.current.set(
+          key,
+          Math.max(peerReadAtRef.current.get(key) ?? 0, readAt),
+        )
+      }
+      setPeerReadVersion((v) => v + 1)
+    },
+    [],
+  )
+
+  /** 渲染层覆盖：把已确认被读的自己的消息标成「已读」 */
+  const displayMessages = useMemo(() => {
+    if (!activeCid) return messages
+    const key = normCid(activeCid)
+    const readAt = peerReadAtRef.current.get(key) ?? 0
+    if (!readAt && peerReadIdsRef.current.size === 0) return messages
+    return messages.map((m) => {
+      if (!m.isSelf || m.type === 'system') return m
+      const hit = peerReadIdsRef.current.has(`${key}::${m.messageId}`)
+      // 「对方读了 T 时刻之前的东西」⇒ 早于 T 发出的自己的消息必然也已读
+      const before = readAt > 0 && m.time > 0 && m.time <= readAt
+      if (!hit && !before) return m
+      if (m.peerUnread === 0) return m
+      return { ...m, peerUnread: 0 }
+    })
+    // peerReadVersion 是手动触发重算的开关（ref 变化本身不触发）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, activeCid, peerReadVersion])
+
   const handleWsNewMessage = useCallback((accountId: string, cid: string, msg: ChatMessage) => {
     // 会话列表摘要带发送者前缀：自己的「你：」，对方的「他：」（性别拿不到，统一「他」）
     // 引用消息（回复）的列表摘要只取正文，「回复 昵称：摘要」前缀不上摘要
@@ -1134,6 +1188,7 @@ export function ChatNew() {
     onDisconnect: handleWsDisconnect,
     onReconnected: handleWsReconnected,
     onTyping: handleWsTyping,
+    onPeerRead: handleWsPeerRead,
   })
 
   // ==================== 加载账号列表（分页） ====================
@@ -2296,7 +2351,13 @@ export function ChatNew() {
   }, [messages])
 
   // 每 20 秒静默刷新当前会话的读状态：只按 messageId 更新 readStatus，不重排 UI，
-  // 让自己发出的消息「未读 → 已读」能及时变化（闲鱼不会主动推送读状态变更）。
+  // 让自己发出的消息「未读 → 已读」的初始值能及时补齐（闲鱼不会主动推单独的状态查询）。
+  //
+  // ⚠️ 这个轮询**不是**已读判定的主通道：message.unreadCount 是发送那一刻的
+  // 静态快照，之后不再变（v1.0.54 用它当判据，当晚被实测证伪——买家连回 5 条
+  // 数据纹丝不动）。真正的开关是 IM 长连接推来的已读回执（handleWsPeerRead），
+  // 结果存在 ref 里并在 displayMessages 渲染层强制覆盖，所以轮询即使把快照
+  // 原样写回 state，也不会把已确认的「已读」翻回「未读」。
   useEffect(() => {
     if (!activeAccountId || !activeCid) return
     let cancelled = false
@@ -3473,7 +3534,7 @@ export function ChatNew() {
                   </button>
                 </div>
               )}
-              {messages.map((msg, idx) => {
+              {displayMessages.map((msg, idx) => {
                 const isSystem = msg.type === 'system'
                 // 系统 / 交易事件消息：按发送者左右对齐，和普通消息一样待在对话流里，
                 // 只是气泡换成事件卡样式（浅底 + 描边 + 图标），一眼能和打字消息区分开。
@@ -3697,11 +3758,15 @@ export function ChatNew() {
                         </button>
                       )}
                     </div>
-                    {/* 已读/未读：用 peerUnread（message.unreadCount，= 这条消息对非发送方
-                        是否未读）。历史拉取才有值，推送副本和本端乐观副本都没有 → 不显示，
-                        等 20 秒静默轮询补齐，绝不拿不准就去猜一个状态。
-                        ⚠️ 不要用 readStatus：那是「我读没读过这条消息」，
-                        对自己发的消息恒为「已读」（详见 chatNew.ts 的类型注释） */}
+                    {/* 已读/未读：真数据源是 IM 长连接推来的「对方已读回执」
+                        （handleWsPeerRead → displayMessages 覆盖层）。
+                        message.peerUnread（= message.unreadCount）只是历史接口
+                        在**发送那一刻**的快照，之后不再更新，只能当初始值：
+                        没收到回执前它说「未读」也别当真，收到回执后一律覆盖成已读。
+                        ⚠️ 更不要用 readStatus：那是「我读没读过这条消息」，
+                        对自己发的消息恒为「已读」（详见 chatNew.ts 的类型注释）。
+                        推送副本与本端乐观副本没有该字段 → 不显示标记，等回执或
+                        20 秒静默轮询补齐，绝不拿不准就去猜一个状态。 */}
                     {msg.isSelf && msg.type !== 'system' && typeof msg.peerUnread === 'number' && (
                       <div
                         className={`text-xs mt-0.5 ${

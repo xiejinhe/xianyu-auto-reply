@@ -531,6 +531,33 @@ class ImSessionManager:
         )
         return True
 
+    async def broadcast_peer_read(
+        self, account_id: str, cid: str, message_ids: list, read_at: int = 0
+    ) -> bool:
+        """广播「对方已读」回执给前端
+
+        闲鱼只在这一个地方提供真实已读数据：对端打开会话时服务端把被读
+        消息的 ID 通过 IM 长连接推给发送方（websocket 服务解析后转到此处）。
+        这是**状态更新**不是消息，不参与消息去重。
+
+        message_ids: 被读消息的 IM messageId（如 "4351812252653.PNM"）
+        read_at: 回执时间戳毫秒，前端用它兜底处理 App 通道的 hex 孪生 ID——
+        那种副本命中不了 IM messageId，用「早于此刻的自己消息也算已读」兜。
+        """
+        if not self._ws_clients.get(account_id):
+            return False
+        await self._broadcast_event(account_id, {
+            "event": "peer_read",
+            "cid": cid,
+            "message_ids": list(message_ids or []),
+            "read_at": int(read_at or 0),
+        })
+        logger.info(
+            f"【{account_id}】已读回执已转发前端 "
+            f"(cid={cid}, n={len(message_ids or [])})"
+        )
+        return True
+
     async def _setup_push_callback_after_connect(
         self, account_id: str, client: GoofishImClient
     ):

@@ -35,6 +35,8 @@ interface UseChatNewWsOptions {
   onReconnected?: (accountId: string) => void
   /** 「对方正在输入」状态变化（typing=false 表示停止输入） */
   onTyping?: (accountId: string, cid: string, typing: boolean) => void
+  /** 「对方已读」回执：IM 长连接推来被读消息的 ID 列表，readAt 为回执时间戳（毫秒） */
+  onPeerRead?: (accountId: string, cid: string, messageIds: string[], readAt: number) => void
 }
 
 /**
@@ -50,6 +52,7 @@ export function useChatNewWs({
   onDisconnect,
   onReconnected,
   onTyping,
+  onPeerRead,
 }: UseChatNewWsOptions) {
   const connectionsRef = useRef<Map<string, WsConnection>>(new Map())
   const onNewMessageRef = useRef(onNewMessage)
@@ -57,6 +60,7 @@ export function useChatNewWs({
   const onDisconnectRef = useRef(onDisconnect)
   const onReconnectedRef = useRef(onReconnected)
   const onTypingRef = useRef(onTyping)
+  const onPeerReadRef = useRef(onPeerRead)
 
   // 保持回调引用最新
   useEffect(() => { onNewMessageRef.current = onNewMessage }, [onNewMessage])
@@ -64,6 +68,7 @@ export function useChatNewWs({
   useEffect(() => { onDisconnectRef.current = onDisconnect }, [onDisconnect])
   useEffect(() => { onReconnectedRef.current = onReconnected }, [onReconnected])
   useEffect(() => { onTypingRef.current = onTyping }, [onTyping])
+  useEffect(() => { onPeerReadRef.current = onPeerRead }, [onPeerRead])
 
   /** 清理单个账号的连接 */
   const cleanupAccount = useCallback((aid: string) => {
@@ -110,6 +115,15 @@ export function useChatNewWs({
         } else if (data.event === 'typing' && data.cid) {
           // 对方正在输入（1/0 交替推送，前端自行做超时隐藏）
           onTypingRef.current?.(aid, data.cid, !!data.typing)
+        } else if (data.event === 'peer_read' && data.cid) {
+          // 真实已读回执：闲鱼把对方读掉的消息 ID 推给发送方，这是
+          // APP 气泡下「已读/未读」的唯一数据源（历史接口里给不了实时值）。
+          onPeerReadRef.current?.(
+            aid,
+            data.cid,
+            data.message_ids ?? [],
+            data.read_at ?? 0,
+          )
         } else if (data.event === 'reconnected') {
           // 后端 IM 长连接掉过线又自动连回来了。掉线期间到达的消息服务端不补推，
           // 这里主动补拉一次，否则这些消息要等下次刷新页面才可见。

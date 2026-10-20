@@ -166,6 +166,43 @@ def schedule_typing_push(*, account_id: str, cid: str, typing: bool) -> None:
     task.add_done_callback(_pending_tasks.discard)
 
 
+def schedule_peer_read_push(
+    *, account_id: str, cid: str, message_ids: List[str], read_at: int = 0
+) -> None:
+    """
+    把「对方已读」回执转发给 backend-web
+
+    闲鱼的已读回执帧形如
+        {"1": ["消息ID", ...], "2": 2, "3": "cid@goofish", "4": 1, "5": 时间戳}
+    其中 "1" 是被对方读掉的 messageId 列表，"3" 是会话 cid（带 @goofish 后缀）。
+    这条帧只推给**发送方**——即我们自己发的消息被对方打开会话时会收到。
+
+    与 typing 同样属于「状态更新」，不参与消息去重；丢了最多是标记不刷新，
+    20 秒静默轮询会兜底纠正，绝不能影响自动回复主流程。
+    """
+    if not account_id or not cid or not message_ids:
+        return
+    if len(_pending_tasks) >= _MAX_PENDING:
+        return
+    payload = {
+        "account_id": account_id,
+        "cid": cid,
+        "message_ids": list(message_ids),
+        # 回执时间戳毫秒：App 通道自转发的消息用的是另一套 32 位 hex ID，
+        # 命中不了 IM 的 messageId，前端用它做「早于此刻的自己消息也算已读」
+        # 的时间兜底。
+        "read_at": int(read_at or 0),
+    }
+    try:
+        task = asyncio.create_task(
+            _post(payload, "/api/v1/internal/chat-peer-read")
+        )
+    except RuntimeError:
+        return
+    _pending_tasks.add(task)
+    task.add_done_callback(_pending_tasks.discard)
+
+
 def build_payload_debug(payload: dict) -> str:
     """调试用：把载荷压成一行日志"""
     try:

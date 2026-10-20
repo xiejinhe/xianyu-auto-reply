@@ -138,6 +138,53 @@ async def receive_app_channel_typing(
     return {"success": True, "delivered": delivered}
 
 
+class AppChannelPeerReadRequest(BaseModel):
+    """websocket 服务转发的「对方已读」回执"""
+
+    account_id: str = Field(description="接收方账号ID（本系统的账号，即消息发送方）")
+    cid: str = Field(description="会话ID")
+    message_ids: List[str] = Field(
+        default_factory=list, description="被对方读掉的 IM messageId 列表"
+    )
+    read_at: int = Field(default=0, description="回执时间戳（毫秒）")
+
+
+@router.post("/chat-peer-read")
+async def receive_app_channel_peer_read(
+    req: AppChannelPeerReadRequest,
+    x_internal_token: Optional[str] = Header(default=None, alias=INTERNAL_AUTH_HEADER),
+):
+    """
+    接收「对方已读」回执并广播给前端
+
+    闲鱼把已读回执做成 IM 长连接帧 {"1":[被读messageId...], "2":2,
+    "3":"cid@goofish", "5":时间戳}，只推给**发送方**——这就是 APP 气泡下
+    已读/未读的数据源（2026-10-20 协议实证）。转到这里后按 messageId
+    把前端对应的自己发出的消息从「未读」翻成「已读」。
+
+    历史接口的两个字段都不是实时回执，不能用：
+    - 外层 readStatus：语义是**我方**有没有读过这条，对自己发的恒为真；
+    - message.unreadCount：是消息**发出那一刻**的静态快照，之后不再变。
+    """
+    require_valid_internal_token(x_internal_token, get_settings().internal_api_token)
+
+    if not req.account_id or not req.cid:
+        return {"success": False, "delivered": False, "message": "缺少 account_id 或 cid"}
+
+    try:
+        delivered = await get_im_session_manager().broadcast_peer_read(
+            account_id=req.account_id,
+            cid=req.cid,
+            message_ids=req.message_ids or [],
+            read_at=req.read_at or 0,
+        )
+    except Exception as exc:
+        logger.warning(f"【{req.account_id}】已读回执广播失败: {exc}")
+        return {"success": False, "delivered": False, "message": str(exc)}
+
+    return {"success": True, "delivered": delivered}
+
+
 # ==================== 协议调研内部接口（勿删） ====================
 # 背景：闲鱼 IM 的部分消息结构（如 APP 的「引用/回复」卡片）没有公开协议，
 # 需要拉原始历史帧或盲测发送 payload 来逆向。这两个接口仅供协议调研使用，
