@@ -1338,7 +1338,7 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
         # 最后一条消息
         last_msg_obj = conv.get("lastMessage", {})
         last_message = last_msg_obj.get("message", {}) if last_msg_obj else {}
-        last_msg_summary = _extract_message_summary(last_message)
+        last_msg_summary = _extract_message_summary(last_message, myid)
         last_msg_time = conv.get("modifyTime", 0)
 
         # 未读数（redPoint）
@@ -1385,6 +1385,38 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
     except Exception as e:
         logger.warning(f"解析会话数据失败: {e}")
         return None
+
+
+def _is_revoked_placeholder(message: dict, content: dict) -> bool:
+    """识别闲鱼「撤回」在历史消息里留下的占位形态。
+
+    实测（2026-10-20，账号 2217728125233，cid=68391672401）：对方撤回后，
+    原消息位置（messageId / createAt 不变）内容被掏空：
+    - ``content.custom`` 整个缺失（普通文本消息必有 custom.summary/data）；
+    - ``content.text.content`` 为空串（正文清空）；
+    - ``searchableContent.summary`` 为空串（摘要清空）；
+    - ``extension.reminderContent`` 仍保留撤回前的旧摘要——**不展示**，避免泄露撤回内容。
+
+    只有三者同时满足才判撤回；结构不全的怪消息保持原有兜底行为。
+    """
+    if not isinstance(content, dict) or "custom" in content:
+        return False
+    text_obj = content.get("text")
+    if not isinstance(text_obj, dict):
+        return False
+    if str(text_obj.get("content", "") or "").strip():
+        return False
+    searchable = message.get("searchableContent")
+    if isinstance(searchable, dict) and str(searchable.get("summary", "") or "").strip():
+        return False
+    return True
+
+
+def _revoked_text(message: dict, myid: str) -> str:
+    """按发送者返回撤回提示文案（自己撤的 vs 对方撤的）。"""
+    sender = message.get("sender", {}) if isinstance(message, dict) else {}
+    sender_uid = str(sender.get("uid", "") or "").split("@")[0]
+    return "你撤回了一条消息" if myid and sender_uid == myid else "对方撤回了一条消息"
 
 
 def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") -> dict | None:
@@ -1461,9 +1493,15 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
                 summary = custom.get("summary", "")
                 msg_text = str(summary) if summary else "[无法解析的消息]"
         else:
-            # 没有 custom.data，用 summary 降级
+            # 没有 custom.data。先识别「撤回」占位（内容被掏空的原消息位置），
+            # 命中则渲染为系统提示「对方撤回了一条消息」，而非 [系统消息] 兜底；
+            # extension.reminderContent 里的旧摘要不展示，避免泄露撤回内容。
             summary = custom.get("summary", "")
-            msg_text = str(summary) if summary else "[系统消息]"
+            if _is_revoked_placeholder(message, content):
+                msg_type = "system"
+                msg_text = _revoked_text(message, myid)
+            else:
+                msg_text = str(summary) if summary else "[系统消息]"
 
         # 消息时间戳（goofish IM 中字段名为 createAt）
         msg_time = message.get("createAt", 0) or message.get("time", 0)
@@ -1522,7 +1560,7 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         return None
 
 
-def _extract_message_summary(message: dict) -> str:
+def _extract_message_summary(message: dict, myid: str = "") -> str:
     """
     从 lastMessage.message 提取摘要文本
 
@@ -1531,6 +1569,10 @@ def _extract_message_summary(message: dict) -> str:
     try:
         content = message.get("content", {})
         custom = content.get("custom", {})
+
+        # 撤回占位（内容被掏空）：列表摘要显示「对方撤回了一条消息」
+        if _is_revoked_placeholder(message, content):
+            return _revoked_text(message, myid)
 
         # 优先使用 summary 字段
         summary = custom.get("summary", "")
