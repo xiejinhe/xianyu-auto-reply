@@ -2165,7 +2165,8 @@ export function ChatNew() {
     }))) return
     setAdjustingPrice(true)
     try {
-      const res = await adjustOrderPrice(orderNo, price)
+      // 带上当前账号：订单可能还没同步进本地库，后端据此直接走闲鱼改价
+      const res = await adjustOrderPrice(orderNo, price, activeAccountId)
       addToast({ message: res.message || (res.success ? '改价成功' : '改价失败'), type: res.success ? 'success' : 'error' })
       if (res.success) {
         setAdjustingOrderNo('')

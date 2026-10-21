@@ -123,8 +123,17 @@ export const cancelOrder = (orderNo: string): Promise<ApiResponse> => {
 }
 
 // 订单改价（仅待付款订单；price 单位：元，如 "95.50"）
-export const adjustOrderPrice = (orderNo: string, price: string): Promise<ApiResponse> => {
-  return post(`${ORDER_PREFIX}/adjust-price`, { order_no: orderNo, price })
+// accountId 为兜底：会话里刚拍下的订单可能还没同步进本地库，带上账号后端可直接改价
+export const adjustOrderPrice = (
+  orderNo: string,
+  price: string,
+  accountId?: string,
+): Promise<ApiResponse> => {
+  return post(`${ORDER_PREFIX}/adjust-price`, {
+    order_no: orderNo,
+    price,
+    account_id: accountId || undefined,
+  })
 }
 
 // 提交演出信息（门票订单「我已付款，请填写演出信息」环节）

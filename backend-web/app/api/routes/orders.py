@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -37,9 +38,15 @@ class CancelOrderRequest(BaseModel):
 
 
 class AdjustOrderPriceRequest(BaseModel):
-    """订单改价请求：price 为改价后的订单总价，单位元（如 "95.50"）"""
+    """订单改价请求：price 为改价后的订单总价，单位元（如 "95.50"）
+
+    account_id 为可选兜底：会话里点「修改价格」时，订单可能还没同步进本地库
+    （本地库靠「获取闲鱼订单」拉取，新拍下的单子要等下一次同步才入库）。
+    带上账号后后端可直接走闲鱼改价，不再要求订单先入库。
+    """
     order_no: str
     price: str
+    account_id: Optional[str] = None
 
 
 class SubmitShowInfoRequest(BaseModel):
@@ -453,19 +460,14 @@ async def adjust_order_price(
     order_service: OrderService = Depends(deps.get_order_service),
     account_service: AccountService = Depends(deps.get_account_service),
 ):
-    """卖家对待付款订单改价（议价后改订单总价，运费置 0，买家会收到改价通知）"""
-    order = await order_service.get_order_by_no(request.order_no)
-    if not order:
-        return ApiResponse(success=False, message="订单不存在")
+    """卖家对待付款订单改价（议价后改订单总价，运费置 0，买家会收到改价通知）
+
+    本地库没有这笔订单时（订单还没同步进来），只要请求带 account_id 就直接走闲鱼改价——
+    闲鱼侧本来就只认「订单号 + 待付款状态」，不要求先本地建档。改价成功后尝试补写
+    本地金额，写不进去也不影响结果。
+    """
     owner_id, is_admin = resolve_owner_scope(current_user)
-    if not is_admin and order.owner_id != current_user.id:
-        return ApiResponse(success=False, message="无权操作此订单")
-    if order.status not in {"pending_payment", "待付款"}:
-        return ApiResponse(success=False, message="只有待付款订单可以改价")
-    if not order.account_id:
-        return ApiResponse(success=False, message="订单缺少账号信息")
-    if not await account_service.get_account_for_user(owner_id, order.account_id):
-        return ApiResponse(success=False, message="账号不存在")
+    order = await order_service.get_order_by_no(request.order_no)
 
     # 元 → 分：用 Decimal 避免浮点误差（如 95.5 * 100 = 9549.9999）
     try:
@@ -475,23 +477,50 @@ async def adjust_order_price(
     if price_cents <= 0:
         return ApiResponse(success=False, message="改价后的价格必须大于 0")
 
-    status_result = await websocket_client.get_account_status(order.account_id)
+    if not order:
+        # 订单尚未同步进本地库：带账号时按「未建档」路径直接改价，避免必须先去点
+        # 「获取闲鱼订单」同步一次才能操作（会话卡片上的单子往往是刚拍下的新单）
+        fallback_account = (request.account_id or "").strip()
+        if not fallback_account:
+            return ApiResponse(
+                success=False,
+                message="订单尚未同步到系统，请先点击「获取闲鱼订单」同步后再改价",
+            )
+        if not await account_service.get_account_for_user(owner_id, fallback_account):
+            return ApiResponse(success=False, message="账号不存在或无权操作")
+        account_id = fallback_account
+    else:
+        if not is_admin and order.owner_id != current_user.id:
+            return ApiResponse(success=False, message="无权操作此订单")
+        if order.status not in {"pending_payment", "待付款"}:
+            return ApiResponse(success=False, message="只有待付款订单可以改价")
+        if not order.account_id:
+            return ApiResponse(success=False, message="订单缺少账号信息")
+        if not await account_service.get_account_for_user(owner_id, order.account_id):
+            return ApiResponse(success=False, message="账号不存在")
+        account_id = order.account_id
+
+    status_result = await websocket_client.get_account_status(account_id)
     if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
         return ApiResponse(success=False, message="账号未连接，请先启动账号")
-    result = await websocket_client.adjust_order_price(order.account_id, order.order_no, price_cents)
+    result = await websocket_client.adjust_order_price(account_id, request.order_no, price_cents)
     if not result.get("success"):
         return ApiResponse(success=False, message=result.get("message", "改价失败"))
     logger.info(
-        f"【订单改价】order_no={order.order_no}, price_cents={price_cents}, "
-        f"account={order.account_id}, operator={current_user.username}"
+        f"【订单改价】order_no={request.order_no}, price_cents={price_cents}, "
+        f"account={account_id}, operator={current_user.username}, "
+        f"local_order={'有' if order else '无(未同步)'}",
     )
     # 本地金额同步为改价后的值：闲鱼订单列表同步对金额是「仅补缺」策略不会覆盖，
     # 不主动写回的话订单列表/再次改价弹窗预填都会停留在下单时的旧价。
+    # 订单未建档时 update_order_amount 会返回 False（无行可更新），属预期，不报错。
     amount_updated = await order_service.update_order_amount(
-        order.order_no, (Decimal(price_cents) / 100).quantize(Decimal("0.01"))
+        request.order_no, (Decimal(price_cents) / 100).quantize(Decimal("0.01"))
     )
     if not amount_updated:
-        logger.warning(f"【订单改价】本地金额同步失败: order_no={order.order_no}")
+        logger.info(
+            f"【订单改价】本地金额未同步（订单可能尚未建档）: order_no={request.order_no}"
+        )
     return ApiResponse(success=True, message="改价成功", data=result.get("data"))
 
 

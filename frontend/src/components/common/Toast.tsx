@@ -28,7 +28,9 @@ export function Toast() {
   const { toasts, removeToast } = useUIStore()
 
   return (
-    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-3">
+    // 层级要高于所有弹窗（弹窗最高 z-[1000]、确认框 z-[1100]），
+    // 否则弹窗打开时的操作结果提示会被压在弹窗背后看不见。
+    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[1200] flex flex-col items-center gap-3">
       <AnimatePresence>
         {toasts.map((toast) => {
           const Icon = icons[toast.type]

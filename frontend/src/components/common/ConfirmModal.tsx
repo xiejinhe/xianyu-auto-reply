@@ -4,6 +4,7 @@
  * 用于替代系统自带的 confirm 弹窗，提供更好的视觉效果
  */
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AlertTriangle, Info, Loader2, X } from 'lucide-react'
 import { cn } from '@/utils/cn'
@@ -55,10 +56,15 @@ export function ConfirmModal({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [isOpen, loading, onCancel])
 
-  return (
+  // 层级必须是全站最高一档：很多页面会在别的弹窗（z-[1000]）里再弹确认框，
+  // 之前这里用 z-[200]，确认框会整个沉到下层弹窗背后，用户看不见也点不到。
+  // 同时用 portal 挂到 body，避免被父级 stacking context（transform/低 z-index 容器）困住。
+  const CONFIRM_Z = 'z-[1100]'
+
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+        <div className={`fixed inset-0 ${CONFIRM_Z} flex items-center justify-center`}>
           {/* 遮罩层（按规范禁止点击遮罩关闭，避免误触；键盘 Esc 可关闭） */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -129,6 +135,7 @@ export function ConfirmModal({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
