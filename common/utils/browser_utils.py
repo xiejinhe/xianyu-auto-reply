@@ -114,6 +114,12 @@ def get_playwright_browser_dir() -> Optional[Path]:
         if candidate.exists():
             return candidate
 
+    # macOS：Playwright 默认装在 ~/Library/Caches/ms-playwright
+    candidate = Path.home() / "Library" / "Caches" / "ms-playwright"
+    if candidate.exists():
+        return candidate
+
+    # Linux：~/.cache/ms-playwright
     candidate = Path.home() / ".cache" / "ms-playwright"
     if candidate.exists():
         return candidate
@@ -192,6 +198,12 @@ def get_chromium_executable_path(
                     cdir / "chrome-win" / "chrome.exe",
                     cdir / "chrome-linux" / "chrome",
                     cdir / "chrome-linux64" / "chrome",
+                    # macOS Apple Silicon 新版布局（Playwright ≥1.49 下载的
+                    # Chrome for Testing 是 chrome-mac-arm64 + Google Chrome
+                    # for Testing.app，旧路径 chrome-mac/Chromium.app 已不再生成）
+                    cdir / "chrome-mac-arm64" / "Google Chrome for Testing.app"
+                    / "Contents" / "MacOS" / "Google Chrome for Testing",
+                    cdir / "chrome-mac-arm64" / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
                     cdir / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
                 ]
                 for candidate in candidates:

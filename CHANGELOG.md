@@ -8,12 +8,30 @@
 
 ---
 
-> **当前版本：`v1.0.61`**　｜　更新时间：**2026-10-21**
+> **当前版本：`v1.0.62`**　｜　更新时间：**2026-10-21**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.62 · 2026-10-21（修复：macOS 上滑块引擎永远回退普通 Playwright，导致过不了闲鱼风控验证）
+
+### 用户问题
+- 问：会话名片上对方的「多久前来过」怎么不显示了？是不是改代码改坏了？
+- 排查结论：**不是名片代码的问题**（该链路自 v1.0.17 后无人改过）。根因是闲鱼对「商品详情」接口（「多久前来过/回复速度」的数据源）下发了 x5sec 滑块验证（`FAIL_SYS_USER_VALIDATE` + `RGV587 挤爆` + punish 链接，同 cookie 调主页接口正常，证明 cookie 未失效）。
+
+### 顺藤摸瓜修掉的真 bug
+- 系统`/internal/captcha/solve`过滑块时，`browser_utils` 的两个判定让 **Patchright 隐身引擎在 macOS 上永远用不了**、静默回退普通 Playwright（被风控识别为自动化环境，验证码页面都不渲染）：
+  1. `get_playwright_browser_dir()` 只找 Windows（`LOCALAPPDATA`）和 Linux（`~/.cache`）的浏览器目录，**漏了 macOS 的 `~/Library/Caches/ms-playwright`**；
+  2. Chromium 可执行文件候选路径只认老布局 `chrome-mac/Chromium.app`，新版 Playwright 下载的是 `chrome-mac-arm64/Google Chrome for Testing.app`。
+- 修复后实测：Patchright 成功启动 → 滑块页面正常渲染 → 过滑块成功 → 解出的 x5sec 自动写回账号 cookie。
+
+### 说明
+- x5sec 滑块求解有随机性（历史策略成功率约 33%~75%），失败会自动重试。
+- 商品详情接口的拦截是服务端账号级临时风控，一般几分钟内自愈；自愈后名片「多久前来过/回复速度」自动恢复，无需任何操作。
 
 ---
 
