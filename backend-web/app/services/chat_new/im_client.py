@@ -62,10 +62,10 @@ HEARTBEAT_INTERVAL = 15
 # 风控滑块验证关键词：Token响应中出现任一关键词即表示被风控拦截（如"哎哟喂,被挤爆啦"），需过滑块
 # 与 websocket 进程 cookie_token_manager.need_captcha_verification 保持一致
 CAPTCHA_KEYWORDS = (
-    # 注意：FAIL_SYS_USER_VALIDATE 已从滑块关键词移除——它在 IM 登录 Token 网页接口上
-    # 表示「网页Cookie会话失效/被网页风控」，并非滑块挑战；盲目过滑块既解决不了问题，
-    # 又会留下 processing 卡死日志阻塞重连。改由 _fetch_im_token_from_api 单独处理
-    # （标记会话失效、提示重新登录）。
+    # 注意：FAIL_SYS_USER_VALIDATE 不能无脑当「会话失效」跳过滑块——2026-10-21 对
+    # 账号 1620778109 实证它有两种情形：真会话失效（重登可解）与 x5sec 接口级风控
+    # 挑战（ret 同带 RGV587_ERROR::挤爆 + data.url 惩罚链接，过滑块可解，cookie 没坏）。
+    # 由 _fetch_im_token_from_api 按 punish 链接有无区分处理，勿再一刀切。
     "RGV587_ERROR",            # 风控错误
     "哎哟喂,被挤爆啦",          # 被挤爆了（英文逗号）
     "哎哟喂，被挤爆啦",         # 被挤爆了（中文逗号）
@@ -907,11 +907,47 @@ class GoofishImClient:
             # 检查令牌过期，使用新Cookie重试（最多1次）
             ret = result.get("ret", [])
             ret_str = str(ret)
-            # FAIL_SYS_USER_VALIDATE 在 IM 登录 Token 网页接口上表示「网页 Cookie 会话失效/
-            # 被网页风控」，并非滑块挑战（现场撞不到验证码、滑块求解器还会卡死）。盲目过滑块
-            # 既解决不了问题，又会留下 processing 卡死日志阻塞重连。正确做法：标记会话失效、
-            # 提示重新登录刷新网页 Cookie，本次直接放弃获取 Token。
+            # FAIL_SYS_USER_VALIDATE 有两种情形（2026-10-21 对账号 1620778109 实证区分）：
+            # ① 网页 Cookie 会话真失效 → 只有重登能解，标记需重新登录；
+            # ② 接口级 x5sec 风控挑战：ret 同时带 RGV587_ERROR::SM::「哎哟喂,被挤爆啦」，
+            #    且 data.url 是 punish 验证链接——此时 cookie 本身是好的（同 cookie 调
+            #    主页接口正常返回），过滑块即可恢复，不该误标「失效需重登」。
+            # 判据：有 punish 链接 + 挤爆文案 → 走滑块；滑块失败再回退①的处理。
             if "FAIL_SYS_USER_VALIDATE" in ret_str:
+                data_obj = result.get("data")
+                punish_url = data_obj.get("url", "") if isinstance(data_obj, dict) else ""
+                is_challenge = bool(punish_url) and (
+                    "RGV587_ERROR" in ret_str or "挤爆" in ret_str
+                )
+                if is_challenge and _captcha_retry < CAPTCHA_MAX_RETRY:
+                    logger.warning(
+                        f"【{self.account_id}】IM登录Token被风控拦截"
+                        f"（FAIL_SYS_USER_VALIDATE + 挤爆惩罚链接），尝试过滑块"
+                    )
+                    if await self._solve_captcha_via_websocket(result):
+                        if self._captcha_token_cache_saved:
+                            cached = await self._get_cached_token()
+                            if cached:
+                                self.device_id = cached["device_id"]
+                                logger.info(
+                                    f"【{self.account_id}】使用WebSocket端已写入的聊天Token缓存"
+                                )
+                                return cached["token"]
+                            logger.warning(
+                                f"【{self.account_id}】WebSocket端报告Token缓存写入成功，"
+                                "但本地未读取到有效缓存，继续重试Token接口"
+                            )
+                            self._captcha_token_cache_saved = False
+                        logger.warning(
+                            f"【{self.account_id}】过滑块成功，用新Cookie重试获取Token"
+                            f"（第{_captcha_retry + 1}次）"
+                        )
+                        return await self._fetch_im_token_from_api(
+                            _retry=_retry, _captcha_retry=_captcha_retry + 1
+                        )
+                    logger.warning(
+                        f"【{self.account_id}】过滑块未成功，回退按网页Cookie会话失效处理"
+                    )
                 logger.warning(
                     f"【{self.account_id}】IM登录Token返回 FAIL_SYS_USER_VALIDATE，"
                     f"视为网页Cookie会话失效，放弃过滑块并标记需重新登录"
