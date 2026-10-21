@@ -6,6 +6,7 @@
  */
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { QRCodeSVG } from 'qrcode.react'
 import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag, Reply, Forward } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
@@ -565,7 +566,9 @@ export function ChatNew() {
   const [submittingShowInfo, setSubmittingShowInfo] = useState(false)
   // 闲鱼 APP 深链弹窗：fleamarket:// 原生页面（演出信息表单等）电脑上打不开，
   // 弹出链接让复制到手机上唤起 APP
-  const [deepLink, setDeepLink] = useState<{ url: string; title: string } | null>(null)
+  // fillInfo：系统内已填好的内容（演出名称/张数/日期），退化到 APP 时展示出来
+  // 方便照着填，避免用户来回切页面找刚才输的内容
+  const [deepLink, setDeepLink] = useState<{ url: string; title: string; fillInfo?: string } | null>(null)
   const [deepLinkCopied, setDeepLinkCopied] = useState(false)
   const [cancellingOrderNo, setCancellingOrderNo] = useState('')
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
@@ -2077,9 +2080,9 @@ export function ChatNew() {
   }
 
   // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
-  const openDeepLinkModal = (url: string, title: string) => {
+  const openDeepLinkModal = (url: string, title: string, fillInfo?: string) => {
     setDeepLinkCopied(false)
-    setDeepLink({ url, title })
+    setDeepLink({ url, title, fillInfo })
   }
 
   // 提交演出信息：走与发货/改价同一套 websocket 内部链路调闲鱼提交接口
@@ -2123,6 +2126,7 @@ export function ChatNew() {
           openDeepLinkModal(
             `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${orderNo}`,
             '填写演出信息（闲鱼 APP）',
+            `演出名称：${concertName}\n门票数量：${ticketCount} 张\n演出时间：${date}`,
           )
         } else {
           addToast({ message: res.message || '提交失败', type: 'error' })
@@ -4382,8 +4386,30 @@ export function ChatNew() {
               </div>
             )}
 
+            {/* 已填内容直接摊开：退化到 APP 时照着填，不用再切回上一个弹窗看 */}
+            {deepLink.fillInfo && (
+              <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-[12px] leading-5 text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <div className="mb-1 font-medium text-slate-500 dark:text-slate-400">
+                  照这个填（刚才输入的内容）：
+                </div>
+                {deepLink.fillInfo.split('\n').map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </div>
+            )}
+
+            {/* 二维码优先：手机上用闲鱼/相机扫一下最快，省掉复制粘贴 */}
+            <div className="mb-3 flex flex-col items-center">
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+                <QRCodeSVG value={deepLink.url} size={148} level="M" bgColor="#ffffff" fgColor="#0f172a" />
+              </div>
+              <div className="mt-2 text-[11px] leading-4 text-slate-400 dark:text-slate-500">
+                手机扫一扫（闲鱼扫一扫 / 系统相机）即可唤起 APP
+              </div>
+            </div>
+
             <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-              这是闲鱼 APP 原生页面专属地址，电脑浏览器打不开。复制后发到手机，点开即可直接唤起 APP 打开该订单的对应页面。
+              这是闲鱼 APP 原生页面专属地址，电脑浏览器打不开。扫码或复制后发到手机，点开即可直接唤起 APP 打开该订单的对应页面。
             </p>
             <textarea
               id="deeplink-input"
@@ -4394,8 +4420,8 @@ export function ChatNew() {
               className="mb-3 w-full resize-none rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-[11px] leading-4 text-slate-700 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
             />
             <ul className="mb-4 space-y-1 text-[11px] leading-4 text-slate-400 dark:text-slate-500">
-              <li>1. 微信发给「文件传输助手」，在手机上点开即可唤起 APP</li>
-              <li>2. 或粘贴到手机浏览器地址栏，同样会跳转到闲鱼</li>
+              <li>1. 首选扫码：闲鱼「扫一扫」或手机相机扫上方二维码</li>
+              <li>2. 或复制链接发到微信「文件传输助手」，在手机上点开唤起 APP</li>
               <li>3. 需已安装闲鱼 APP 并登录卖家账号</li>
             </ul>
             <button
