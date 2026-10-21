@@ -481,7 +481,13 @@ async def _convs_lastgood_response(account_id: str) -> ApiResponse | None:
                 f"【{account_id}】会话列表被闲鱼限流，回退最近一次缓存"
                 f"（{len(cached.get('conversations', []))} 条）"
             )
-            return ApiResponse(success=True, data={**cached, "rateLimited": True})
+            # 顺带把冷却剩余秒数带给前端：手动点刷新时提示「约 N 分钟后自动恢复」，
+            # 不然用户以为刷新按钮坏了（2026-10-20 实测：限流 20 分钟，反复点无反馈）
+            retry_after = max(0, int(_convs_rate_limit_until.get(account_id, 0) - time.time()))
+            return ApiResponse(
+                success=True,
+                data={**cached, "rateLimited": True, "retryAfter": retry_after},
+            )
     except Exception as e:
         logger.warning(f"【{account_id}】读取会话列表兜底缓存失败: {e}")
     return None
@@ -513,7 +519,11 @@ async def get_conversations(
             fallback = await _convs_lastgood_response(account_id)
             if fallback:
                 return fallback
-            return ApiResponse(success=False, message="请求过于频繁，请稍后再试")
+            remaining = int(_convs_rate_limit_until.get(account_id, 0) - time.time())
+            return ApiResponse(
+                success=False,
+                message=f"账号正被闲鱼限流，约 {max(1, (remaining + 59) // 60)} 分钟后自动恢复",
+            )
 
         body = await client.get_conversations(
             start_timestamp=cursor, limit=limit
@@ -546,7 +556,10 @@ async def get_conversations(
                     fallback = await _convs_lastgood_response(account_id)
                     if fallback:
                         return fallback
-                return ApiResponse(success=False, message="请求过于频繁，请稍后再试")
+                return ApiResponse(
+                    success=False,
+                    message=f"账号正被闲鱼限流，约 {max(1, (cooldown + 59) // 60)} 分钟后自动恢复",
+                )
             return ApiResponse(success=False, message=f"IM服务异常: {reason or err_code}")
 
         # 解析会话列表

@@ -1339,7 +1339,7 @@ export function ChatNew() {
     } catch { /* 静默：角标拉不到就先不显示 */ }
   }, [])
 
-  const loadConversations = useCallback(async (accountId: string, append = false, merge = false, force = false) => {
+  const loadConversations = useCallback(async (accountId: string, append = false, merge = false, force = false, manual = false) => {
     if (!accountId) return
     // 在途去重：同一账号的首页请求已在飞就复用，避免重复请求打到闲鱼
     if (!append) {
@@ -1377,9 +1377,11 @@ export function ChatNew() {
     // recoverConversations 只透传 items/hasMore/cursor，用闭包变量记录，
     // 补偿链路（多页）里只要有一页是兜底就算数。
     let sawRateLimited = false
+    let sawRetryAfter = 0
     const fetchPage = async (cursor?: number) => {
       const page = await getConversations(accountId, cursor)
       if (page.rateLimited) sawRateLimited = true
+      if (page.retryAfter) sawRetryAfter = page.retryAfter
       return { items: page.conversations, hasMore: page.hasMore, nextCursor: page.nextCursor }
     }
     const request = compensating && boundary
@@ -1425,13 +1427,15 @@ export function ChatNew() {
         // 账号正被闲鱼限流：本地也记 5 分钟冷却，停掉对账轮询 / 读状态刷新对
         // 这个账号的请求（后端冷却期内只会回缓存，不会真的打闲鱼，但没必要空转）
         rateLimitUntilRef.current[accountId] = Date.now() + 300_000
-        // 给用户说明一次「为什么刷新没有新数据」：同账号 5 分钟内不重复弹，
-        // 避免切账号 / 补偿轮询每轮都弹。文案点明是闲鱼侧限流、非系统故障。
+        // 给用户说明「为什么刷新没有新数据」。自动轮询期间同账号 5 分钟内只弹一次；
+        // 但手动点「刷新」按钮是用户明确要新数据，每次都必须给反馈——不然
+        // 反复点击毫无反应，看起来就像按钮坏了（2026-10-20 用户实测反馈）。
         const now = Date.now()
-        if (isActive() && (rateLimitedNoticeAtRef.current[accountId] ?? 0) + 300_000 < now) {
+        if (isActive() && (manual || (rateLimitedNoticeAtRef.current[accountId] ?? 0) + 300_000 < now)) {
           rateLimitedNoticeAtRef.current[accountId] = now
+          const mins = sawRetryAfter > 0 ? Math.max(1, Math.ceil(sawRetryAfter / 60)) : 5
           addToast({
-            message: `账号 ${accountId} 正被闲鱼限流，列表显示的是上次的数据，稍后会自动恢复`,
+            message: `账号 ${accountId} 正被闲鱼限流，列表暂时显示上次的数据，约 ${mins} 分钟后自动恢复（消息实时性不受影响）`,
             type: 'info',
           })
         }
@@ -1450,7 +1454,7 @@ export function ChatNew() {
       const errMsg = String(error?.message || '')
       // 闲鱼流控：记 5 分钟冷却（对账轮询/读状态刷新都会跳过这个账号），
       // 手头一个会话都没有时用本地缓存顶上，别让界面空白
-      if (errMsg.includes('请求过于频繁')) {
+      if (errMsg.includes('请求过于频繁') || errMsg.includes('闲鱼限流')) {
         rateLimitUntilRef.current[accountId] = Date.now() + 300_000
         if (isActive() && conversationsRef.current.length === 0) {
           const local = readConvCache(accountId)
@@ -1460,6 +1464,11 @@ export function ChatNew() {
             // 限流兜底的列表同样要有订单角标（本地库查询，不碰闲鱼接口）
             void loadOrderMarks(accountId)
           }
+        }
+        // 手动点刷新时必须给反馈：能走到这里说明后端连兜底缓存都没有，
+        // 用户会看到"点了没反应"。自动轮询的失败仍然静默。
+        if (manual && isActive()) {
+          addToast({ message: errMsg, type: 'info' })
         }
       }
       // 账号 IM 未连接（Cookie 会话失效 / 被闲鱼风控 / 未手动连接过）：
@@ -1500,6 +1509,7 @@ export function ChatNew() {
   /** 点「刷新会话」：账号 IM 已连接就直接拉列表；未连接时先自动重连
    *  （连上后 selectAccount 的 effect 会自己拉列表），避免「点了没反应」——
    *  后端此时只会回「账号未连接」，界面挂着的本地缓存旧数据原样不动。
+   *  manual=true：用户手动点击，被限流 / 出错时每次都要弹提示，不能静默。
    *  定义在 loadConversations 之后：依赖数组引用它，避免 TDZ。 */
   const handleRefreshConversations = useCallback((accountId: string) => {
     setConvCursor(null)
@@ -1509,7 +1519,7 @@ export function ChatNew() {
       void handleConnect(accountId)
       return
     }
-    void loadConversations(accountId, false, false, true)
+    void loadConversations(accountId, false, false, true, true)
   }, [addToast, handleConnect, loadConversations])
 
   // 用 ref 保持 accounts 最新引用，避免 effect 闭包取到旧值
