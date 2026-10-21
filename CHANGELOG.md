@@ -8,12 +8,43 @@
 
 ---
 
-> **当前版本：`v1.0.64`**　｜　更新时间：**2026-10-21**
+> **当前版本：`v1.0.65`**　｜　更新时间：**2026-10-21**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.65 · 2026-10-21（演出信息真实订单首跑实测：卡在闲鱼 APP 专属加密；报错体验优化）
+
+### 发生了什么
+- 第一笔真实「待填写演出信息」订单出现，系统内提交首跑失败：`FAIL_BIZ_SYSTEM_EXCEPTION::小鱼快要被挤坏啦`。
+- 用探测脚本在真实订单上做了 **15 个变体的受控实验**，逐一排除：
+
+### 排除清单（都不是原因）
+- ticketCount int / str 类型差异
+- 补 taskId / buyerId / sellerId（来自 IM 卡片深链与 bizTag）/ sourceId 全值
+- 上下文放 data 层 / formData 层
+- event 换 s_submit / 空串、两段式（先空 formData 初始化再提交）
+- formData 注入 userId/ownerId 明文 / base64
+- 换 APP 端 appKey（12574478，报错变为 FAIL_SYS_ILLEGAL_ACCESS，证明服务端分层校验）
+
+### 定位到的真正卡点
+- query 响应里一直有个被忽略的字段：**`needDecryptKeys: ["formData.userId", "formData.ownerId"]`**。
+- 即：formData 必须携带由**闲鱼 APP Flutter heracles 引擎加密注入**的 userId/ownerId，H5 网关通道无法复现这套加密（淘系安全字段体系，明文/base64 均被拒）。
+- 好消息：query 完全可用（SUCCESS 且会校验订单真伪），schema、callbackCode、event、formData 结构全部确认，**协议 90% 已打通**，只差最后一步加密。
+
+### 体验优化（本次可感知的改动）
+- 之前：提交失败直接怼原始报错「小鱼快要被挤坏啦」，用户不知所措。
+- 现在：
+  - 后端把这类失败翻译成「系统内提交通道暂不可用（闲鱼要求 APP 专属加密上报），已为你准备好 APP 填写入口」；
+  - 前端失败时自动弹出 APP 深链弹窗（复制到手机打开即到填写页），toast 从红色报错改为温和的引导提示。
+- 效果：系统内填写 → 失败 → 秒出 APP 入口，卖家始终不被卡住；APP 里照着填三个字段（名称/数量/时间）即可。
+
+### 后续若要彻底破掉
+- 需要一次真机抓包（手机配代理后在 APP 里填一次表单），确认 formData 密文格式与加密所需 header；若为固定公钥 RSA/AES（Flutter Dart 层实现），可提取公钥复现。风险：若是 securityguard 动态加密则无法离线复现。
 
 ---
 

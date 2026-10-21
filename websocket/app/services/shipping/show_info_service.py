@@ -319,6 +319,16 @@ class ShowInfoService(BaseShippingService):
                        for r in ret_list):
                     logger.warning(f"【{self.account_id}】演出信息提交鉴权失败，重试: {last_error}")
                     continue
+                # heracles 对「表单不可提交/字段加密校验失败」统一抛 FAIL_BIZ_SYSTEM_EXCEPTION
+                # （实测 2026-10-21 真实待填订单：query SUCCESS、参数 15 个变体全失败，
+                #  query 返回 needDecryptKeys=[formData.userId, formData.ownerId]，
+                #  这两个字段由闲鱼 APP Flutter 引擎加密注入，H5 通道无法复现）。
+                # 对用户翻译成人话 + 引导去 APP，不要把原始码直接怼脸上。
+                if any("FAIL_BIZ_SYSTEM_EXCEPTION" in r for r in ret_list):
+                    last_error = (
+                        "系统内提交通道暂不可用（闲鱼要求 APP 专属加密上报），"
+                        "已为你准备好 APP 填写入口"
+                    )
                 # 其它业务失败不再重试
                 return {"error": last_error, "order_id": order_id,
                         "fallback_deeplink": True}

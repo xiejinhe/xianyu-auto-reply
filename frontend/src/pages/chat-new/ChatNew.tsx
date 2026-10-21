@@ -2108,7 +2108,6 @@ export function ChatNew() {
         activeAccountId,
       )
       if (!res.success) {
-        addToast({ message: res.message || '提交失败', type: 'error' })
         // 提交接口未配置 / 接口调用失败：退化为打开 APP 深链填写，卖家不被卡住
         // （fallback_deeplink 由后端在表单加载/提交失败时带回，校验错误不带）
         const showInfoErr = res.data as
@@ -2116,10 +2115,17 @@ export function ChatNew() {
           | undefined
         if (showInfoErr?.not_configured || showInfoErr?.fallback_deeplink) {
           setShowInfoOrderNo('')
+          // 通道不可用不是用户的错：温和提示 + 直接给 APP 入口，别用红色报错吓人
+          addToast({
+            message: '系统内提交暂不可用，已为你打开 APP 填写入口，复制到手机即可',
+            type: 'warning',
+          })
           openDeepLinkModal(
             `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${orderNo}`,
             '填写演出信息（闲鱼 APP）',
           )
+        } else {
+          addToast({ message: res.message || '提交失败', type: 'error' })
         }
         return
       }
