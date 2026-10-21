@@ -8,12 +8,26 @@
 
 ---
 
-> **当前版本：`v1.0.60`**　｜　更新时间：**2026-10-21**
+> **当前版本：`v1.0.61`**　｜　更新时间：**2026-10-21**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.61 · 2026-10-21（修复：消息处理器初始化块被挤成死代码，系统消息每次处理都抛 AttributeError）
+
+### 根因
+- v1.0.51（提交 `9c8d034`）为修复「cid 跨账号共享导致自己发的消息被误判成买家」，在 `MessageHandler.__init__` 之后插入了 `_is_self_sender` 方法。
+- 插入时把原 `__init__` 的**剩余尾部代码**（消息防抖容器 + 5 个消息回调初始化）带进了新方法体内，落在 `except: return False` 之后，成为**永远不执行的死代码**。
+- 后果：`message_debounce_tasks/message_debounce_lock`、`_on_system_message`、`_on_order_message` 等属性从未创建。分发处是直接 `if self._on_system_message:` 访问属性，未注册的回调（系统消息/订单消息回调目前无人注册）每次都抛 `'MessageHandler' object has no attribute '_on_system_message'`，打断单条消息处理并刷 error 日志。
+- 普通聊天消息/卡片消息因启动时调用了对应 `set_*_handler`（赋值即创建属性）而侥幸未受影响，所以问题被掩盖。
+
+### 修复
+- 把防抖容器与 5 个回调的初始化移回 `__init__`（全部先置 `None`），删除 `_is_self_sender` 内的死代码。
+- 验证：webSocket 重启后 3 个账号全部 connected，日志零 ERROR，`_on_system_message` 报错消失。
 
 ---
 

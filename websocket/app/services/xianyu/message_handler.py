@@ -96,6 +96,21 @@ class MessageHandler:
         self.processed_message_ids: Dict[str, float] = {}
         self.processed_message_ids_lock = asyncio.Lock()
         self.processed_message_ids_max_size = 10000
+
+        # 消息防抖
+        self.message_debounce_tasks: Dict[str, Dict] = {}
+        self.message_debounce_delay = 3  # 秒
+        self.message_debounce_lock = asyncio.Lock()
+
+        # 消息处理回调
+        # 必须在这里全部先置 None：分发处是直接 `if self._on_xxx:` 访问属性，
+        # 而 set_*_handler 只会在启动时注册部分回调（订单/系统回调目前无人注册），
+        # 未注册时连属性都没有会直接抛 AttributeError，把整条消息处理链路打断。
+        self._on_chat_message: Optional[Callable] = None
+        self._on_system_message: Optional[Callable] = None
+        self._on_order_message: Optional[Callable] = None
+        self._on_card_message: Optional[Callable] = None  # 卡片消息回调（小刀等）
+        self._on_card_update_message: Optional[Callable] = None  # 卡片更新消息回调（付款状态变更等）
         self.message_expire_time = self._load_message_expire_time()  # 从数据库加载
 
     def _is_self_sender(self, sender_id: str) -> bool:
@@ -118,19 +133,7 @@ class MessageHandler:
             return is_managed_account(sid)
         except Exception:
             return False
-        
-        # 消息防抖
-        self.message_debounce_tasks: Dict[str, Dict] = {}
-        self.message_debounce_delay = 3  # 秒
-        self.message_debounce_lock = asyncio.Lock()
-        
-        # 消息处理回调
-        self._on_chat_message: Optional[Callable] = None
-        self._on_system_message: Optional[Callable] = None
-        self._on_order_message: Optional[Callable] = None
-        self._on_card_message: Optional[Callable] = None  # 卡片消息回调（小刀等）
-        self._on_card_update_message: Optional[Callable] = None  # 卡片更新消息回调（付款状态变更等）
-    
+
     def _load_message_expire_time(self) -> int:
         """从数据库加载当前账号的相同消息等待时间配置（参照旧框架）"""
         try:
