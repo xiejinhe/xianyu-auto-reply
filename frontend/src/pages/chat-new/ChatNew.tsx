@@ -568,8 +568,11 @@ export function ChatNew() {
   // 弹出链接让复制到手机上唤起 APP
   // fillInfo：系统内已填好的内容（演出名称/张数/日期），退化到 APP 时展示出来
   // 方便照着填，避免用户来回切页面找刚才输的内容
-  const [deepLink, setDeepLink] = useState<{ url: string; title: string; fillInfo?: string } | null>(null)
+  // prefillUrl：把已填内容作为路由参数带进 APP 表单的「预填版」深链（演出信息专用）
+  const [deepLink, setDeepLink] = useState<{ url: string; title: string; fillInfo?: string; prefillUrl?: string } | null>(null)
   const [deepLinkCopied, setDeepLinkCopied] = useState(false)
+  // 演出信息退化到 APP 时优先用预填版；若打开后表单是空的（闲鱼不认参数）切普通版
+  const [deepLinkUsePrefill, setDeepLinkUsePrefill] = useState(true)
   const [cancellingOrderNo, setCancellingOrderNo] = useState('')
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
   const [loadingOrderDetail, setLoadingOrderDetail] = useState(false)
@@ -2079,11 +2082,37 @@ export function ChatNew() {
     setShowInfoForm({ concertName: '', ticketCount: '', date: '' })
   }
 
-  // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
-  const openDeepLinkModal = (url: string, title: string, fillInfo?: string) => {
-    setDeepLinkCopied(false)
-    setDeepLink({ url, title, fillInfo })
+  // 演出信息深链「预填版」：把已填内容作为路由参数带进 APP 表单。
+  // 安全边界：这只走页面跳转参数，不涉及 callback 提交所需的 APP 加密字段
+  // （formData.userId / formData.ownerId），所以不需要破解加密。
+  // 同时给 formData(JSON) 与扁平字段两种写法，提高命中 heracles 的概率；
+  // 闲鱼不认就只是不预填，表单照常打开——切回普通版即可，没有副作用。
+  const buildShowInfoPrefillUrl = (
+    orderNo: string, concertName: string, ticketCount: string, date: string,
+  ) => {
+    const base = `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${encodeURIComponent(orderNo)}`
+    const formData = JSON.stringify({
+      concertName, ticketCount: Number(ticketCount) || 1, date,
+    })
+    return [
+      base,
+      `formData=${encodeURIComponent(formData)}`,
+      `concertName=${encodeURIComponent(concertName)}`,
+      `ticketCount=${encodeURIComponent(ticketCount)}`,
+      `date=${encodeURIComponent(date)}`,
+    ].join('&')
   }
+
+  // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
+  const openDeepLinkModal = (url: string, title: string, fillInfo?: string, prefillUrl?: string) => {
+    setDeepLinkCopied(false)
+    setDeepLinkUsePrefill(!!prefillUrl)
+    setDeepLink({ url, title, fillInfo, prefillUrl })
+  }
+
+  // 弹窗里实际展示/扫码/复制的链接（预填版优先，可切回普通版）
+  const deepLinkActiveUrl =
+    deepLink?.prefillUrl && deepLinkUsePrefill ? deepLink.prefillUrl : deepLink?.url || ''
 
   // 提交演出信息：走与发货/改价同一套 websocket 内部链路调闲鱼提交接口
   const handleSubmitShowInfo = async (orderNo: string) => {
@@ -2127,6 +2156,7 @@ export function ChatNew() {
             `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${orderNo}`,
             '填写演出信息（闲鱼 APP）',
             `演出名称：${concertName}\n门票数量：${ticketCount} 张\n演出时间：${date}`,
+            buildShowInfoPrefillUrl(orderNo, concertName, ticketCount, date),
           )
         } else {
           addToast({ message: res.message || '提交失败', type: 'error' })
@@ -2149,7 +2179,7 @@ export function ChatNew() {
   // 退化到 execCommand 选中文本框再复制，保证局域网/反代部署时也能用
   const copyDeepLink = async () => {
     if (!deepLink) return
-    const text = deepLink.url
+    const text = deepLinkActiveUrl
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text)
@@ -4353,6 +4383,24 @@ export function ChatNew() {
                 提交
               </button>
             </div>
+            {/* 系统内直提交被闲鱼 APP 加密卡住（详见 v1.0.66），这里直接给 APP 入口：
+                不用先撞一次失败也能拿到预填版深链 */}
+            <button
+              type="button"
+              disabled={submittingShowInfo}
+              onClick={() => {
+                const f = showInfoForm
+                openDeepLinkModal(
+                  `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${showInfoOrderNo}`,
+                  '填写演出信息（闲鱼 APP）',
+                  `演出名称：${f.concertName.trim()}\n门票数量：${f.ticketCount.trim()} 张\n演出时间：${f.date}`,
+                  buildShowInfoPrefillUrl(showInfoOrderNo, f.concertName.trim(), f.ticketCount.trim(), f.date),
+                )
+              }}
+              className="mt-2 w-full rounded-lg border border-orange-300 px-4 py-2 text-[12px] font-medium text-orange-600 transition-colors hover:bg-orange-50 disabled:opacity-50 dark:border-orange-500/40 dark:text-orange-300 dark:hover:bg-orange-500/10"
+            >
+              改用闲鱼 APP 填写（扫码，可自动带入上面内容）
+            </button>
           </div>
         </div>,
         document.body,
@@ -4398,10 +4446,53 @@ export function ChatNew() {
               </div>
             )}
 
+            {/* 预填版 / 普通版切换：预填版尝试把上面这些内容直接带进 APP 表单，
+                扫码后如果表单已经填好就只点「确定」；若表单是空的说明闲鱼不认，
+                切普通版照着填即可 */}
+            {deepLink.prefillUrl && (
+              <div className="mb-3 flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeepLinkUsePrefill(true)
+                    setDeepLinkCopied(false)
+                  }}
+                  className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
+                    deepLinkUsePrefill
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  预填版（自动带入内容）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeepLinkUsePrefill(false)
+                    setDeepLinkCopied(false)
+                  }}
+                  className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
+                    !deepLinkUsePrefill
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  普通版
+                </button>
+              </div>
+            )}
+            {deepLink.prefillUrl && deepLinkUsePrefill && (
+              <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-4 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                扫码后 APP 表单若已自动填好，直接点「确定」即可；若表单是空的，
+                说明闲鱼不支持预填，切到「普通版」照着上面填。
+              </p>
+            )}
+
             {/* 二维码优先：手机上用闲鱼/相机扫一下最快，省掉复制粘贴 */}
             <div className="mb-3 flex flex-col items-center">
               <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-                <QRCodeSVG value={deepLink.url} size={148} level="M" bgColor="#ffffff" fgColor="#0f172a" />
+                {/* 预填版链接较长（含中文编码），尺寸给足保证扫码成功率 */}
+                <QRCodeSVG value={deepLinkActiveUrl} size={184} level="M" bgColor="#ffffff" fgColor="#0f172a" />
               </div>
               <div className="mt-2 text-[11px] leading-4 text-slate-400 dark:text-slate-500">
                 手机扫一扫（闲鱼扫一扫 / 系统相机）即可唤起 APP
@@ -4415,7 +4506,7 @@ export function ChatNew() {
               id="deeplink-input"
               readOnly
               rows={3}
-              value={deepLink.url}
+              value={deepLinkActiveUrl}
               onFocus={(e) => e.currentTarget.select()}
               className="mb-3 w-full resize-none rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-[11px] leading-4 text-slate-700 outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
             />
