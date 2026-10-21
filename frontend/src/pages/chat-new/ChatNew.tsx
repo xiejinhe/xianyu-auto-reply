@@ -4491,8 +4491,9 @@ export function ChatNew() {
             {/* 二维码优先：手机上用闲鱼/相机扫一下最快，省掉复制粘贴 */}
             <div className="mb-3 flex flex-col items-center">
               <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-                {/* 预填版链接较长（含中文编码），尺寸给足保证扫码成功率 */}
-                <QRCodeSVG value={deepLinkActiveUrl} size={184} level="M" bgColor="#ffffff" fgColor="#0f172a" />
+                {/* 预填版链接较长（中文编码后可达数百字符，二维码密度变高），
+                    尺寸给足保证手机扫码成功率 */}
+                <QRCodeSVG value={deepLinkActiveUrl} size={220} level="M" bgColor="#ffffff" fgColor="#0f172a" />
               </div>
               <div className="mt-2 text-[11px] leading-4 text-slate-400 dark:text-slate-500">
                 手机扫一扫（闲鱼扫一扫 / 系统相机）即可唤起 APP
