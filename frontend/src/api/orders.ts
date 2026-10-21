@@ -118,8 +118,9 @@ export const noLogisticsDelivery = (orderNo: string): Promise<ManualDeliveryResp
   return post(`${ORDER_PREFIX}/no-logistics-delivery`, { order_no: orderNo })
 }
 
-export const cancelOrder = (orderNo: string): Promise<ApiResponse> => {
-  return post(`${ORDER_PREFIX}/cancel`, { order_no: orderNo })
+// 取消订单；accountId 兜底：订单未同步进本地库时后端据此直接操作闲鱼
+export const cancelOrder = (orderNo: string, accountId?: string): Promise<ApiResponse> => {
+  return post(`${ORDER_PREFIX}/cancel`, { order_no: orderNo, account_id: accountId || undefined })
 }
 
 // 订单改价（仅待付款订单；price 单位：元，如 "95.50"）
@@ -140,8 +141,13 @@ export const adjustOrderPrice = (
 export const submitShowInfo = (
   orderNo: string,
   form: { concert_name: string; ticket_count: string; show_date: string },
+  accountId?: string,
 ): Promise<ApiResponse> => {
-  return post(`${ORDER_PREFIX}/submit-show-info`, { order_no: orderNo, ...form })
+  return post(`${ORDER_PREFIX}/submit-show-info`, {
+    order_no: orderNo,
+    ...form,
+    account_id: accountId || undefined,
+  })
 }
 
 export const fetchXianyuOrders = (cookieId?: string): Promise<FetchXianyuOrdersResponse> => {

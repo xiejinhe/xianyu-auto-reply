@@ -35,6 +35,8 @@ class NoLogisticsDeliveryRequest(BaseModel):
 
 class CancelOrderRequest(BaseModel):
     order_no: str
+    # 兜底账号：订单可能还没同步进本地库，带上后可绕过本地查库直接操作闲鱼
+    account_id: Optional[str] = None
 
 
 class AdjustOrderPriceRequest(BaseModel):
@@ -50,11 +52,16 @@ class AdjustOrderPriceRequest(BaseModel):
 
 
 class SubmitShowInfoRequest(BaseModel):
-    """提交演出信息请求（门票订单「我已付款，请填写演出信息」环节）"""
+    """提交演出信息请求（门票订单「我已付款，请填写演出信息」环节）
+
+    account_id 为可选兜底，语义同 AdjustOrderPriceRequest：订单未同步进本地库时
+    直接走闲鱼提交，不必先点「获取闲鱼订单」。
+    """
     order_no: str
     concert_name: str
     ticket_count: str
     show_date: str
+    account_id: Optional[str] = None
 
 
 class FetchXianyuOrdersRequest(BaseModel):
@@ -423,6 +430,61 @@ async def no_logistics_delivery(
     return ApiResponse(success=True, message="无物流发货成功", data=result.get("data"))
 
 
+async def _resolve_order_account(
+    order_service: OrderService,
+    account_service: AccountService,
+    current_user: User,
+    order_no: str,
+    fallback_account_id: Optional[str],
+    action_label: str,
+    allowed_statuses: Optional[set] = None,
+    status_error_message: str = "当前订单状态不允许该操作",
+) -> tuple[Optional[str], Optional[dict], Optional[object]]:
+    """解析「操作这笔订单应该用哪个账号」，并顺带做权限/状态校验。
+
+    背景：会话卡片上的订单号来自 IM 推送解析，但订单不一定已同步进 xy_orders
+    （本地库靠「获取闲鱼订单」拉取，刚拍下的新单要等下一次同步才入库）。
+    而闲鱼侧的改价/取消/演出信息接口本来就只认「订单号 + 订单自己的状态」，
+    不要求本地建档。所以本地查不到订单时，只要请求带了账号就直接放行，
+    由闲鱼做最终校验——不要让用户为了点一次按钮先去同步一次订单列表。
+
+    Returns:
+        (account_id, error_response, order)；error_response 非空时调用方直接返回它。
+    """
+    owner_id, is_admin = resolve_owner_scope(current_user)
+    order = await order_service.get_order_by_no(order_no)
+
+    if order:
+        if not is_admin and order.owner_id != current_user.id:
+            return None, ApiResponse(success=False, message="无权操作此订单"), None
+        if allowed_statuses and str(order.status or "") not in allowed_statuses:
+            return None, ApiResponse(success=False, message=status_error_message), None
+        if not order.account_id:
+            return None, ApiResponse(success=False, message="订单缺少账号信息"), None
+        if not await account_service.get_account_for_user(owner_id, order.account_id):
+            return None, ApiResponse(success=False, message="账号不存在"), None
+        return order.account_id, None, order
+
+    # 订单尚未同步进本地库：带账号时按「未建档」路径放行
+    fallback = (fallback_account_id or "").strip()
+    if not fallback:
+        return (
+            None,
+            ApiResponse(
+                success=False,
+                message=f"订单尚未同步到系统，请先点击「获取闲鱼订单」同步后再{action_label}",
+            ),
+            None,
+        )
+    if not await account_service.get_account_for_user(owner_id, fallback):
+        return None, ApiResponse(success=False, message="账号不存在或无权操作"), None
+    logger.info(
+        f"【订单操作】订单未同步进本地库，按兜底账号直接操作闲鱼: "
+        f"order_no={order_no}, account={fallback}, action={action_label}"
+    )
+    return fallback, None, None
+
+
 @router.post("/cancel")
 async def cancel_order(
     request: CancelOrderRequest,
@@ -431,23 +493,23 @@ async def cancel_order(
     account_service: AccountService = Depends(deps.get_account_service),
 ):
     """卖家关闭（取消）一笔待处理订单"""
-    order = await order_service.get_order_by_no(request.order_no)
-    if not order:
-        return ApiResponse(success=False, message="订单不存在")
-    owner_id, is_admin = resolve_owner_scope(current_user)
-    if not is_admin and order.owner_id != current_user.id:
-        return ApiResponse(success=False, message="无权操作此订单")
-    if order.status not in {"pending_payment", "pending_ship", "pending", "paid", "待付款", "待发货"}:
-        return ApiResponse(success=False, message="当前订单状态不可取消")
-    if not order.account_id:
-        return ApiResponse(success=False, message="订单缺少账号信息")
-    if not await account_service.get_account_for_user(owner_id, order.account_id):
-        return ApiResponse(success=False, message="账号不存在")
+    account_id, err, _order = await _resolve_order_account(
+        order_service,
+        account_service,
+        current_user,
+        request.order_no,
+        request.account_id,
+        action_label="取消",
+        allowed_statuses={"pending_payment", "pending_ship", "pending", "paid", "待付款", "待发货"},
+        status_error_message="当前订单状态不可取消",
+    )
+    if err:
+        return err
 
-    status_result = await websocket_client.get_account_status(order.account_id)
+    status_result = await websocket_client.get_account_status(account_id)
     if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
         return ApiResponse(success=False, message="账号未连接，请先启动账号")
-    result = await websocket_client.cancel_order(order.account_id, order.order_no)
+    result = await websocket_client.cancel_order(account_id, request.order_no)
     if not result.get("success"):
         return ApiResponse(success=False, message=result.get("message", "取消订单失败"))
     return ApiResponse(success=True, message="订单已取消", data=result.get("data"))
@@ -460,15 +522,7 @@ async def adjust_order_price(
     order_service: OrderService = Depends(deps.get_order_service),
     account_service: AccountService = Depends(deps.get_account_service),
 ):
-    """卖家对待付款订单改价（议价后改订单总价，运费置 0，买家会收到改价通知）
-
-    本地库没有这笔订单时（订单还没同步进来），只要请求带 account_id 就直接走闲鱼改价——
-    闲鱼侧本来就只认「订单号 + 待付款状态」，不要求先本地建档。改价成功后尝试补写
-    本地金额，写不进去也不影响结果。
-    """
-    owner_id, is_admin = resolve_owner_scope(current_user)
-    order = await order_service.get_order_by_no(request.order_no)
-
+    """卖家对待付款订单改价（议价后改订单总价，运费置 0，买家会收到改价通知）"""
     # 元 → 分：用 Decimal 避免浮点误差（如 95.5 * 100 = 9549.9999）
     try:
         price_cents = int((Decimal(request.price.strip()) * 100).to_integral_value())
@@ -477,28 +531,18 @@ async def adjust_order_price(
     if price_cents <= 0:
         return ApiResponse(success=False, message="改价后的价格必须大于 0")
 
-    if not order:
-        # 订单尚未同步进本地库：带账号时按「未建档」路径直接改价，避免必须先去点
-        # 「获取闲鱼订单」同步一次才能操作（会话卡片上的单子往往是刚拍下的新单）
-        fallback_account = (request.account_id or "").strip()
-        if not fallback_account:
-            return ApiResponse(
-                success=False,
-                message="订单尚未同步到系统，请先点击「获取闲鱼订单」同步后再改价",
-            )
-        if not await account_service.get_account_for_user(owner_id, fallback_account):
-            return ApiResponse(success=False, message="账号不存在或无权操作")
-        account_id = fallback_account
-    else:
-        if not is_admin and order.owner_id != current_user.id:
-            return ApiResponse(success=False, message="无权操作此订单")
-        if order.status not in {"pending_payment", "待付款"}:
-            return ApiResponse(success=False, message="只有待付款订单可以改价")
-        if not order.account_id:
-            return ApiResponse(success=False, message="订单缺少账号信息")
-        if not await account_service.get_account_for_user(owner_id, order.account_id):
-            return ApiResponse(success=False, message="账号不存在")
-        account_id = order.account_id
+    account_id, err, order = await _resolve_order_account(
+        order_service,
+        account_service,
+        current_user,
+        request.order_no,
+        request.account_id,
+        action_label="改价",
+        allowed_statuses={"pending_payment", "待付款"},
+        status_error_message="只有待付款订单可以改价",
+    )
+    if err:
+        return err
 
     status_result = await websocket_client.get_account_status(account_id)
     if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
@@ -532,24 +576,24 @@ async def submit_show_info(
     account_service: AccountService = Depends(deps.get_account_service),
 ):
     """卖家提交演出信息（门票订单）：填写演出名称/门票数量/演出时间后提交到闲鱼"""
-    order = await order_service.get_order_by_no(request.order_no)
-    if not order:
-        return ApiResponse(success=False, message="订单不存在")
-    owner_id, is_admin = resolve_owner_scope(current_user)
-    if not is_admin and order.owner_id != current_user.id:
-        return ApiResponse(success=False, message="无权操作此订单")
-    if not order.account_id:
-        return ApiResponse(success=False, message="订单缺少账号信息")
-    if not await account_service.get_account_for_user(owner_id, order.account_id):
-        return ApiResponse(success=False, message="账号不存在")
+    account_id, err, _order = await _resolve_order_account(
+        order_service,
+        account_service,
+        current_user,
+        request.order_no,
+        request.account_id,
+        action_label="填写演出信息",
+    )
+    if err:
+        return err
 
-    status_result = await websocket_client.get_account_status(order.account_id)
+    status_result = await websocket_client.get_account_status(account_id)
     if not status_result.get("success") or not status_result.get("data", {}).get("is_connected"):
         return ApiResponse(success=False, message="账号未连接，请先启动账号")
 
     result = await websocket_client.submit_show_info(
-        order.account_id,
-        order.order_no,
+        account_id,
+        request.order_no,
         request.concert_name,
         request.ticket_count,
         request.show_date,
@@ -562,7 +606,7 @@ async def submit_show_info(
             data=result,
         )
     logger.info(
-        f"【演出信息】order_no={order.order_no}, account={order.account_id}, "
+        f"【演出信息】order_no={request.order_no}, account={account_id}, "
         f"operator={current_user.username}"
     )
     return ApiResponse(success=True, message="演出信息提交成功", data=result.get("data"))

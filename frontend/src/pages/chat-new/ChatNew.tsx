@@ -2097,11 +2097,16 @@ export function ChatNew() {
     }
     setSubmittingShowInfo(true)
     try {
-      const res = await submitShowInfo(orderNo, {
-        concert_name: concertName,
-        ticket_count: ticketCount,
-        show_date: date,
-      })
+      // 带上当前账号：订单可能还没同步进本地库，后端据此直接走闲鱼提交
+      const res = await submitShowInfo(
+        orderNo,
+        {
+          concert_name: concertName,
+          ticket_count: ticketCount,
+          show_date: date,
+        },
+        activeAccountId,
+      )
       if (!res.success) {
         addToast({ message: res.message || '提交失败', type: 'error' })
         // 提交接口未配置 / 接口调用失败：退化为打开 APP 深链填写，卖家不被卡住
@@ -2185,7 +2190,8 @@ export function ChatNew() {
     if (!(await requestConfirm({ message: `确认取消客户订单 ${orderNo} 吗？取消后无法恢复。`, confirmText: '取消订单', type: 'danger' }))) return
     setCancellingOrderNo(orderNo)
     try {
-      const res = await cancelOrder(orderNo)
+      // 带上当前账号：订单可能还没同步进本地库，后端据此直接走闲鱼取消
+      const res = await cancelOrder(orderNo, activeAccountId)
       addToast({ message: res.message || (res.success ? '订单已取消' : '取消订单失败'), type: res.success ? 'success' : 'error' })
       await loadCustomerOrders(true)
       // 取消后该买家可能没有进行中订单了，角标同步刷掉
