@@ -2076,6 +2076,12 @@ export function ChatNew() {
     setShowInfoForm({ concertName: '', ticketCount: '', date: '' })
   }
 
+  // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
+  const openDeepLinkModal = (url: string, title: string) => {
+    setDeepLinkCopied(false)
+    setDeepLink({ url, title })
+  }
+
   // 提交演出信息：走与发货/改价同一套 websocket 内部链路调闲鱼提交接口
   const handleSubmitShowInfo = async (orderNo: string) => {
     const concertName = showInfoForm.concertName.trim()
@@ -2096,27 +2102,28 @@ export function ChatNew() {
         ticket_count: ticketCount,
         show_date: date,
       })
-      addToast({
-        message: res.message || (res.success ? '演出信息已提交' : '提交失败'),
-        type: res.success ? 'success' : 'error',
-      })
-      if (res.success) {
-        setShowInfoOrderNo('')
-        await loadCustomerOrders(true)
-        // 订单状态变了，会话列表角标跟着刷一次
-        if (activeAccountId) void loadOrderMarks(activeAccountId)
+      if (!res.success) {
+        addToast({ message: res.message || '提交失败', type: 'error' })
+        // 演出信息提交接口未配置：退化为打开 APP 深链填写，卖家不被卡住
+        if ((res.data as { not_configured?: boolean } | undefined)?.not_configured) {
+          setShowInfoOrderNo('')
+          openDeepLinkModal(
+            `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${orderNo}`,
+            '填写演出信息（闲鱼 APP）',
+          )
+        }
+        return
       }
+      addToast({ message: res.message || '演出信息已提交', type: 'success' })
+      setShowInfoOrderNo('')
+      await loadCustomerOrders(true)
+      // 订单状态变了，会话列表角标跟着刷一次
+      if (activeAccountId) void loadOrderMarks(activeAccountId)
     } catch (e: any) {
       addToast({ message: e.message || '提交失败', type: 'error' })
     } finally {
       setSubmittingShowInfo(false)
     }
-  }
-
-  // 打开闲鱼 APP 深链弹窗（演出信息表单等 fleamarket:// 原生页面）
-  const openDeepLinkModal = (url: string, title: string) => {
-    setDeepLinkCopied(false)
-    setDeepLink({ url, title })
   }
 
   // 复制深链到剪贴板：Preferred clipboard API 在非安全上下文不可用（http 局域网访问），

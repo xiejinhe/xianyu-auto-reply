@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Settings as SettingsIcon, Save, Mail, RefreshCw, Eye, EyeOff, Copy, Upload, MessageCircle, Users, Percent, CreditCard, Megaphone, Heart, Globe, CalendarClock } from 'lucide-react'
+import { Settings as SettingsIcon, Save, Mail, RefreshCw, Eye, EyeOff, Copy, Upload, MessageCircle, Users, Percent, CreditCard, Megaphone, Heart, Globe, CalendarClock, Ticket } from 'lucide-react'
 import {
   buildHiddenMenuSettingsPayload,
   getHiddenMenuKeysFromSettings,
@@ -69,6 +69,8 @@ export function Settings() {
   const [distributionSaving, setDistributionSaving] = useState(false)
   // 用户到期/续期设置独立保存状态
   const [userExpirySaving, setUserExpirySaving] = useState(false)
+  // 演出信息提交接口独立保存状态
+  const [showInfoApiSaving, setShowInfoApiSaving] = useState(false)
   const [settings, setSettings] = useState<SystemSettings | null>(null)
 
   // SMTP密码显示状态
@@ -404,6 +406,34 @@ export function Settings() {
       addToast({ type: 'error', message: getApiErrorMessage(error, '用户到期设置保存失败') })
     } finally {
       setUserExpirySaving(false)
+    }
+  }
+
+  // 演出信息提交接口（演唱会门票「填写演出信息」）独立保存：只 PUT 两个键
+  const handleShowInfoApiSave = async () => {
+    if (!settings) return
+    const apiName = String(settings['shipping.show_info_api'] ?? '').trim()
+    const apiVersion = String(settings['shipping.show_info_api_version'] ?? '').trim() || '1.0'
+    try {
+      setShowInfoApiSaving(true)
+      const result = await updateSystemSettings({
+        'shipping.show_info_api': apiName,
+        'shipping.show_info_api_version': apiVersion,
+      })
+      if (result.success) {
+        addToast({
+          type: 'success',
+          message: apiName
+            ? '演出信息提交接口已保存，下次填写演出信息将走系统内直提交'
+            : '已清空接口配置，填写演出信息将退回 APP 深链',
+        })
+      } else {
+        addToast({ type: 'error', message: result.message || '保存失败' })
+      }
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '保存演出信息接口失败') })
+    } finally {
+      setShowInfoApiSaving(false)
     }
   }
 
@@ -1339,6 +1369,57 @@ export function Settings() {
                 >
                   {distributionSaving ? <ButtonLoading /> : <Save className="w-4 h-4" />}
                   保存分销设置
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 演出信息提交接口（仅管理员可见）：演唱会门票「填写演出信息」系统内直提交所需 mtop 接口 */}
+      {user?.is_admin && (
+        <div className="grid grid-cols-1 gap-4">
+          <div className="vben-card">
+            <div className="vben-card-header">
+              <h2 className="vben-card-title">
+                <Ticket className="w-4 h-4" />
+                演出信息提交接口（演唱会门票）
+              </h2>
+            </div>
+            <div className="vben-card-body space-y-4">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                演唱会门票订单买家付款后，卖家需填写演出信息。系统内一键填写需要闲鱼原生提交接口名（mtop.xxx），
+                该接口仅在 APP 原生层可见，请用手机抓包（在填写页点「提交」时抓网络请求）获取后填到下方。
+                未配置时，点击「去填写」会自动打开闲鱼 APP 深链填写，不影响流程。
+              </p>
+              <div className="input-group">
+                <label className="input-label">mtop 接口名（如 mtop.xxx.idle.trade.perform.info.submit）</label>
+                <input
+                  type="text"
+                  value={String(settings?.['shipping.show_info_api'] ?? '')}
+                  onChange={(e) => setSettings(s => s ? { ...s, 'shipping.show_info_api': e.target.value } : null)}
+                  placeholder="留空 = 退回 APP 深链填写"
+                  className="input-ios"
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">接口版本（默认 1.0）</label>
+                <input
+                  type="text"
+                  value={String(settings?.['shipping.show_info_api_version'] ?? '')}
+                  onChange={(e) => setSettings(s => s ? { ...s, 'shipping.show_info_api_version': e.target.value } : null)}
+                  placeholder="1.0"
+                  className="input-ios"
+                />
+              </div>
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleShowInfoApiSave}
+                  disabled={showInfoApiSaving}
+                  className="btn-ios-primary"
+                >
+                  {showInfoApiSaving ? <ButtonLoading /> : <Save className="w-4 h-4" />}
+                  保存接口配置
                 </button>
               </div>
             </div>

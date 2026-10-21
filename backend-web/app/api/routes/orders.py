@@ -526,7 +526,12 @@ async def submit_show_info(
         request.show_date,
     )
     if not result.get("success"):
-        return ApiResponse(success=False, message=result.get("message", "演出信息提交失败"))
+        # 透传完整 result（含 not_configured / pending_api），前端据此退化为 APP 深链
+        return ApiResponse(
+            success=False,
+            message=result.get("message", "演出信息提交失败"),
+            data=result,
+        )
     logger.info(
         f"【演出信息】order_no={order.order_no}, account={order.account_id}, "
         f"operator={current_user.username}"
