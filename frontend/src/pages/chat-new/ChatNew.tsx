@@ -2104,8 +2104,12 @@ export function ChatNew() {
       })
       if (!res.success) {
         addToast({ message: res.message || '提交失败', type: 'error' })
-        // 演出信息提交接口未配置：退化为打开 APP 深链填写，卖家不被卡住
-        if ((res.data as { not_configured?: boolean } | undefined)?.not_configured) {
+        // 提交接口未配置 / 接口调用失败：退化为打开 APP 深链填写，卖家不被卡住
+        // （fallback_deeplink 由后端在表单加载/提交失败时带回，校验错误不带）
+        const showInfoErr = res.data as
+          | { not_configured?: boolean; fallback_deeplink?: boolean }
+          | undefined
+        if (showInfoErr?.not_configured || showInfoErr?.fallback_deeplink) {
           setShowInfoOrderNo('')
           openDeepLinkModal(
             `fleamarket://smart_form?sceneCode=YCH&outerType=ORDER&outerId=${orderNo}`,

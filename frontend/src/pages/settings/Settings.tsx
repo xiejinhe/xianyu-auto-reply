@@ -1388,9 +1388,10 @@ export function Settings() {
             </div>
             <div className="vben-card-body space-y-4">
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                演唱会门票订单买家付款后，卖家需填写演出信息。系统内一键填写需要闲鱼原生提交接口名（mtop.xxx），
-                该接口仅在 APP 原生层可见，请用手机抓包（在填写页点「提交」时抓网络请求）获取后填到下方。
-                未配置时，点击「去填写」会自动打开闲鱼 APP 深链填写，不影响流程。
+                演唱会门票订单买家付款后，卖家需填写演出信息。系统已内置闲鱼原生提交接口
+                （mtop.taobao.heracles.inno.smart.form.callback，2026-10 逆向破解），默认无需配置。
+                此处仅作覆盖入口：闲鱼若更换接口名，抓包拿到新接口后填到下方即可立即生效。
+                提交失败时，点击「去填写」会自动打开闲鱼 APP 深链填写，不影响流程。
               </p>
               <div className="input-group">
                 <label className="input-label">mtop 接口名（如 mtop.xxx.idle.trade.perform.info.submit）</label>
@@ -1398,7 +1399,7 @@ export function Settings() {
                   type="text"
                   value={String(settings?.['shipping.show_info_api'] ?? '')}
                   onChange={(e) => setSettings(s => s ? { ...s, 'shipping.show_info_api': e.target.value } : null)}
-                  placeholder="留空 = 退回 APP 深链填写"
+                  placeholder="留空 = 使用内置接口（推荐）"
                   className="input-ios"
                 />
               </div>

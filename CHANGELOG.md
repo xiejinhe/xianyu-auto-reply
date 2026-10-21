@@ -8,12 +8,32 @@
 
 ---
 
-> **当前版本：`v1.0.59`**　｜　更新时间：**2026-10-21**
+> **当前版本：`v1.0.60`**　｜　更新时间：**2026-10-21**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
 > 约定：每次提交对用户可见的改动时版本号 +1，并在下方对应段落标题标注版本号；
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
+
+---
+
+## v1.0.60 · 2026-10-21（突破：演唱会「卖家填写演出信息」接通闲鱼原生提交接口，系统内一键直提交）
+
+### 这次做到了什么
+- **反编译闲鱼 APK 拿到真实协议**：演出信息表单是闲鱼 Flutter `form_render` 包的 smart form（heracles 引擎）。表单 schema 由 `mtop.taobao.heracles.inno.smart.form.query` 下发（只读，已用真实订单实测成功），提交走 `mtop.taobao.heracles.inno.smart.form.callback`（APK 二进制里 heracles 命名空间只有 query/callback 两个完整接口名，无独立 submit）。
+- **系统内一键直提交已接入**：`show_info_service` 现在先 query 现拉表单 schema（拿 acceptButton 的 callbackCode/event，含最新字段约束：演出名称≤30字、门票数量1~99、演出时间365天内），再用 callback 提交 `{concertName, ticketCount, date}`。系统设置里的「演出信息提交接口」变为可选覆盖项（默认已内置，留空即用）。
+- **实测踩坑记录**：网关要求 data 里所有值必须是字符串，传对象/数字会报误导性的「缺少业务参数callbackCode」。
+- **失败自动退化**：提交失败（表单加载失败/接口报错）时，前端自动打开闲鱼 APP 深链填写，卖家不被卡住。
+
+### 验证状态（重要）
+- query 拉表单：真实订单实测 ✅。
+- callback 提交：参数契约已实测打通（callbackCode 必填、全字符串校验可过），但**尚未在「待填写演出信息」状态的订单上做过真实提交**——当前库里没有处于该状态的订单（对已填完/不存在的订单该引擎统一抛系统异常）。下一个真实门票订单买家付款后即会自动实测；若失败会自动退化 APP 深链，不影响发货流程。
+
+### 涉及文件
+- `websocket/app/services/shipping/show_info_service.py`：接入 query+callback 真实协议，内置接口名默认值。
+- `frontend/src/pages/chat-new/ChatNew.tsx`：提交失败带 `fallback_deeplink` 时自动退化 APP 深链。
+- `frontend/src/pages/settings/Settings.tsx`：设置项说明改为「已内置，可覆盖」。
+- `scripts/capture_xianyu/`：新增 `explore_db.py` / `query_smart_form.py` / `probe_callback.py` / `probe_callback2.py` 探测脚本（只读/假订单探测，可复用）。
 
 ---
 
