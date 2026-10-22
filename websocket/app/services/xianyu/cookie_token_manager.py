@@ -743,6 +743,8 @@ class CookieTokenManager:
 
             try:
                 from app.services.captcha.slider_stealth import run_slider_verification_with_fallback
+                # 滑块浏览器超时：统一用惩罚页调优后的默认窗口，避免各调用点写死小值
+                from common.services.captcha.slider_stealth import DEFAULT_BROWSER_TIMEOUT
 
                 # Clear the hand-off state only after this call owns the captcha
                 # processing slot, so a concurrent call cannot erase its result.
@@ -756,8 +758,11 @@ class CookieTokenManager:
                 # 两条路径都不占用 asyncio 默认线程池，避免饿死 aiohttp 的 DNS 解析。
                 # run_slider_verification_with_fallback: 远程(可选)→真人/主引擎(Playwright)→DrissionPage 兜底
                 # 返回 (是否成功, cookies, 通过引擎: remote/real_mouse/playwright/drissionpage/None)
+                # 第 5 位是 browser_timeout：punish 页加载慢时需给足窗口
+                # （原写死 20s，页面加载就用掉 10s+，导致滑块来不及滑就超时）
                 slider_args = (
-                    f"{self.cookie_id}", verification_url, True, False, 20,
+                    f"{self.cookie_id}", verification_url, True, False,
+                    DEFAULT_BROWSER_TIMEOUT,
                     self.cookies_str, self._request_captcha_url_sync, remote_config,
                 )
                 selected_slider_mode = await refresh_slider_mode_from_database()

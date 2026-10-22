@@ -11,7 +11,12 @@ from typing import Callable, Dict, Optional, Tuple
 from loguru import logger
 
 from common.core.config import get_settings
-from common.services.captcha.slider_stealth import run_slider_verification, CAPTCHA_NOT_REQUIRED, URL_EXPIRED
+from common.services.captcha.slider_stealth import (
+    run_slider_verification,
+    CAPTCHA_NOT_REQUIRED,
+    URL_EXPIRED,
+    DEFAULT_BROWSER_TIMEOUT,
+)
 from common.services.captcha.remote_timeout import get_remote_solve_timeout
 from common.services.captcha.slider_mode import is_real_mouse_slider_mode
 from common.utils.internal_auth import build_internal_auth_headers, is_internal_api_url
@@ -126,7 +131,7 @@ def run_slider_verification_with_fallback(
     url: str,
     enable_learning: bool = True,
     headless: bool = False,
-    browser_timeout: int = 20,
+    browser_timeout: int = DEFAULT_BROWSER_TIMEOUT,
     existing_cookies_str: str = "",
     url_provider: Optional[Callable[[], Optional[str]]] = None,
     remote_config: Optional[dict] = None,

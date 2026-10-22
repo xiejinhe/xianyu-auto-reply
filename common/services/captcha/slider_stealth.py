@@ -63,6 +63,31 @@ CAPTCHA_NOT_REQUIRED = "__CAPTCHA_NOT_REQUIRED__"
 URL_EXPIRED = "__URL_EXPIRED__"
 
 
+# ===== 加载/渲染相关阈值（2026-10-22 依据账号 2217728125233 循环失败案例调优）=====
+#
+# 背景：punish 验证页是 JS 重渲染的重页面，加载慢时 page.goto 会超时，读到的
+#       page.content() 只是一个空壳（标题为空、HTML 很短）。此时若按「内容里没有
+#       验证码关键词」判定为「不需要验证」，就会直接 return True 收场——滑块从未被
+#       滑动，风控永远恢复不了，上层于是 5 秒后重试，浏览器窗口反复弹出。
+#
+# 修法：给足加载时间 + 给页面补一次「渲染等待」，且**页面未渲染完整时不许判无关**。
+
+# 浏览器总窗口：留足页面加载（~10-20s）+ 找元素 + 滑动 + 二次确认的时间。
+# 原来是 20 秒，punish 页常常加载就用掉 11 秒，后面压根来不及滑。
+DEFAULT_BROWSER_TIMEOUT = 60
+
+# goto 单项超时：原来写死 10 秒，punish 页经常超过。取总窗口的一半但不少于 25 秒、
+# 不超过 45 秒，保证既不至于卡到超时守护，也不会过早放弃加载。
+MIN_GOTO_TIMEOUT_MS = 25000
+MAX_GOTO_TIMEOUT_MS = 45000
+
+# 判定「页面已渲染出可用内容」的最小 HTML 长度；短于此基本是空壳。
+MIN_RENDERED_CONTENT_LEN = 1200
+
+# 渲染等待的最大时长（秒），实际还会受浏览器剩余窗口约束。
+MAX_RENDER_WAIT_SECONDS = 25
+
+
 class PlaywrightSliderService:
     """Playwright滑块验证服务"""
 
@@ -654,7 +679,7 @@ class PlaywrightSliderService:
     def run(
         self,
         url: str,
-        browser_timeout: int = 20,
+        browser_timeout: int = DEFAULT_BROWSER_TIMEOUT,
         url_provider: Optional[Callable[[], Optional[str]]] = None,
     ) -> Tuple[bool, Optional[Dict[str, str]]]:
         """
@@ -662,7 +687,7 @@ class PlaywrightSliderService:
         
         Args:
             url: 验证页面URL
-            browser_timeout: 浏览器验证超时时间（秒），默认20秒
+            browser_timeout: 浏览器验证超时时间（秒），默认60秒
             url_provider: 可选的"重新获取验证链接"回调。由于 __init__ 中需要等待并发槽位/
                 账号锁，再加上浏览器启动耗时，传入的 url（punish?x5secdata=...）可能在导航前
                 就已过期，导致页面显示"抱歉，页面访问出现了问题"。提供该回调后：仅当导航命中
@@ -677,6 +702,9 @@ class PlaywrightSliderService:
         browser_start_time = None
         timeout_timer = None
         timed_out = False
+        # 本次导航是否遇到过 goto 超时（punish 页加载慢时会触发）。用于识别
+        # 「读到的页面内容不可信」，避免据此误判页面没有验证码。
+        goto_had_timeout = False
         
         def _force_close_on_timeout():
             """超时后强制杀掉浏览器进程树，解除阻塞的 Playwright 调用。
@@ -731,15 +759,28 @@ class PlaywrightSliderService:
                 """导航到目标URL并读取页面内容。返回 page_content；需要中止时返回 None。"""
                 logger.info(f"【{self.pure_user_id}】导航到URL: {target_url}")
                 try:
-                    # goto 超时设为 browser_timeout 的一半，确保不会卡住超过总超时
-                    goto_timeout = min(browser_timeout * 1000 // 2, 15000)
+                    # goto 超时：原来固定 10 秒，punish 页加载慢时会超时并返回半截页面，
+                    # 后续按「没有验证码关键词」误判成无需验证，滑块从未被滑动。
+                    # 改为总窗口的一半，钳到 [25s, 45s]，保证加载从容完成。
+                    goto_timeout = max(
+                        MIN_GOTO_TIMEOUT_MS,
+                        min(browser_timeout * 1000 // 2, MAX_GOTO_TIMEOUT_MS),
+                    )
+                    logger.debug(
+                        f"【{self.pure_user_id}】goto 超时设置: {goto_timeout}ms"
+                        f"（浏览器总窗口 {browser_timeout}s）"
+                    )
                     self.page.goto(target_url, wait_until="domcontentloaded", timeout=goto_timeout)
                 except Exception as e:
+                    nonlocal goto_had_timeout
+                    goto_had_timeout = True
+                    logger.warning(
+                        f"【{self.pure_user_id}】页面导航未完成（稍后按渲染等待补全）: {str(e)[:120]}"
+                    )
                     if timed_out:
                         logger.warning(f"【{self.pure_user_id}】页面加载被超时守护中断")
                         return None
                     # 页面加载可能会有各种异常，但只要页面对象存在就继续
-                    logger.warning(f"【{self.pure_user_id}】页面加载异常，尝试继续: {str(e)}")
                     time.sleep(1)
 
                 if timed_out:
@@ -843,8 +884,75 @@ class PlaywrightSliderService:
                     logger.warning(f"【{self.pure_user_id}】滑块验证失败")
                     return False, None
             else:
-                logger.info(f"【{self.pure_user_id}】页面内容不包含验证码相关关键词，可能不需要验证")
-                return True, None
+                # ⚠️ 这里不能直接判「不需要验证」（2026-10-22 修复的历史 bug）：
+                # punish 页是 JS 重渲染页面，加载慢时读到的是半截 HTML（无标题、
+                # 长度极短），自然不含任何关键词。此时若 return True，上层会认为
+                # 验证已完成——但滑块其实从未被滑动，风控不会解除，于是每 5 秒重试
+                # 一次，浏览器窗口反复弹出。
+                # 正确做法：先判断页面是否渲染完整，不完整就再等一会儿，
+                # 等出来后重新读取再判；只有页面确实完整且确实没有滑块，才算无需验证。
+                suspicious_page = (
+                    goto_had_timeout
+                    or len(page_content or "") < MIN_RENDERED_CONTENT_LEN
+                    or not (self._safe_page_title() or "").strip()
+                )
+                if suspicious_page:
+                    logger.warning(
+                        f"【{self.pure_user_id}】页面疑似未渲染完整"
+                        f"（goto超时={goto_had_timeout}, "
+                        f"内容长度={len(page_content or '')}, "
+                        f"标题='{self._safe_page_title()}'）"
+                        f"——先等待渲染完成，不按「无验证码」处理"
+                    )
+                    rendered = self._wait_until_page_rendered(
+                        browser_start_time, browser_timeout, MIN_RENDERED_CONTENT_LEN
+                    )
+                    if rendered:
+                        # 渲染出来了，重新读一次内容再判断
+                        try:
+                            page_content = self.page.content() or ""
+                        except Exception as ce:
+                            logger.debug(f"【{self.pure_user_id}】重新读取页面内容失败: {ce}")
+
+                # 二次判定：关键词 或 页面上确实存在滑块元素
+                has_keyword = any(
+                    keyword in (page_content or "")
+                    for keyword in ["验证码", "captcha", "滑块", "slider"]
+                )
+                has_slider_element = False
+                try:
+                    _, slider_button, slider_track = self.element_finder.find_slider_elements()
+                    has_slider_element = bool(slider_button and slider_track)
+                except Exception as fe:
+                    logger.debug(f"【{self.pure_user_id}】查找滑块元素失败: {fe}")
+
+                if not (has_keyword or has_slider_element):
+                    logger.info(
+                        f"【{self.pure_user_id}】页面已渲染完整且确认无验证码元素，判定无需验证"
+                    )
+                    return True, None
+
+                logger.info(
+                    f"【{self.pure_user_id}】补全渲染后发现验证码"
+                    f"（关键词={has_keyword}, 滑块元素={has_slider_element}），进入滑块流程"
+                )
+                # 处理滑块验证（带超时检查）
+                success = self._solve_slider_with_timeout(browser_start_time, browser_timeout)
+                if success:
+                    logger.info(f"【{self.pure_user_id}】滑块验证成功")
+                    try:
+                        logger.info(f"【{self.pure_user_id}】等待页面响应，让新cookie生效...")
+                        time.sleep(1)
+                    except Exception as e:
+                        logger.debug(f"【{self.pure_user_id}】等待页面响应时出错: {str(e)}")
+                    try:
+                        cookies = self._get_cookies_after_success()
+                        logger.info(f"【{self.pure_user_id}】已获取cookie，准备关闭浏览器")
+                    except Exception as e:
+                        logger.warning(f"【{self.pure_user_id}】获取cookie时出错: {str(e)}")
+                    return success, cookies
+                logger.warning(f"【{self.pure_user_id}】滑块验证失败")
+                return False, None
 
         except Exception as e:
             if timed_out:
@@ -859,6 +967,95 @@ class PlaywrightSliderService:
                 timeout_timer.cancel()
             self.close()
     
+    def _safe_page_title(self) -> str:
+        """安全获取当前页面标题，任何异常都退化为空串。"""
+        try:
+            return self.page.title() or ""
+        except Exception:
+            return ""
+
+    def _wait_until_page_rendered(
+        self,
+        browser_start_time: Optional[float],
+        browser_timeout: int,
+        min_content_len: int = MIN_RENDERED_CONTENT_LEN,
+    ) -> bool:
+        """等待 punish 页真正渲染出内容。
+
+        punish 页是 JS 重渲染页面，加载慢时第一次读到的往往只是空壳 HTML。
+        这里轮询以下任一条件成立即认为渲染完成：
+
+        1. 页面标题非空
+        2. 任意 frame 里出现阿里滑块元素（#nc_1_n1z / #nc_1_n1t / 弹窗容器）
+        3. HTML 长度达到阈值
+
+        期间尊重浏览器总窗口，剩余时间不足 5 秒时放弃（把时间留给真正的滑动）。
+
+        Returns:
+            True=页面已渲染出可用内容；False=等待超时或已无剩余时间
+        """
+        if self.page is None:
+            return False
+
+        deadline = time.time() + MAX_RENDER_WAIT_SECONDS
+        rounds = 0
+        while time.time() < deadline:
+            # 剩余时间检查（留 5 秒给滑动本身）
+            if browser_start_time is not None and browser_timeout:
+                elapsed = time.time() - browser_start_time
+                if elapsed > browser_timeout - 5:
+                    logger.warning(
+                        f"【{self.pure_user_id}】渲染等待中止：浏览器剩余时间不足"
+                        f"（已用 {elapsed:.1f}s / 窗口 {browser_timeout}s）"
+                    )
+                    return False
+
+            # 1) 标题出现
+            title = self._safe_page_title()
+            if title.strip():
+                logger.info(
+                    f"【{self.pure_user_id}】渲染等待完成：标题已出现（{title[:30]}）"
+                )
+                return True
+
+            # 2) 滑块元素出现（含 iframe 内的阿里滑块）
+            try:
+                for frame in self.page.frames:
+                    try:
+                        if (
+                            frame.query_selector("#nc_1_n1z")
+                            or frame.query_selector("#nc_1_n1t")
+                            or frame.query_selector("#baxia-dialog-content")
+                            or frame.query_selector(".nc-container")
+                        ):
+                            logger.info(
+                                f"【{self.pure_user_id}】渲染等待完成：检测到滑块元素"
+                            )
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            # 3) HTML 足够长（content() 较重，每 4 轮才查一次）
+            rounds += 1
+            if rounds % 4 == 0:
+                try:
+                    if len(self.page.content() or "") >= min_content_len:
+                        logger.info(
+                            f"【{self.pure_user_id}】渲染等待完成：页面内容已充实"
+                        )
+                        return True
+                except Exception:
+                    pass
+
+            time.sleep(0.5)
+
+        logger.warning(
+            f"【{self.pure_user_id}】渲染等待 {MAX_RENDER_WAIT_SECONDS}s 超时，页面仍未渲染完整"
+        )
+        return False
+
     def _check_browser_timeout(self, start_time: float, timeout: int) -> bool:
         """检查浏览器是否超时
         
@@ -1589,7 +1786,7 @@ def run_slider_verification(
     url: str, 
     enable_learning: bool = True, 
     headless: bool = False,
-    browser_timeout: int = 20,
+    browser_timeout: int = DEFAULT_BROWSER_TIMEOUT,
     url_provider: Optional[Callable[[], Optional[str]]] = None,
 ) -> Tuple[bool, Optional[Dict[str, str]]]:
     """在独立进程中运行滑块验证（模块级别函数，支持ProcessPoolExecutor）
@@ -1599,7 +1796,7 @@ def run_slider_verification(
         url: 验证页面URL
         enable_learning: 是否启用学习
         headless: 是否无头模式
-        browser_timeout: 浏览器验证超时时间（秒），默认20秒
+        browser_timeout: 浏览器验证超时时间（秒），默认60秒
         url_provider: 可选回调，浏览器就绪后用于重新获取新鲜验证链接，避免链接过期
         
     Returns:
