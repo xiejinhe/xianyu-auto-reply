@@ -408,6 +408,38 @@ async def solve_captcha(request: SolveCaptchaRequest):
     # 清洗 account_id（外部传入，仅用于日志与浏览器实例目录隔离，防止路径注入）
     raw_id = (request.account_id or "external").strip()
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "", raw_id)[:64] or "external"
+
+    # 本机滑块不处理开关（v1.0.73）：与 cookie_token_manager._refresh_token_with_lock
+    # 的口径保持一致。此前该开关只守 Token 刷新路径，backend-web chat_new 等
+    # 外部调用方走本接口仍会弹浏览器，导致"关了开关还弹滑块"。
+    try:
+        from sqlalchemy import select as _select
+
+        from common.db.session import async_session_maker as _async_session_maker
+        from common.models.system_setting import SystemSetting as _SystemSetting
+
+        async with _async_session_maker() as _session:
+            _flag_value = (
+                await _session.execute(
+                    _select(_SystemSetting.value)
+                    .where(_SystemSetting.key == "captcha.local_slider_disabled")
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if str(_flag_value or "false").strip().lower() == "true":
+            logger.warning(
+                f"【过滑块接口】本机滑块不处理已开启（captcha.local_slider_disabled），"
+                f"跳过 account_id={safe_id} 的滑块求解，不启动浏览器"
+            )
+            return {
+                "success": False,
+                "code": 200,
+                "message": "本机滑块不处理已开启，本次不启动滑块",
+                "data": {"local_slider_disabled": True},
+            }
+    except Exception as flag_e:
+        # 读取失败不阻断原有语义（外部模式B调用方依赖本接口），按未开启继续
+        logger.warning(f"【过滑块接口】读取本机滑块开关失败，按未开启继续: {flag_e}")
     timeout = max(20, min(int(request.browser_timeout or 40), 120))
     call_type = (request.call_type or "remote").strip() or "remote"
     call_user = (request.call_user or "").strip() or None
