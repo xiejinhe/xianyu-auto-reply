@@ -2000,7 +2000,16 @@ export function ChatNew() {
   }
 
   const handleSavePhrase = async () => {
-    if (!phraseTitle.trim() || !phraseContent.trim() || savingPhrase) return
+    if (savingPhrase) return
+    // 缺字段时明确提示（2026-10-23 反馈「加不了」）：此前静默 return，
+    // 只填内容按回车（名称还空着）没有任何反应，用户以为功能坏了
+    if (!phraseTitle.trim() || !phraseContent.trim()) {
+      addToast({
+        message: !phraseTitle.trim() ? '请先填写短语名称（如：催付款）' : '请填写短语内容',
+        type: 'error',
+      })
+      return
+    }
     setSavingPhrase(true)
     try {
       const payload = { title: phraseTitle.trim(), content: phraseContent.trim(), sort_order: 0 }

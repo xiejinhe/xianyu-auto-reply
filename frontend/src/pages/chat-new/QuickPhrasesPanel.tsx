@@ -75,7 +75,7 @@ export function QuickPhrasesPanel({
         ))}
       </div>
       <div className="p-2 border-t border-gray-200 dark:border-gray-700 space-y-1.5">
-        <input value={phraseTitle} onChange={(e) => onTitleChange(e.target.value)} placeholder="短语名称，例如：催付款" className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700" />
+        <input value={phraseTitle} onChange={(e) => onTitleChange(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onSave() }} placeholder="短语名称，例如：催付款" className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700" />
         <div className="flex gap-1.5">
           <input value={phraseContent} onChange={(e) => onContentChange(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onSave() }} placeholder="输入发送内容" className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700" />
           <button onClick={onSave} disabled={!phraseTitle.trim() || !phraseContent.trim() || savingPhrase} className="px-2.5 rounded bg-blue-500 text-white disabled:opacity-40" title={editingPhraseId ? '保存修改' : '添加短语'}>
