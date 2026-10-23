@@ -1735,13 +1735,20 @@ export function ChatNew() {
   // 见提交 67e6348 的排查）。推送和断线补偿任何一环没接到，聊天窗口就会一直
   // 停在旧消息上。这里给当前打开的会话定时增量拉最新一页兜底，消息按 ID 去重，
   // 重复拉取无害。静默模式：不闪 loading、失败不弹 toast。
+  //
+  // 间隔 15s → 5s（2026-10-23 实测反馈）：账号被风控/暂停时长连接断开，此时
+  // 唯一的消息来源就是这里，15 秒一轮用户体感「列表先亮、窗口过 5 秒才出字」
+  // ——因为会话列表和聊天窗口是两个独立定时器，谁先跑到谁先亮，两者天然不同步。
+  // 5 秒一轮把最坏等待压到 5 秒内，人眼已接近实时。只拉「当前打开的会话」，
+  // 一个账号同时只有一个，12 次/分钟仍在消息接口承受范围内（会话列表接口才是
+  // 容易被顶进流控的那个，它的 30 秒间隔保持不变）。
   useEffect(() => {
     if (!activeAccountId || !activeCid) return
     const timer = setInterval(() => {
       // 页面切到后台时没必要拉，回来后下一轮自然补上
       if (document.hidden) return
       void loadMessages(activeAccountId, activeCid, false, true)
-    }, 15000)
+    }, 5000)
     return () => clearInterval(timer)
   }, [activeAccountId, activeCid, loadMessages])
 
