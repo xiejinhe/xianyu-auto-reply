@@ -73,6 +73,13 @@ class CookieTokenManager:
         self._startup_expired_cache_available = True
         self._last_cache_lookup_succeeded = True
         self._cached_token_in_use: str | None = None
+        # 风控冷却（2026-10-23 新增）：连续触发风控/滑块失败后进入指数退避冷却，
+        # 暂停主动刷新 Token 与弹滑块，避免「反复刷新登录 Token + 反复滑块验证」
+        # 被闲鱼判定为异常登录，把账号从接口级风控拖成账号级封锁（连滑块都不给）。
+        # 多数突发风控几分钟自愈，冷却期内安静等待即可恢复，且不再恶化。
+        self._risk_cooldown_until: float = 0.0
+        self._risk_fail_streak: int = 0
+        self._risk_cooldown_logged: bool = False
     
     # ==================== 属性代理 ====================
     
@@ -1107,6 +1114,37 @@ class CookieTokenManager:
             )
             return None
 
+    # ==================== 风控冷却 ====================
+
+    def _enter_risk_cooldown(self) -> None:
+        """滑块/风控连续失败后进入指数退避冷却。
+
+        触发场景：Token 刷新命中闲鱼 x5sec 风控 → 弹滑块 → 失败/异常。
+        此时继续高频重试刷新/过滑块会被判定为异常登录，反而加重风控，
+        因此转为「安静冷却」：期间不发起任何 Token 接口请求、不弹滑块，
+        让风控自然自愈。冷却时长 5 分钟起、每次翻倍、封顶 60 分钟，
+        既避免越重试越风控，又保证最终会试探一次恢复。
+        """
+        self._risk_fail_streak += 1
+        backoff = min(300 * (2 ** (self._risk_fail_streak - 1)), 3600)
+        self._risk_cooldown_until = time.time() + backoff
+        self._risk_cooldown_logged = False
+        logger.warning(
+            f"【{self.cookie_id}】风控冷却：连续失败 {self._risk_fail_streak} 次，"
+            f"暂停刷新 Token 与滑块 {int(backoff // 60)} 分钟，避免加重风控"
+        )
+
+    def _clear_risk_cooldown(self) -> None:
+        """Token 刷新成功：清零冷却，恢复正常周期刷新。"""
+        if self._risk_fail_streak or self._risk_cooldown_until:
+            logger.info(f"【{self.cookie_id}】Token 刷新成功，解除风控冷却")
+        self._risk_fail_streak = 0
+        self._risk_cooldown_until = 0.0
+        self._risk_cooldown_logged = False
+
+    def _in_risk_cooldown(self) -> bool:
+        return time.time() < self._risk_cooldown_until
+
     async def _refresh_token_with_lock(
         self,
         captcha_retry_count: int = 0,
@@ -1129,6 +1167,22 @@ class CookieTokenManager:
             
             logger.info(f"【{self.cookie_id}】开始刷新token... (滑块验证重试次数: {captcha_retry_count})")
             self.last_token_refresh_status = "started"
+
+            # 风控冷却：连续风控/滑块失败后的指数退避。冷却期内不发起任何 Token
+            # 接口请求、也不弹滑块，让闲鱼风控自然自愈（2026-10-23 新增）。
+            if self._in_risk_cooldown():
+                if not self._risk_cooldown_logged:
+                    remaining = int((self._risk_cooldown_until - time.time()) // 60)
+                    logger.info(
+                        f"【{self.cookie_id}】风控冷却期中（约剩 {remaining} 分钟），"
+                        "跳过本次 Token 刷新与滑块"
+                    )
+                    self._risk_cooldown_logged = True
+                self.last_token_refresh_status = "skipped_risk_cooldown"
+                return None
+            elif self._risk_cooldown_logged:
+                # 冷却刚结束：重置日志标记，下次进入冷却会重新提示
+                self._risk_cooldown_logged = False
 
             is_initial_cache_attempt = bool(
                 captcha_retry_count == 0
@@ -1291,6 +1345,7 @@ class CookieTokenManager:
                 logger.warning(f"【{self.cookie_id}】Token刷新成功，已重置消息接收时间标识")
                 logger.info(f"【{self.cookie_id}】Token刷新成功，新Token: {new_token}")
                 self.last_token_refresh_status = "success"
+                self._clear_risk_cooldown()
                 # 必须在 _set_cached_token 覆盖 _cached_token_in_use 前捕获，否则永远为 False
                 token_changed = new_token != self._cached_token_in_use
                 await self._set_cached_token(new_token, self.device_id)
@@ -1415,16 +1470,18 @@ class CookieTokenManager:
                         )
                     logger.error(f"【{self.cookie_id}】滑块验证失败")
                     self._clear_refetch_state()
+                    self._enter_risk_cooldown()
                     notification_sent = True
-                    self.last_token_refresh_status = "failed_captcha"
+                    self.last_token_refresh_status = "skipped_risk_cooldown"
                     self.current_token = None
                     await self._delete_cached_token()
                     return None
                 except Exception as captcha_e:
                     logger.error(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}")
                     self._clear_refetch_state()
+                    self._enter_risk_cooldown()
                     notification_sent = True
-                    self.last_token_refresh_status = "failed_captcha_exception"
+                    self.last_token_refresh_status = "skipped_risk_cooldown"
                     self.current_token = None
                     await self._delete_cached_token()
                     return None

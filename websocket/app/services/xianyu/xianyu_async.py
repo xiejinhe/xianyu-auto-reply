@@ -2979,6 +2979,7 @@ class XianyuAsync:
                                 'skipped_risk_control_processing',
                                 'skipped_risk_control_check_failed',
                                 'skipped_startup_cache_lookup_failed',
+                                'skipped_risk_cooldown',
                             )
 
                             if not hasattr(self, '_token_fetch_failures'):
@@ -3025,6 +3026,7 @@ class XianyuAsync:
                                 'skipped_risk_control_processing',
                                 'skipped_risk_control_check_failed',
                                 'skipped_startup_cache_lookup_failed',
+                                'skipped_risk_cooldown',
                             ):
                                 sleep_duration = self.token_manager.cookie_refresh_interval
                             else:
