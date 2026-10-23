@@ -387,9 +387,17 @@ class PlaywrightSliderService:
                 launch_kwargs['timezone_id'] = 'Asia/Shanghai'
                 if not self._cdp_touch_enabled:
                     launch_kwargs['ignore_default_args'] = ['--enable-automation']
-                launch_kwargs['user_agent'] = SLIDER_USER_AGENT
                 launch_kwargs['has_touch'] = self._cdp_touch_enabled
                 launch_kwargs['is_mobile'] = False
+                # UA 指纹必须与真实内核/平台自洽（详见 playwright_touch 顶部注释）：
+                # - 可见窗口：不覆盖 UA，用浏览器真实 UA（无 Headless 标记、
+                #   内核版本/平台/字体/画布完全一致，是最优指纹）。
+                #   此前写死 Windows Chrome 139，macOS 上一行 JS 就穿帮，
+                #   Baxia 环境评分不及格 → 轨迹再好（含真人手拖）也响应 300。
+                # - 无头：真实 UA 带 HeadlessChrome 标记必须覆盖，
+                #   用平台一致的动态 UA（build_slider_user_agent）。
+                if self.headless:
+                    launch_kwargs['user_agent'] = SLIDER_USER_AGENT
                 if self.headless:
                     launch_kwargs['screen'] = {'width': 1920, 'height': 1080}
             else:
@@ -487,13 +495,18 @@ class PlaywrightSliderService:
                 else:
                     logger.info(f"【{self.pure_user_id}】添加反检测脚本...")
                     self.page.add_init_script(get_stealth_script(browser_features))
-                try:
-                    configure_slider_user_agent(self.context, self.page)
-                except Exception as user_agent_error:
-                    logger.warning(
-                        f"【{self.pure_user_id}】配置滑块 UA Client Hints 失败，继续运行: "
-                        f"{user_agent_error}"
-                    )
+                if self.headless:
+                    # 无头模式真实 UA 带 HeadlessChrome 标记，用 CDP override
+                    # 换成平台自洽的干净 UA。可见窗口**不做** override ——
+                    # 真实 UA/UA-CH/画布已完全自洽，再覆盖反而把内核版本
+                    # 改矛盾（真实 153 → 覆盖 139），自己制造指纹破绽。
+                    try:
+                        configure_slider_user_agent(self.context, self.page)
+                    except Exception as user_agent_error:
+                        logger.warning(
+                            f"【{self.pure_user_id}】配置滑块 UA Client Hints 失败，继续运行: "
+                            f"{user_agent_error}"
+                        )
 
                 def capture_slide_response(response: Any) -> None:
                     """记录 Baxia 滑块接口返回码，供轨迹迭代诊断。"""
