@@ -41,6 +41,7 @@ from app.services.chat_new.peer_read_service import load_peer_reads
 from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
+from common.services.account_cookie_status_service import get_account_risk_block
 from common.utils.auth_scope import is_admin_user
 from common.utils.managed_account_ids import is_managed_account
 from common.services.account_cookie_status_service import compute_cookie_status_map
@@ -337,6 +338,18 @@ async def auto_reconnect_chat_accounts() -> None:
     logger.info(f"开始自动恢复在线聊天IM连接，共 {len(ids)} 个账号: {ids}")
     ok = 0
     for account_id in ids:
+        # 纪律：被挑战即停手。自动恢复同样要先过风控冷却关，否则重启后
+        # 立刻对处于冷却中的账号狂刷连接/Token 请求，反而把惩罚窗口续得更长。
+        try:
+            risk_block = await get_account_risk_block(db, account_id)
+            if risk_block["blocked"]:
+                logger.warning(
+                    f"【{account_id}】自动恢复跳过（风控冷却中，约剩 "
+                    f"{risk_block['minutes_remaining']} 分钟）: {risk_block['reason']}"
+                )
+                continue
+        except Exception as e:
+            logger.warning(f"【{account_id}】风控冷却查询失败（保守尝试恢复）: {e}")
         try:
             await manager.get_or_connect(account_id)
             ok += 1
@@ -364,6 +377,23 @@ async def connect_account(
         account = result.scalar_one_or_none()
         if not account:
             return ApiResponse(success=False, message="账号不存在或无权操作")
+
+        # 纪律：被挑战即停手。账号处于风控连接冷却中时，不发起任何连接请求，
+        # 避免续期 Baxia 惩罚滚动窗口（自愈的前提是零失败流量）。
+        risk_block = await get_account_risk_block(db, account_id)
+        if risk_block["blocked"]:
+            logger.warning(f"【{account_id}】连接被风控冷却拦截: {risk_block['reason']}")
+            return ApiResponse(
+                success=False,
+                message=(
+                    f"{risk_block['reason']}"
+                    f"（预计还需 {risk_block['minutes_remaining']} 分钟冷却，"
+                    f"或换IP/等自愈后重试）"
+                ),
+            )
+        # 已停用账号不发起连接（只会失败并加重请求量）。
+        if account.status != "active":
+            return ApiResponse(success=False, message="该账号已停用，请先在账号列表中启用后再连接")
 
         manager = get_im_session_manager()
         await manager.get_or_connect(account_id)

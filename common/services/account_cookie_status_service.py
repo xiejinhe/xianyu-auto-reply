@@ -138,6 +138,73 @@ async def get_recent_risk_control_account_ids(
     return {r[0]: r[1] for r in rows.all() if r[0]}
 
 
+# 被挑战后“连接入口”应停手的冷却窗口（分钟）。
+# 近该窗口内有终结态（failed/error）风控日志且仍有效（晚于最近一次成功刷新）时，
+# 任何会向闲鱼发请求的连接入口（手动连接 / 自动恢复 / 网页IM看门狗重连）都应停手，
+# 否则会不断刷新 Baxia 的惩罚滚动窗口、让账号永远“等不到自愈”。
+RISK_CONNECT_COOLDOWN_MINUTES = 30
+
+
+async def get_account_risk_block(
+    session,
+    cookie_id: str,
+    *,
+    window_minutes: int = RISK_CONNECT_COOLDOWN_MINUTES,
+) -> dict:
+    """查询账号是否处于“风控连接冷却”中（被挑战后不应再发起连接请求）。
+
+    这是“被挑战即停手”纪律的统一判定：所有连接入口在真正向闲鱼发请求之前
+    都要先过这一关，避免自愈期间继续刷请求、把惩罚窗口越续越长。
+
+    Args:
+        session: 数据库会话（调用方已有的 session 即可）。
+        cookie_id: 账号业务标识。
+        window_minutes: 冷却窗口（分钟），默认 30。
+    Returns:
+        {
+            "blocked": bool,                          # 是否应停手
+            "reason": str,                            # 人类可读原因（blocked=True 时有效）
+            "minutes_remaining": int,                 # 冷却剩余分钟（向上取整，至少 1）
+            "failed_at": str | None,                  # 最近一次失败时间（%Y-%m-%d %H:%M:%S）
+        }
+    """
+    try:
+        # 用比窗口略大的小时窗口查，再在内存里按精确分钟判定，避免小时取整误放。
+        recent = await get_recent_risk_control_account_ids(
+            session, [cookie_id], hours=max(1, (window_minutes + 59) // 60)
+        )
+        failed_at = recent.get(cookie_id)
+        if not failed_at:
+            return {"blocked": False, "reason": "", "minutes_remaining": 0, "failed_at": None}
+
+        # 失败必须仍“有效”：晚于账号最近一次成功刷新网页 Cookie，否则已被新会话覆盖。
+        acc_row = (
+            await session.execute(select(XYAccount).where(XYAccount.account_id == cookie_id))
+        ).scalar_one_or_none()
+        if acc_row is None or not _is_failed_active(acc_row, failed_at):
+            return {"blocked": False, "reason": "", "minutes_remaining": 0, "failed_at": None}
+
+        cooldown_until = failed_at + timedelta(minutes=window_minutes)
+        remaining = int((cooldown_until - datetime.now()).total_seconds() // 60)
+        if remaining < 1:
+            remaining = 1
+        reason = (
+            f"账号近 {window_minutes} 分钟内被风控拦截"
+            f"（最近一次 {failed_at:%Y-%m-%d %H:%M}），暂不应再发起连接请求，"
+            f"否则会续期风控惩罚、更难自愈"
+        )
+        return {
+            "blocked": True,
+            "reason": reason,
+            "minutes_remaining": remaining,
+            "failed_at": failed_at.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except Exception as e:
+        # 查询失败：保守放行（不阻断正常连接），仅记录。
+        logger.warning(f"查询账号风控冷却失败（保守放行）: {e}")
+        return {"blocked": False, "reason": "", "minutes_remaining": 0, "failed_at": None}
+
+
 async def compute_cookie_status_map(
     session,
     accounts: list[XYAccount],

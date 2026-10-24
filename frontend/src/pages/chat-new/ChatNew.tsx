@@ -605,6 +605,9 @@ export function ChatNew() {
 
   // 页面需要实时订阅的账号列表（已连接 或 已掉线但可恢复的账号都订阅，实现"断线也响"）
   const [wsAccountIds, setWsAccountIds] = useState<string[]>([])
+  // 处于风控冷却、不应订阅实时通道的账号（后端已不会为其建连，"被挑战即停手"）。
+  // 连接接口返回风控冷却/停用时写入，连接成功后清除。
+  const [riskBlockedIds, setRiskBlockedIds] = useState<string[]>([])
   // 会话列表搜索关键词（本地过滤已加载会话：用户名/用户ID/最后一条消息/商品标题）
   const [convSearch, setConvSearch] = useState('')
 
@@ -1196,6 +1199,7 @@ export function ChatNew() {
     onReconnected: handleWsReconnected,
     onTyping: handleWsTyping,
     onPeerRead: handleWsPeerRead,
+    blockedAccountIds: riskBlockedIds,
   })
 
   // ==================== 加载账号列表（分页） ====================
@@ -1278,6 +1282,8 @@ export function ChatNew() {
     try {
       const res = await connectAccount(accountId)
       if (res.success) {
+        // 连接成功：解除该账号的风控冷却屏蔽（若有），恢复实时订阅。
+        setRiskBlockedIds((prev) => prev.filter((id) => id !== accountId))
         addToast({ message: '连接成功', type: 'success' })
         await loadAccounts()
         selectAccount(accountId)
@@ -1286,7 +1292,15 @@ export function ChatNew() {
         // 手机端：连接成功后自动切到"会话"Tab（桌面端不受影响）
         setMobileTab('convs')
       } else {
-        addToast({ message: res.message || '连接失败', type: 'error' })
+        // 被风控冷却/停用拦截：记入屏蔽集合，停止对该账号的实时订阅与重试，
+        // 避免无意义的 4404 重连噪声；并给出明确提示。
+        const msg = res.message || '连接失败'
+        if (msg.includes('风控冷却') || msg.includes('已停用')) {
+          setRiskBlockedIds((prev) => prev.includes(accountId) ? prev : [...prev, accountId])
+          addToast({ message: `已暂停连接：${msg}`, type: 'warning' })
+        } else {
+          addToast({ message: msg, type: 'error' })
+        }
       }
     } catch (e: any) {
       addToast({ message: e.message || '连接失败', type: 'error' })

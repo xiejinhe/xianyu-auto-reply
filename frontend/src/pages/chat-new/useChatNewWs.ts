@@ -4,7 +4,7 @@
  * 管理与后端的多账号 WebSocket 连接，接收 IM 实时推送消息并更新到前端状态。
  * 每个已连接账号维护一条独立的 WebSocket，支持自动重连和心跳保活。
  */
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { createChatNewWebSocket, type WsPushMessage, type ChatMessage } from '@/api/chatNew'
 
 /** 心跳间隔（毫秒） */
@@ -37,6 +37,8 @@ interface UseChatNewWsOptions {
   onTyping?: (accountId: string, cid: string, typing: boolean) => void
   /** 「对方已读」回执：IM 长连接推来被读消息的 ID 列表，readAt 为回执时间戳（毫秒） */
   onPeerRead?: (accountId: string, cid: string, messageIds: string[], readAt: number) => void
+  /** 处于风控冷却、不应订阅实时通道的账号 ID 列表（后端已不会为其建连，连了也是 4404 噪声） */
+  blockedAccountIds?: string[]
 }
 
 /**
@@ -53,6 +55,7 @@ export function useChatNewWs({
   onReconnected,
   onTyping,
   onPeerRead,
+  blockedAccountIds,
 }: UseChatNewWsOptions) {
   const connectionsRef = useRef<Map<string, WsConnection>>(new Map())
   const onNewMessageRef = useRef(onNewMessage)
@@ -160,10 +163,18 @@ export function useChatNewWs({
     }
   }, [cleanupAccount])
 
-  // 根据 accountIds 变化增量管理连接（只增减差异，不断开已有连接）
-  const accountIdsKey = accountIds.join(',')
+  // 风控冷却中的账号不订阅实时通道：后端已不会为其建立 IM 连接，前端再连只会产生
+  // 无意义的 4404 重连噪声；“被挑战即停手”也要求避免任何多余动作。
+  const blockedSet = useMemo(() => new Set(blockedAccountIds ?? []), [blockedAccountIds])
+  const effectiveAccountIds = useMemo(
+    () => accountIds.filter((id) => !blockedSet.has(id)),
+    [accountIds, blockedSet],
+  )
+
+  // 根据 effectiveAccountIds 变化增量管理连接（只增减差异，不断开已有连接）
+  const effectiveKey = effectiveAccountIds.join(',')
   useEffect(() => {
-    const currentIds = new Set(accountIds)
+    const currentIds = new Set(effectiveAccountIds)
     const existingIds = new Set(connectionsRef.current.keys())
 
     // 新增的账号 → 建连
@@ -178,7 +189,7 @@ export function useChatNewWs({
         cleanupAccount(aid)
       }
     }
-  }, [accountIdsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 组件卸载时清理所有连接
   useEffect(() => {

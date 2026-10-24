@@ -27,6 +27,7 @@ from common.utils.cookie_refresh import (
     merge_cookies,
     update_account_cookies_in_db,
 )
+from common.services.account_cookie_status_service import get_account_risk_block
 from common.services.captcha.token_response import is_token_expired_response
 from common.services.im_token_api import (
     extract_im_access_token,
@@ -82,6 +83,10 @@ CAPTCHA_MAX_RETRY = 1
 AUTO_RECOVER_CHECK_INTERVAL = 20  # 健康巡检间隔（秒）
 AUTO_RECOVER_MIN_DELAY = 5        # 首次重试前的等待（秒）
 AUTO_RECOVER_MAX_DELAY = 300      # 退避上限（秒），避免账号已失效时空转
+# 被挑战进入风控冷却时，看门狗不再向闲鱼发任何请求，仅按此间隔轮询 DB 等待冷却结束。
+# 这是“被挑战即停手”纪律在网页IM客户端侧的最终落地：断线期间零 Token/滑块请求，
+# 让 Baxia 惩罚滚动窗口能真正冷却下来（自愈的前提是零失败流量）。
+RISK_COOLDOWN_POLL_INTERVAL = 300  # 5 分钟轮询一次，足够静默又不至于错过自愈
 # 被判定为「连接/Token 失效」的 LWP 响应码：此类响应无 body，仅有 code。
 # 闲鱼对 token 过期或注册态失效的请求统一返回 400，需要换新 token 重连才能恢复。
 TOKEN_INVALID_LWP_CODES = (400,)
@@ -149,6 +154,8 @@ class GoofishImClient:
         # 断线自动恢复任务：网络掉线时自动重建连接（用户主动断开时不启用）
         self._auto_recover_task: Optional[asyncio.Task] = None
         self._auto_recover_enabled: bool = False
+        # 最近一次重连是否因风控冷却被拦（看门狗据此拉长轮询间隔，期间零请求）
+        self._risk_blocked: bool = False
 
         # 推送消息回调列表（用于向前端 WebSocket 转发实时消息）
         self._push_callbacks: List = []
@@ -1250,11 +1257,20 @@ class GoofishImClient:
                     delay = AUTO_RECOVER_MIN_DELAY
                     logger.info(f"【{self.account_id}】IM 自动重连成功")
                 else:
-                    logger.warning(
-                        f"【{self.account_id}】IM 自动重连失败，{delay} 秒后重试"
-                    )
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2, AUTO_RECOVER_MAX_DELAY)
+                    if self._risk_blocked:
+                        # 风控冷却中：不发请求，仅静默轮询 DB，等冷却结束后下一次再试。
+                        logger.warning(
+                            f"【{self.account_id}】风控冷却中，暂停自动重连 "
+                            f"{RISK_COOLDOWN_POLL_INTERVAL}s（零闲鱼请求），避免加重风控"
+                        )
+                        await asyncio.sleep(RISK_COOLDOWN_POLL_INTERVAL)
+                        delay = AUTO_RECOVER_MIN_DELAY
+                    else:
+                        logger.warning(
+                            f"【{self.account_id}】IM 自动重连失败，{delay} 秒后重试"
+                        )
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, AUTO_RECOVER_MAX_DELAY)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1280,6 +1296,22 @@ class GoofishImClient:
         async with self._reconnect_lock:
             if self.is_connected:
                 return True
+
+            # 纪律：被挑战即停手。风控冷却中绝不向闲鱼发连接/Token 请求，
+            # 否则会刷新 Baxia 惩罚窗口。看门狗转为静默轮询（见 _auto_recover_loop）。
+            try:
+                async with async_session_maker() as session:
+                    risk_block = await get_account_risk_block(session, self.account_id)
+                if risk_block["blocked"]:
+                    self._risk_blocked = True
+                    logger.warning(
+                        f"【{self.account_id}】重连被风控冷却拦截（约剩 "
+                        f"{risk_block['minutes_remaining']} 分钟），本周期不发任何请求"
+                    )
+                    return False
+            except Exception as e:
+                logger.warning(f"【{self.account_id}】风控冷却查询失败（保守尝试重连）: {e}")
+            self._risk_blocked = False
 
             # 第一次尝试：复用现有 Token 直接重连
             await self.disconnect(keep_auto_recover=True)
