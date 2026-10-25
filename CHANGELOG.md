@@ -8,7 +8,7 @@
 
 ---
 
-> **当前版本：`v1.0.74`**　｜　更新时间：**2026-10-24**
+> **当前版本：`v1.0.75`**　｜　更新时间：**2026-10-25**
 >
 > 版本号唯一来源：[`launcher/version.py`](launcher/version.py) 的 `CURRENT_VERSION`。
 > 系统左侧导航的版本角标与「关于」页显示的就是它（接口 `GET /api/v1/version/current`）。
@@ -16,6 +16,38 @@
 > 2026-10-17 之前的旧条目未标注版本号（当时均运行于 v1.0.10）。
 
 ---
+
+## v1.0.75 · 2026-10-25（滑块链路三连修：轨迹回退鼠标事件 + 浏览器超时 40s→90s，修复上游遗留的「能过也被掐死」）
+
+### 怎么回事
+反馈：「本地 IM 一直连不上、滑块也过不去，同一账号在上游线上环境就能连」。用 10-15
+版本快照搭独立环境对照实测（worktree + 独立库），逐层定位出叠加故障。git 溯源确认：
+以下均为**上游 6-7 月遗留代码**（weizao12 06-15 引入 40s、07-18 引入 CDP 触摸），
+非二开引入。
+
+1. **CDP 触摸轨迹被 Baxia 识破**：装了 patchright 浏览器后 `_cdp_touch_enabled` 自动
+   置 True，滑动走 CDP 触摸派发，Baxia 连续返回码 300 拒绝；未装 patchright 浏览器的
+   环境自动回退 Playwright 鼠标轨迹，实测一次即过（码 0）。
+2. **40 秒浏览器总超时掐死已成功的验证**：第 2 次滑动 Baxia 已返回 0（通过），收尾
+   Mouse.up 时撞上 40s 定时器，浏览器被强杀、成功作废。该值藏在三处（websocket
+   internal 接口默认 / backend-web websocket_client 封装 / common websocket_solver），
+   3 次尝试 + 页面加载 + 通过后回读 cookie 在 40s 内不够用。
+3. 配置层：「本机滑块不处理」开关开启时滑块直接躺平（v1.0.73 行为），已在系统设置
+   关闭，本次不改代码。
+
+### 改动
+- `common/services/captcha/slider_stealth.py`：patchright 启动后 `_cdp_touch_enabled`
+  固定 False——保留 patchright 反检测浏览器层，仅滑动派发降级为真人样本化鼠标轨迹。
+- `websocket/app/api/routes/internal.py`：过滑块接口 `browser_timeout` 默认 40→90。
+- `backend-web/app/services/websocket_client.py`：`solve_captcha` 默认 40→90（显式
+  传参覆盖 websocket 端默认值，两处必须同改）。
+- `common/services/captcha/websocket_solver.py`：scheduler 续期链路默认 40→90，口径统一。
+
+### 遗留观察
+- 会话列表曾持续 code=400：系排查中使用过期复活 token 导致的降级会话，换有效
+  token+deviceId 即恢复，与代码无关。
+- 后续候选：风控冷却判定增加「出口 IP 变化即放行」——弹窗文案已承诺「或换IP重试」
+  但代码未实现。
 
 ## v1.0.74 · 2026-10-24（被挑战即停手：网页IM重连/连接入口全链路纳入风控冷却，止住"一天还在刷"的续命循环）
 

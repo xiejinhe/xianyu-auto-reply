@@ -131,7 +131,9 @@ class SolveCaptchaRequest(BaseModel):
     account_id: str = ""          # 外部标识，仅用于日志与浏览器实例隔离
     account_row_id: int | None = None # xy_accounts.id，传入后成功时精准写回 Cookie
     url: str                      # punish 验证链接（punish?x5secdata=...）
-    browser_timeout: int = 40     # 单次浏览器超时（秒）
+    browser_timeout: int = 90     # 单次浏览器超时（秒）。2026-10-25 实测 40s 不够：
+    # 第1次被拒后第2次已通过（Baxia 码 0）却在收尾 Mouse.up 时撞 40s 超时被掐死，
+    # 成功验证作废。3 次尝试 + 页面加载 + 通过后回读 cookie 需要更长窗口。
     call_type: str = "remote"     # 调用类型：local-本机 / remote-远程
     call_user: str | None = None  # 调用用户（远程调用按秘钥查到的用户名）
     cookies: str = ""             # 可选：账号 Cookie（调用方开启"传递Cookie"开关时传入）。
@@ -440,7 +442,7 @@ async def solve_captcha(request: SolveCaptchaRequest):
     except Exception as flag_e:
         # 读取失败不阻断原有语义（外部模式B调用方依赖本接口），按未开启继续
         logger.warning(f"【过滑块接口】读取本机滑块开关失败，按未开启继续: {flag_e}")
-    timeout = max(20, min(int(request.browser_timeout or 40), 120))
+    timeout = max(20, min(int(request.browser_timeout or 90), 120))
     call_type = (request.call_type or "remote").strip() or "remote"
     call_user = (request.call_user or "").strip() or None
     existing_cookies_str = (request.cookies or "").strip()

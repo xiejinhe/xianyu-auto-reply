@@ -32,7 +32,7 @@ async def solve_captcha_via_websocket(
     url: str,
     cookies: str,
     device_id: str,
-    browser_timeout: int = 40,
+    browser_timeout: int = 90,
 ) -> dict[str, Any]:
     """调用 WebSocket 内部接口完成滑块验证。
 

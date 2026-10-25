@@ -312,7 +312,7 @@ class WebSocketServiceClient:
             return {"success": False, "message": f"演出信息提交失败: {str(e)}"}
 
 
-    async def solve_captcha(self, account_id: str, url: str, browser_timeout: int = 40,
+    async def solve_captcha(self, account_id: str, url: str, browser_timeout: int = 90,
                             call_type: str = "remote", call_user: str | None = None,
                             cookies: str = "", device_id: str = "",
                             extended_queue_timeout: bool = False,

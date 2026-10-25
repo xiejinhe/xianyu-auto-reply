@@ -325,7 +325,10 @@ class PlaywrightSliderService:
                 )
             if add_stealth_script and PATCHRIGHT_AVAILABLE and patchright_browser_available:
                 self.playwright = patchright_sync_playwright().start()
-                self._cdp_touch_enabled = True
+                # 2026-10-25：Baxia 已能识别 CDP 触摸轨迹（连续返回码 300 拒绝），
+                # 改走下方普通 Playwright 鼠标轨迹（10-15 版同款路径，实测可通过）。
+                # patchright 反检测浏览器层保留，仅滑动派发方式降级为鼠标事件。
+                self._cdp_touch_enabled = False
                 logger.info(f"【{self.pure_user_id}】Patchright Playwright启动成功")
             else:
                 self.playwright = sync_playwright().start()
