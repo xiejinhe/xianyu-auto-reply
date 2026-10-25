@@ -24,10 +24,11 @@ from sqlalchemy import select
 
 from common.db.redis_client import get_redis_client
 from common.models.xy_account import XYAccount
-from common.services.xianyu_detail_client import XianyuItemDetailClient
+from common.services.xianyu_detail_client import DETAIL_API, XianyuItemDetailClient
 from common.utils.xianyu_utils import generate_sign, trans_cookies
 
 from .avatar_service import _handle_response_cookies, _update_account_cookies
+from .guest_session import guest_mtop_call
 
 # Redis缓存键前缀（按被查询的用户ID，与账号无关）
 PROFILE_CACHE_PREFIX = "chat:user_profile:"
@@ -138,23 +139,38 @@ async def get_user_profile(
     except Exception as e:
         logger.warning(f"【{account_id}】Redis读取主页信息缓存失败: {e}")
 
-    # 1.5 失败负缓存：该用户刚查失败（多为主页接口被风控），短时间内
-    # 不再为它出网，避免列表轮询/页面刷新反复重查
+    # 1.5 游客优先：主页接口不登录也能查（2026-10-26 实测），游客会话与账号
+    # 风控完全独立——账号熔断/负缓存期间照样能查到。成功直接用，失败再走
+    # 下方的负缓存与登录态路径（此后仍失败才会写负缓存，语义为"游客+登录态都不行"）。
+    profile = None
     try:
-        redis = await get_redis_client()
-        if await redis.get(f"{PROFILE_FAIL_CACHE_PREFIX}{user_id}"):
-            return None
-    except Exception:
-        pass
+        guest = await guest_mtop_call(USER_HEAD_API, {"userId": str(user_id)})
+    except Exception as guest_e:
+        logger.debug(f"【{account_id}】游客主页查询异常: {guest_e}")
+        guest = None
+    if guest and guest["ok"]:
+        profile = _parse_profile(user_id, (guest["res"] or {}).get("data", {}))
+        if profile and _PROFILE_VALIDATE_FAILS.get(account_id):
+            logger.info(f"【{account_id}】主页接口已恢复可用（游客会话查到 {user_id}）")
 
-    # 2. 调用 mtop API
-    profile = await _fetch_profile_from_api(
-        account_id=account_id,
-        user_id=user_id,
-        cookies_str=cookies_str,
-        db=db,
-        retry_count=0,
-    )
+    if not profile:
+        # 1.6 失败负缓存：该用户刚查失败（游客+登录态都不行），短时间内
+        # 不再为它出网，避免列表轮询/页面刷新反复重查
+        try:
+            redis = await get_redis_client()
+            if await redis.get(f"{PROFILE_FAIL_CACHE_PREFIX}{user_id}"):
+                return None
+        except Exception:
+            pass
+
+        # 2. 调用 mtop API（登录态）
+        profile = await _fetch_profile_from_api(
+            account_id=account_id,
+            user_id=user_id,
+            cookies_str=cookies_str,
+            db=db,
+            retry_count=0,
+        )
 
     # 3. 写入缓存（只存主页信息本身，不含下面的活跃信息）
     if profile:
@@ -219,8 +235,9 @@ async def _fetch_profile_from_api(
     db,
     retry_count: int = 0,
 ) -> Optional[dict]:
-    """调用 mtop.idle.web.user.page.head 查询对方主页信息"""
-    # 账号熔断中：直接放弃本次出网（上层自然落到缓存或留灰占位）
+    """调用 mtop.idle.web.user.page.head 查询对方主页信息（登录态路径）"""
+    # 账号熔断中：直接放弃本次出网（上层自然落到缓存或留灰占位；
+    # 游客路径已在 get_user_profile 外层先行尝试，不受账号熔断影响）
     circuit_until = _PROFILE_CIRCUIT.get(account_id, 0)
     if circuit_until > time.time():
         logger.debug(
@@ -448,6 +465,13 @@ async def _fetch_activity(
         if not item_ids:
             return None
 
+        # 游客优先试商品详情：官方网页版游客走的也是这个接口；裸 HTTP 游客
+        # 大概率被 Baxia 拒（guest_session 的按接口熔断会快速止损），但一旦
+        # 放行就完全不占账号风控额度。
+        guest_activity = await _try_activity_as_guest(item_ids, user_id, expected_nick)
+        if guest_activity:
+            return guest_activity
+
         candidates: List[Tuple[str, str]] = [(account_id, cookies_str)]
         candidates.extend(
             await _load_sibling_accounts(account_id, db, limit=ACTIVITY_FALLBACK_ACCOUNTS)
@@ -472,6 +496,46 @@ async def _fetch_activity(
     except Exception as e:
         logger.warning(f"【{account_id}】查询对方活跃信息失败: {e}")
         return None
+
+
+def _extract_activity_fields(seller: dict) -> dict:
+    """从商品详情 sellerDO 里提取「最近来过 / 回复速度」三件套"""
+    activity: dict = {}
+    if seller.get("lastVisitTime"):
+        activity["lastVisitTime"] = str(seller["lastVisitTime"])
+    if seller.get("replyRatio24h"):
+        activity["replyRatio24h"] = str(seller["replyRatio24h"])
+    if seller.get("replyInterval"):
+        activity["replyInterval"] = str(seller["replyInterval"])
+    return activity
+
+
+async def _try_activity_as_guest(
+    item_ids: List[str],
+    user_id: str,
+    expected_nick: str = "",
+) -> Optional[dict]:
+    """游客身份查商品详情的 sellerDO（与登录态同一个 mtop.taobao.idle.pc.detail）。
+
+    游客被拒是会话级而非商品级，一次被拒直接放弃（熔断计数交给 guest_session）。
+    """
+    for item_id in item_ids:
+        guest = await guest_mtop_call(
+            DETAIL_API, {"itemId": str(item_id)}, "a21ybx.item.0.0"
+        )
+        if not guest["ok"]:
+            return None
+        seller = ((guest["res"] or {}).get("data") or {}).get("sellerDO") or {}
+        if _nick_mismatch(expected_nick, str(seller.get("nick") or "")):
+            continue
+        activity = _extract_activity_fields(seller)
+        if activity:
+            logger.info(
+                f"【游客】对方活跃信息: user={user_id}, {activity.get('lastVisitTime', '')}"
+            )
+            return activity
+        return None
+    return None
 
 
 async def _try_activity_on_items(
@@ -509,13 +573,7 @@ async def _try_activity_on_items(
         if _nick_mismatch(expected_nick, nick):
             continue
 
-        activity: dict = {}
-        if seller.get("lastVisitTime"):
-            activity["lastVisitTime"] = str(seller["lastVisitTime"])
-        if seller.get("replyRatio24h"):
-            activity["replyRatio24h"] = str(seller["replyRatio24h"])
-        if seller.get("replyInterval"):
-            activity["replyInterval"] = str(seller["replyInterval"])
+        activity = _extract_activity_fields(seller)
         if activity:
             logger.info(
                 f"【{account_id}】对方活跃信息: user={user_id}, "
@@ -571,6 +629,21 @@ async def _fetch_item_ids(
             },
             separators=(",", ":"),
         )
+
+        # 游客优先（2026-10-26 实测可通）：省账号风控额度；被拒时回退登录态
+        guest = await guest_mtop_call(
+            USER_ITEM_LIST_API,
+            {"userId": str(user_id), "pageNumber": 1, "pageSize": max(1, size)},
+        )
+        if guest["ok"]:
+            guest_ids: List[str] = []
+            for card in (guest["res"].get("data") or {}).get("cardList") or []:
+                detail_params = (card.get("cardData") or {}).get("detailParams") or {}
+                if detail_params.get("itemId"):
+                    guest_ids.append(str(detail_params["itemId"]))
+                if len(guest_ids) >= size:
+                    break
+            return guest_ids
 
         token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
         sign = generate_sign(timestamp, token, data_val)

@@ -360,6 +360,13 @@ textarea {
   background-color: rgb(var(--theme-primary-900) / 0.3) !important;
 }
 
+/* 暗色选中高亮（会话列表当前项、持证/官方徽章等 bg-blue-100 dark:bg-blue-900/40 组合）：
+   亮色侧 [class~='bg-blue-100'] 的 !important 不分模式生效，缺这条会把暗色选中行刷成亮蓝底，
+   浅灰昵称就看不清了（2026-10-25 暗色昵称不可读的根因）。 */
+.dark [class~='dark:bg-blue-900/40'] {
+  background-color: rgb(var(--theme-primary-900) / 0.4) !important;
+}
+
 .dark [class~='dark:bg-blue-900/50'] {
   background-color: rgb(var(--theme-primary-900) / 0.5) !important;
 }

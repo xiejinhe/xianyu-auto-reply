@@ -148,6 +148,9 @@ export interface ChatMessage {
   senderId: string
   senderName: string
   isSelf: boolean
+  /** 发送者是本系统托管的其它账号（自己另一个号，cid 跨账号共享推来的）：
+   *  渲染上是「对方」（isSelf=false，左侧），但不响铃/不弹跨账号 toast */
+  managedSender?: boolean
   type: 'text' | 'image' | 'system' | 'card' | 'audio'
   text: string
   images: string[]

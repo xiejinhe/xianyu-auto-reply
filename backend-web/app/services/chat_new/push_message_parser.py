@@ -40,17 +40,26 @@ class PushMessageParser:
         self.myid = myid
 
     def _is_self_sender(self, sender_id: str) -> bool:
-        """是否「自己」发出的消息（同 MessageHandler._is_self_sender）。
+        """是否「当前视角账号」发出的消息（渲染语义）。
 
-        cid 跨账号共享：别的托管账号发的消息本账号的 IM 推送/历史也拉得到，
-        只比 myid 会把托管账号发送者误判成买家（2026-10-20 事故：误渲染成
-        左侧对方消息、误弹跨账号 toast、误响铃）。
+        2026-10-26 修正：isSelf 只比 myid。此前把「任一托管账号」都算成自己
+        （2026-10-20 为防跨账号误响铃引入），副作用是托管账号互聊的会话里
+        对方（自己的另一个号）的消息全被渲染到右侧自己位——名字/头像/消息
+        位置全错乱。防误响铃改由 managedSender 字段承担（前端跳过响铃即可）。
         """
         sid = str(sender_id or "").strip()
-        if not sid:
+        return bool(self.myid and sid == self.myid)
+
+    def _is_managed_sender(self, sender_id: str) -> bool:
+        """是否「本系统托管的其它账号」发出的消息（防扰语义）。
+
+        cid 跨账号共享：别的托管账号发的消息本账号的 IM 推送/历史也拉得到，
+        这类消息渲染时是「对方」（isSelf=false），但不该响铃/弹 toast——
+        2026-10-20 的误响铃事故由这个判断兜住，而不是把 isSelf 扩大化。
+        """
+        sid = str(sender_id or "").strip()
+        if not sid or sid == self.myid:
             return False
-        if sid == self.myid:
-            return True
         try:
             from common.utils.managed_account_ids import is_managed_account
 
@@ -190,6 +199,7 @@ class PushMessageParser:
                     "senderId": sender_id,
                     "senderName": sender_name,
                     "isSelf": is_self,
+                    "managedSender": self._is_managed_sender(sender_id),
                     "type": msg_type,
                     "text": text_content,
                     "images": images,
@@ -246,6 +256,7 @@ class PushMessageParser:
                     "senderId": sender_id,
                     "senderName": "系统",
                     "isSelf": self._is_self_sender(sender_id),
+                    "managedSender": self._is_managed_sender(sender_id),
                     "type": "card",
                     "text": str(text_content),
                     "images": [],
@@ -290,6 +301,7 @@ class PushMessageParser:
                     "senderId": sender_id,
                     "senderName": sender_name,
                     "isSelf": self._is_self_sender(sender_id),
+                    "managedSender": self._is_managed_sender(sender_id),
                     "type": "text",
                     "text": reminder,
                     "images": [],

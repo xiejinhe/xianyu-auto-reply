@@ -185,7 +185,18 @@ async def get_account_risk_block(
             return {"blocked": False, "reason": "", "minutes_remaining": 0, "failed_at": None}
 
         cooldown_until = failed_at + timedelta(minutes=window_minutes)
-        remaining = int((cooldown_until - datetime.now()).total_seconds() // 60)
+        now = datetime.now()
+        if now >= cooldown_until:
+            # 冷却窗口已过：放行。原实现把过期的 remaining 钳成 1 且恒返回
+            # blocked=True，导致窗口结束后仍持续拦截（界面上"预计还需 1 分钟"
+            # 卡着不动），直到 failed 记录滑出上面的 hours 查询窗才自愈。
+            return {
+                "blocked": False,
+                "reason": "",
+                "minutes_remaining": 0,
+                "failed_at": failed_at.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        remaining = int((cooldown_until - now).total_seconds() // 60)
         if remaining < 1:
             remaining = 1
         reason = (

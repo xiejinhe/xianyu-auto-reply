@@ -1075,7 +1075,9 @@ export function ChatNew() {
     const isActiveAccount = accountId === activeAccountIdRef.current
     // 新私聊提示音：只响买家发来的消息，自己发出去的不响。
     // 不限账号：两个账号都托管在同一个界面里，任何一个账号的买家消息漏响不得。
-    if (!msg.isSelf) {
+    // managedSender=自己的另一个托管账号（cid 跨账号共享推过来的），也不响
+    // ——2026-10-20 误响铃事故的防线从「把托管号算成自己」改为这个字段。
+    if (!msg.isSelf && !msg.managedSender) {
       ringOnce(accountId, cid, msg)
       // 同步响铃水位，避免断线兜底对账轮询对同一消息重复响
       markRung(accountId, cid, msg.time)
@@ -1084,7 +1086,7 @@ export function ChatNew() {
     // 同时 toast 一声来源：铃声是不限账号播放的（防漏听，v1.0.32 起的设计），
     // 但没有这条提示时，用户只听到铃响、当前窗口却不进消息，会以为系统漏
     // 消息了（2026-10-20 实测反馈）。同账号 30 秒内只提示一次，避免连发刷屏。
-    if (!isActiveAccount && !msg.isSelf) {
+    if (!isActiveAccount && !msg.isSelf && !msg.managedSender) {
       setAccountUnread((prev) => ({ ...prev, [accountId]: (prev[accountId] || 0) + 1 }))
       const now = Date.now()
       if (now - (crossAccountNoticeAtRef.current ?? 0) > 30_000) {
@@ -1750,21 +1752,24 @@ export function ChatNew() {
   // 停在旧消息上。这里给当前打开的会话定时增量拉最新一页兜底，消息按 ID 去重，
   // 重复拉取无害。静默模式：不闪 loading、失败不弹 toast。
   //
-  // 间隔 15s → 5s（2026-10-23 实测反馈）：账号被风控/暂停时长连接断开，此时
-  // 唯一的消息来源就是这里，15 秒一轮用户体感「列表先亮、窗口过 5 秒才出字」
-  // ——因为会话列表和聊天窗口是两个独立定时器，谁先跑到谁先亮，两者天然不同步。
-  // 5 秒一轮把最坏等待压到 5 秒内，人眼已接近实时。只拉「当前打开的会话」，
-  // 一个账号同时只有一个，12 次/分钟仍在消息接口承受范围内（会话列表接口才是
-  // 容易被顶进流控的那个，它的 30 秒间隔保持不变）。
+  // 间隔自适应（2026-10-26）：后端 IM 长连着时实时推送已覆盖，30 秒对账即可
+  // （原固定 5 秒是给断连场景的——2026-10-23 反馈账号被风控/暂停时长连接断开，
+  // 此时唯一的消息来源就是这里，5 秒一轮把最坏等待压到 5 秒内）。断连
+  // （connected=false）才升回 5 秒快轮询。只拉「当前打开的会话」，一个账号
+  // 同时只有一个，正常态 2 次/分钟远低于消息接口的承受线，把频次预算留给
+  // 风控最敏感的会话列表接口。
+  const activeAccountConnected = accounts.find(
+    (a) => a.account_id === activeAccountId,
+  )?.connected ?? false
   useEffect(() => {
     if (!activeAccountId || !activeCid) return
     const timer = setInterval(() => {
       // 页面切到后台时没必要拉，回来后下一轮自然补上
       if (document.hidden) return
       void loadMessages(activeAccountId, activeCid, false, true)
-    }, 5000)
+    }, activeAccountConnected ? 30000 : 5000)
     return () => clearInterval(timer)
-  }, [activeAccountId, activeCid, loadMessages])
+  }, [activeAccountId, activeCid, activeAccountConnected, loadMessages])
 
   // 切换会话时从 MySQL 恢复「对方已读」标记（v1.0.56 落库）：刷新/重开页面后
   // 仍能恢复，不再退回历史值。复用 handleWsPeerRead 的 ref 逻辑（按 cid 归并），
@@ -1829,13 +1834,27 @@ export function ChatNew() {
       void loadOrderMarks(accountId)
     }
     const cid = activeConvPerAccountRef.current[accountId] || ''
-    selectCid(cid)
-    restoreConversation(accountId, cid)
+    // 守卫：记忆的 cid 可能来自切换账号瞬间的旧列表点击（旧账号列表残留期间
+    // 点开的会话会被记进本账号的「上次选中」），不属于当前账号会话列表就
+    // 丢弃，否则一进来就是「A 账号 + B 账号会话」的杂交视图，
+    // 名字/头像/消息位置全错乱。
+    const cidBelongs = !!cid && conversationsRef.current.some(
+      (c) => normCid(c.cid) === normCid(cid),
+    )
+    if (cid && !cidBelongs) {
+      activeConvPerAccountRef.current[accountId] = ''
+    }
+    const safeCid = cidBelongs ? cid : ''
+    selectCid(safeCid)
+    restoreConversation(accountId, safeCid)
     // 自动恢复打开的会话对用户可见 = 已读，记水位防服务端旧未读复活
-    if (cid) markConvReadByKey(accountId, cid)
+    if (safeCid) markConvReadByKey(accountId, safeCid)
   }, [activeAccountId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectConversation = (cid: string) => {
+    // 只接受当前账号会话列表里的 cid：切换账号的间隙旧列表仍可点击，
+    // 放行会把别的账号的会话带进当前视图
+    if (!conversationsRef.current.some((c) => normCid(c.cid) === normCid(cid))) return
     selectCid(cid)
     setMobileTab('chat')
     clearConvUnread(activeAccountId, cid)
@@ -2516,10 +2535,11 @@ export function ChatNew() {
     }
   }, [activeAccountId, activeCid])
 
-  // 断线兜底对账轮询：每 30 秒对「当前在线」的账号拉一次会话列表。
-  // 消息实时性由 App 通道推送保证，这里只是兜底（推送丢了/断线期间漏了），
-  // 间隔从 15 秒放宽到 30 秒——15 秒 × 多账号会把闲鱼的会话列表接口顶进
-  // 流控（400600001），而它一旦被限流要很久才恢复，代价远大于晚 15 秒。
+  // 断线兜底对账轮询：定时对「当前在线」的账号拉一次会话列表。
+  // 消息实时性由 App 通道推送保证，这里只是兜底（推送丢了/断线期间漏了）。
+  // 间隔自适应（2026-10-26 起，见下方 pickInterval）：在线 90s / 断连 30s /
+  // 有人被流控冷却 ×2——早年 15 秒固定间隔 × 多账号曾把会话列表接口顶进
+  // 流控（400600001），而它一旦被限流要很久才恢复，代价远大于晚一会。
   // 发现某会话有新动静时做两件事：① 把服务端最新会话数据回写列表（摘要+红点
   // ≤30s 自动出现，不再等手动刷新）；② 若正是当前打开的会话，立即补拉消息进窗口。
   // 用服务端未读数(unreadCount)比对，把断线期间漏掉的新消息补响 + 未读角标。
@@ -2571,11 +2591,29 @@ export function ChatNew() {
       // 连接的账号也能在后续轮次补响（覆盖用户所述"断开期间有人发消息"的场景）。
       if (fetchedAny) baselineDoneRef.current = true
     }
-    const timer = window.setInterval(tick, 30000)
+    // 自适应间隔（2026-10-26，2217 被连坐限流的教训）：有账号在线（后端 IM
+    // 长连着，实时推送兜底充分）时 90 秒一轮即可；全部断连才回到 30 秒快轮询。
+    // 任一账号处于闲鱼流控冷却时全员 ×2——同 IP 上另一账号的风控失败会拉低
+    // 整个 IP 的信用分，继续按原频轮询会把限流窗口越撞越长（连坐预防）。
+    // 用 setTimeout 链而非 setInterval：每轮跑完按最新状态选间隔，也顺带
+    // 消除了串行拉取慢于间隔时的重入。
+    const pickInterval = () => {
+      const online = accountsRef.current.filter((a) => a.connected).length
+      const anyCooling = Object.values(rateLimitUntilRef.current).some((t) => t > Date.now())
+      return (online > 0 ? 90_000 : 30_000) * (anyCooling ? 2 : 1)
+    }
+    let timer = 0
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        await tick()
+        if (!cancelled) schedule()
+      }, pickInterval())
+    }
     void tick()
+    schedule()
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
     }
   }, [])
 

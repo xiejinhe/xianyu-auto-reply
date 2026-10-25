@@ -1523,8 +1523,9 @@ def _parse_conversation(conv: dict, myid: str) -> dict | None:
         # 摘要加发送者前缀：自己的消息「你：」，对方的「他：」。
         # 性别数据拿不到，对方统一用「他」；系统消息 sender 为空不加前缀。
         if last_msg_summary and sender_user_id:
-            # 托管账号发送也算「你」（cid 跨账号共享，同上）
-            prefix = "你" if (sender_user_id == myid or is_managed_account(sender_user_id)) else "他"
+            # 托管账号发送算「他」：在当前视角里那就是对方（自己的另一个号），
+            # 2026-10-26 与 isSelf 修正同源——互聊会话里摘要/气泡位置要一致
+            prefix = "你" if sender_user_id == myid else "他"
             last_msg_summary = f"{prefix}：{last_msg_summary}"
 
         return {
@@ -1573,12 +1574,12 @@ def _is_revoked_placeholder(message: dict, content: dict) -> bool:
 def _revoked_text(message: dict, myid: str) -> str:
     """按发送者返回撤回提示文案（自己撤的 vs 对方撤的）。
 
-    发送者是任一托管账号即「自己撤的」——cid 跨账号共享，别的托管账号
-    撤的消息本账号历史里也看得到（2026-10-20 isSelf 误判事故同源）。
+    只比当前视角账号：托管账号（自己的另一个号）撤的算「对方撤的」，
+    与 2026-10-26 isSelf 修正同源。
     """
     sender = message.get("sender", {}) if isinstance(message, dict) else {}
     sender_uid = str(sender.get("uid", "") or "").split("@")[0]
-    is_self = bool(myid and sender_uid == myid) or is_managed_account(sender_uid)
+    is_self = bool(myid and sender_uid == myid)
     return "你撤回了一条消息" if is_self else "对方撤回了一条消息"
 
 
@@ -1647,10 +1648,12 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
         # 去掉 @goofish 后缀，保证与 myid 比较和前端显示一致
         sender_id = sender_id_raw.split("@")[0] if "@" in sender_id_raw else sender_id_raw
         sender_name = str(extension.get("reminderTitle", "") or "") if isinstance(extension, dict) else ""
-        # isSelf：本账号或任一托管账号（cid 跨账号共享，A 发的消息 B 的历史
-        # 接口也拉得到，只比 myid 会把托管账号发送者误判成买家——
-        # 2026-10-20 事故：误渲染成左侧对方消息+署名、误响铃、误弹 toast）
-        is_self = bool(myid and sender_id == myid) or is_managed_account(sender_id)
+        # isSelf：只比当前视角账号（2026-10-26 修正）。此前「任一托管账号」
+        # 都算自己（2026-10-20 防误响铃引入），副作用是托管账号互聊会话里
+        # 对方（自己的另一个号）的消息全渲染到右侧自己位，名字/头像/消息
+        # 位置全错乱。防误响铃交给 managedSender 字段（前端跳过响铃）。
+        is_self = bool(myid and sender_id == myid)
+        managed_sender = bool(sender_id) and sender_id != (myid or "") and is_managed_account(sender_id)
         # 引用消息（回复）：extension.replyMessageId 指向被引用的原消息
         # （协议实证 2026-10-20：APP 引用消息正文是纯文本，引用关系只放在
         # extension.replyMessageId，前端据此在本地消息列表里找原消息渲染引用块）
@@ -1752,6 +1755,7 @@ def _parse_message(model: dict, myid: str, account_id: str = "", cid: str = "") 
             "senderId": sender_id,
             "senderName": sender_name,
             "isSelf": is_self,
+            "managedSender": managed_sender,
             "type": msg_type,
             "text": msg_text,
             "images": msg_images,
