@@ -7,7 +7,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { QRCodeSVG } from 'qrcode.react'
-import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag, Reply, Forward } from 'lucide-react'
+import { Loader2, LogIn, LogOut, MessageCircle, RefreshCw, User, ChevronUp, X, Send, AlertCircle, Ban, ImagePlus, Copy, Package, ExternalLink, Mic, Square, FileText, Trash2, Search, Info, Ticket, Truck, CreditCard, RotateCcw, CheckCircle, Calendar, Tag, Reply, Forward, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 
 // 事件卡片图标：按后端 eventKind 取对应图标，缺省用 Info
 const EVENT_ICONS: Record<string, typeof Info> = {
@@ -25,6 +25,8 @@ import {
   connectAccount,
   disconnectAccount,
   getConversations,
+  searchChatMessages,
+  type MessageSearchHit,
   hideConversation,
   getMessages,
   getPeerReads,
@@ -610,6 +612,9 @@ export function ChatNew() {
   const [riskBlockedIds, setRiskBlockedIds] = useState<string[]>([])
   // 会话列表搜索关键词（本地过滤已加载会话：用户名/用户ID/最后一条消息/商品标题）
   const [convSearch, setConvSearch] = useState('')
+  // 聊天记录搜索（本地归档库，零闲鱼请求）：关键词防抖后的消息命中
+  const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([])
+  const [msgHitsLoading, setMsgHitsLoading] = useState(false)
 
   // 断线兜底对账：记录已响铃的会话最新消息时间（accountId:cid -> 时间戳），
   // 避免实时推送与对账轮询对同一消息重复响铃；首轮仅校准水位不响旧未读。
@@ -1581,6 +1586,59 @@ export function ChatNew() {
       })
     : conversations
 
+  // 聊天记录搜索：关键词防抖 300ms 后查本地归档库（跨全部托管账号）。
+  // 只打自家后端，零闲鱼请求——限流时期也能随便搜。
+  useEffect(() => {
+    const kw = convSearch.trim()
+    if (kw.length < 2) {
+      setMsgHits([])
+      setMsgHitsLoading(false)
+      return
+    }
+    setMsgHitsLoading(true)
+    const timer = window.setTimeout(async () => {
+      try {
+        setMsgHits(await searchChatMessages(kw))
+      } catch {
+        setMsgHits([])
+      } finally {
+        setMsgHitsLoading(false)
+      }
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [convSearch])
+
+  /** 从搜索命中跳到所属会话并定位到那条消息（必要时自动向前翻页） */
+  const handleJumpToMessage = async (hit: MessageSearchHit) => {
+    if (hit.accountId !== activeAccountIdRef.current) {
+      const acc = accountsRef.current.find((a) => a.account_id === hit.accountId)
+      if (!acc?.connected) return
+      selectAccount(hit.accountId)
+      // 等切换 effect 把列表/会话状态就位
+      await new Promise((r) => window.setTimeout(r, 600))
+    }
+    if (normCid(activeCidRef.current) !== normCid(hit.cid)) {
+      selectCid(hit.cid)
+      setMobileTab('chat')
+      void restoreConversation(hit.accountId, hit.cid)
+    }
+    // 定位：目标在已加载页则直接滚动；比最早消息还早则连续向前翻页（上限 15 页）
+    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms))
+    for (let i = 0; i < 15; i++) {
+      await sleep(450)
+      const el = document.querySelector(`[data-message-id="${CSS.escape(hit.messageId)}"]`)
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        el.classList.add('msg-hit-flash')
+        window.setTimeout(() => el.classList.remove('msg-hit-flash'), 3200)
+        return
+      }
+      const msgs = messagesRef.current
+      if (!msgs.length || (msgs[0]?.time ?? 0) <= hit.time) return
+      void loadMessages(hit.accountId, hit.cid, true, true)
+    }
+  }
+
   useEffect(() => {
     if (!activeAccountId || !missingInfoKey) return
 
@@ -1752,12 +1810,12 @@ export function ChatNew() {
   // 停在旧消息上。这里给当前打开的会话定时增量拉最新一页兜底，消息按 ID 去重，
   // 重复拉取无害。静默模式：不闪 loading、失败不弹 toast。
   //
-  // 间隔自适应（2026-10-26）：后端 IM 长连着时实时推送已覆盖，30 秒对账即可
-  // （原固定 5 秒是给断连场景的——2026-10-23 反馈账号被风控/暂停时长连接断开，
-  // 此时唯一的消息来源就是这里，5 秒一轮把最坏等待压到 5 秒内）。断连
-  // （connected=false）才升回 5 秒快轮询。只拉「当前打开的会话」，一个账号
-  // 同时只有一个，正常态 2 次/分钟远低于消息接口的承受线，把频次预算留给
-  // 风控最敏感的会话列表接口。
+  // 间隔自适应（2026-10-26 定稿）：连接健康时完全信 WS 推送（毫秒级、不占
+  // mtop 频次），只留 10 分钟一次的静默校准防极端漏推；断连才切 5 秒快轮询
+  // 兜底（2026-10-23 反馈：账号被风控/暂停时连接断开，此时唯一的消息来源
+  // 就是这里，5 秒一轮把最坏等待压到 5 秒内）。只拉「当前打开的会话」，
+  // 一个账号同时只有一个——实时性由推送保证，轮询只在推送不可用时上场，
+  // 限流概率趋近零。
   const activeAccountConnected = accounts.find(
     (a) => a.account_id === activeAccountId,
   )?.connected ?? false
@@ -1767,7 +1825,7 @@ export function ChatNew() {
       // 页面切到后台时没必要拉，回来后下一轮自然补上
       if (document.hidden) return
       void loadMessages(activeAccountId, activeCid, false, true)
-    }, activeAccountConnected ? 30000 : 5000)
+    }, activeAccountConnected ? 600_000 : 5_000)
     return () => clearInterval(timer)
   }, [activeAccountId, activeCid, activeAccountConnected, loadMessages])
 
@@ -2591,16 +2649,17 @@ export function ChatNew() {
       // 连接的账号也能在后续轮次补响（覆盖用户所述"断开期间有人发消息"的场景）。
       if (fetchedAny) baselineDoneRef.current = true
     }
-    // 自适应间隔（2026-10-26，2217 被连坐限流的教训）：有账号在线（后端 IM
-    // 长连着，实时推送兜底充分）时 90 秒一轮即可；全部断连才回到 30 秒快轮询。
-    // 任一账号处于闲鱼流控冷却时全员 ×2——同 IP 上另一账号的风控失败会拉低
-    // 整个 IP 的信用分，继续按原频轮询会把限流窗口越撞越长（连坐预防）。
+    // 自适应间隔（2026-10-26 定稿，2217 被连坐限流的教训）：有账号在线（后端
+    // IM 长连着，列表变动由 WS 推送实时驱动）时只留 10 分钟一轮的静默校准；
+    // 全部断连才回到 30 秒快轮询兜底。任一账号处于闲鱼流控冷却时全员 ×2——
+    // 同 IP 上另一账号的风控失败会拉低整个 IP 的信用分，继续按原频轮询会把
+    // 限流窗口越撞越长（连坐预防）。
     // 用 setTimeout 链而非 setInterval：每轮跑完按最新状态选间隔，也顺带
     // 消除了串行拉取慢于间隔时的重入。
     const pickInterval = () => {
       const online = accountsRef.current.filter((a) => a.connected).length
       const anyCooling = Object.values(rateLimitUntilRef.current).some((t) => t > Date.now())
-      return (online > 0 ? 90_000 : 30_000) * (anyCooling ? 2 : 1)
+      return (online > 0 ? 600_000 : 30_000) * (anyCooling ? 2 : 1)
     }
     let timer = 0
     const schedule = () => {
@@ -3110,6 +3169,24 @@ export function ChatNew() {
 
   // ==================== 面板拖拽调宽 ====================
   const [panelWidths, setPanelWidths] = useState(loadPanelWidths)
+  // 侧栏收起（账号列表 / 客户订单工作区）：桌面端一键展开收起，localStorage 记忆
+  const [collapsedPanels, setCollapsedPanels] = useState<{ accounts: boolean; tools: boolean }>(() => {
+    try {
+      const raw = localStorage.getItem('chat_new_panel_collapsed')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { accounts?: boolean; tools?: boolean }
+        return { accounts: !!parsed.accounts, tools: !!parsed.tools }
+      }
+    } catch { /* 坏数据用默认 */ }
+    return { accounts: false, tools: false }
+  })
+  const togglePanel = (key: 'accounts' | 'tools') => {
+    setCollapsedPanels((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try { localStorage.setItem('chat_new_panel_collapsed', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
   const [draggingPanel, setDraggingPanel] = useState(false)
   const dragStateRef = useRef<{ key: PanelKey; startX: number; startWidth: number } | null>(null)
 
@@ -3204,17 +3281,38 @@ export function ChatNew() {
           '--w-tools': `${panelWidths.tools}px`,
         } as CSSProperties}
       >
-      {/* 左侧：账号列表 */}
+      {/* 左侧：账号列表（可收起成窄条，桌面端） */}
+      {collapsedPanels.accounts ? (
+        <div className="hidden md:flex w-10 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col items-center py-2 min-h-0">
+          <button
+            onClick={() => togglePanel('accounts')}
+            className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300"
+            title="展开账号列表"
+          >
+            <PanelLeftOpen className="w-4 h-4" />
+          </button>
+          <span className="mt-1 text-[10px] text-gray-400 [writing-mode:vertical-rl] tracking-widest">账号</span>
+        </div>
+      ) : (
       <div className={`${mobileTab === 'accounts' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-accounts)] flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col min-h-0`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <span className="font-medium text-sm text-gray-700 dark:text-gray-300">账号列表</span>
-          <button
-            onClick={() => loadAccounts()}
-            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-            title="刷新"
-          >
-            <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingAccounts ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => loadAccounts()}
+              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              title="刷新"
+            >
+              <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingAccounts ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={() => togglePanel('accounts')}
+              className="hidden md:block p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              title="收起账号列表"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         <div
           ref={accountListRef}
@@ -3333,6 +3431,7 @@ export function ChatNew() {
           )}
         </div>
       </div>
+      )}
 
       {panelResizer('accounts')}
       {/* 中间：会话列表 */}
@@ -3389,6 +3488,38 @@ export function ChatNew() {
               <span>
                 该账号 IM 未连接，以下为<b>本地缓存旧数据</b>。点上方刷新图标或左侧账号卡片可重新连接。
               </span>
+            </div>
+          )}
+          {(msgHitsLoading || msgHits.length > 0) && convSearch.trim().length >= 2 && (
+            <div className="border-b border-gray-100 dark:border-gray-700/50">
+              <div className="px-3 pt-2 pb-1 text-[11px] text-gray-400 flex items-center gap-1">
+                {msgHitsLoading ? (
+                  <><Loader2 className="w-3 h-3 animate-spin" />搜索聊天记录…</>
+                ) : (
+                  <>聊天记录命中 {msgHits.length} 条（点击跳转）</>
+                )}
+              </div>
+              {msgHits.slice(0, 10).map((hit) => {
+                // 完整昵称优先（后端带出）；接口没带时退回前端账号表，最后退回 ID
+                const accName = hit.accountName
+                  || accounts.find((a) => a.account_id === hit.accountId)?.display_name
+                  || hit.accountId
+                const conv = convsCacheRef.current[hit.accountId]?.convs
+                  ?.find((c) => normCid(c.cid) === normCid(hit.cid))
+                const peerName = conv?.otherUserName || `会话 ${String(hit.cid).slice(-4)}`
+                return (
+                  <button
+                    key={hit.accountId + hit.messageId}
+                    onClick={() => void handleJumpToMessage(hit)}
+                    className="w-full px-3 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors border-b border-gray-50 dark:border-gray-800/60 last:border-b-0"
+                  >
+                    <div className="text-xs text-gray-700 dark:text-gray-200 truncate">{hit.text}</div>
+                    <div className="text-[11px] text-gray-400 truncate">
+                      {accName} · {peerName} · {hit.isSelf ? '我' : (hit.senderName || '对方')} · {formatTime(hit.time)}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           )}
           {!activeAccountId ? (
@@ -3727,6 +3858,7 @@ export function ChatNew() {
                 return (
                 <div
                   key={msg.messageId || idx}
+                  data-message-id={msg.messageId || undefined}
                   className={`flex gap-2 ${msg.isSelf ? 'justify-end' : 'justify-start'}`}
                   onContextMenu={(e) => {
                     // 消息长按 / 右键菜单（对齐闲鱼 APP：复制/回复/转发）。
@@ -4156,8 +4288,27 @@ export function ChatNew() {
       </div>
       {/* 图片预览弹窗 */}
       {panelResizer('tools')}
-      {/* 右侧工作区：客户订单 + 快捷短语 */}
-      <div className={`${mobileTab === 'tools' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-tools)] flex-shrink-0 min-h-0 flex-col gap-3 overflow-y-auto md:overflow-visible`}>
+      {/* 右侧工作区：客户订单 + 快捷短语（可收起成窄条，桌面端） */}
+      {collapsedPanels.tools ? (
+        <div className="hidden md:flex w-10 flex-shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex-col items-center py-2 min-h-0">
+          <button
+            onClick={() => togglePanel('tools')}
+            className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300"
+            title="展开工作区（客户订单）"
+          >
+            <PanelRightOpen className="w-4 h-4" />
+          </button>
+          <span className="mt-1 text-[10px] text-gray-400 [writing-mode:vertical-rl] tracking-widest">订单</span>
+        </div>
+      ) : (
+      <div className={`${mobileTab === 'tools' ? 'flex' : 'hidden'} md:flex w-full md:w-[var(--w-tools)] flex-shrink-0 min-h-0 flex-col gap-3 overflow-y-auto md:overflow-visible relative`}>
+        <button
+          onClick={() => togglePanel('tools')}
+          className="hidden md:flex absolute left-0 top-3 z-10 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-300 hover:text-gray-500 dark:hover:text-gray-200"
+          title="收起工作区（客户订单）"
+        >
+          <PanelRightClose className="w-4 h-4" />
+        </button>
         <CustomerOrdersPanel
           activeCid={activeCid}
           orders={customerOrders}
@@ -4189,6 +4340,7 @@ export function ChatNew() {
           onSave={handleSavePhrase}
         />
       </div>
+      )}
       </div>
       <OrderDetailModal
         order={orderDetail}

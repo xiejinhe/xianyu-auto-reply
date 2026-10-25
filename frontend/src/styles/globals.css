@@ -844,3 +844,13 @@
 .announcement-vertical-scroll {
   animation: announcement-slide-in 0.5s ease-out;
 }
+
+/* 聊天记录搜索命中定位闪烁（data-message-id 锚点滚动后 3 秒高亮） */
+@keyframes msg-hit-flash-kf {
+  0%, 100% { background-color: transparent; }
+  30% { background-color: rgba(251, 191, 36, 0.35); }
+}
+.msg-hit-flash {
+  animation: msg-hit-flash-kf 1.6s ease-in-out 2;
+  border-radius: 8px;
+}

@@ -1578,6 +1578,10 @@ class GoofishImClient:
                         )
                     continue
                 parsed = self._push_parser.parse(decrypted)
+                if parsed is not None and parsed.get("message"):
+                    # 推送消息归档（本地库，供聊天记录搜索；异步，不影响转发）
+                    from .message_archive import spawn_archive
+                    spawn_archive(1, self.account_id, parsed.get("cid", ""), [parsed["message"]])
                 if parsed is None:
                     # 未知推送类型：默认静默丢弃；开启 IM_PUSH_DEBUG 时原样落日志，
                     # 便于排查闲鱼是否下发了「对方已读」之类的读状态推送。

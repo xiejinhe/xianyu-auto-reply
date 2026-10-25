@@ -746,3 +746,34 @@ export function createChatNewWebSocket(accountId: string): WebSocket {
   const url = `${wsBase}/api/v1/chat-new/ws/${encodeURIComponent(accountId)}?token=${encodeURIComponent(token)}`
   return new WebSocket(url)
 }
+
+export interface MessageSearchHit {
+  accountId: string
+  /** 账号完整昵称（如「樱花飞舞4321」，后端从 xy_accounts 带出） */
+  accountName?: string
+  cid: string
+  messageId: string
+  senderName: string
+  isSelf: boolean
+  managedSender?: boolean
+  type: string
+  text: string
+  time: number
+}
+
+/** 聊天记录全文搜索（本地归档库，零闲鱼请求） */
+export const searchChatMessages = async (
+  q: string,
+  accountId?: string,
+  limit = 30,
+): Promise<MessageSearchHit[]> => {
+  const params = new URLSearchParams({ q, limit: String(limit) })
+  if (accountId) params.append('account_id', accountId)
+  const res = await get<{
+    success: boolean
+    message?: string
+    data: { messages: MessageSearchHit[]; keyword: string }
+  }>(`${PREFIX}/search-messages?${params.toString()}`)
+  if (!res.success) throw new Error(res.message || '搜索失败')
+  return res.data?.messages ?? []
+}

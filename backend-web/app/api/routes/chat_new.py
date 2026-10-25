@@ -30,6 +30,7 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.account_service import AccountService
 from app.services.chat_new import get_im_session_manager
 from app.services.chat_new.avatar_service import get_owner_user_info, AVATAR_CACHE_PREFIX, AVATAR_CACHE_TTL
+from app.services.chat_new.message_archive import spawn_archive
 from app.services.chat_new.card_sampler import sample_card
 from app.services.chat_new.user_profile_service import (
     get_user_profile,
@@ -55,7 +56,7 @@ from common.utils.xianyu_message_parser import (
     classify_event,
 )
 from common.utils.order_card_parser import parse_rich_card_decoded
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -798,6 +799,10 @@ async def get_messages(
                 messages.append(msg_info)
         messages.reverse()
 
+        # 消息归档（本地库，供聊天记录搜索；异步执行不阻塞响应）
+        if messages:
+            spawn_archive(current_user.id, account_id, cid, messages)
+
         # 自己消息里的 senderName 是完整昵称（账号信息/会话列表接口返回的都是
         # 打码名，如 樱***1）。账号列表展示名还是打码/空的话，顺手用完整昵称升级。
         self_nick = next(
@@ -822,6 +827,85 @@ async def get_messages(
     except Exception as e:
         logger.error(f"【{account_id}】获取聊天记录失败: {e}")
         return ApiResponse(success=False, message=f"获取聊天记录失败: {str(e)}")
+
+
+@router.get("/search-messages")
+async def search_chat_messages(
+    q: str,
+    account_id: str = "",
+    limit: int = 30,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """聊天记录全文搜索（只查本地归档库 xy_chat_messages，零闲鱼请求）。
+
+    Args:
+        q: 关键词（≥2 字符，前后模糊匹配）
+        account_id: 可选，限定某个账号；空=搜索全部托管账号
+        limit: 返回条数上限（默认 30，最大 100）
+    """
+    keyword = (q or "").strip()
+    if len(keyword) < 2:
+        return ApiResponse(success=True, data={"messages": [], "keyword": keyword})
+    limit = max(1, min(int(limit or 30), 100))
+    # LIKE 通配符转义，防用户输入 % _ \ 干扰匹配（默认转义符 \）
+    escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like = f"%{escaped}%"
+
+    try:
+        # 账号完整昵称：display_name 会被账号信息刷新覆盖回打码名（樱***1），
+        # 稳定来源是消息归档——自己发的消息 senderName 就是完整昵称
+        # （与 _upgrade_account_display_name 同源）。取不到再退 display_name。
+        acct_rows = await db.execute(
+            text("SELECT account_id, display_name FROM xy_accounts WHERE owner_id = :owner"),
+            {"owner": current_user.id},
+        )
+        acct_names = {r[0]: (r[1] or "") for r in acct_rows.all()}
+        nick_rows = await db.execute(
+            text(
+                "SELECT m.account_id, m.sender_name FROM xy_chat_messages m "
+                "JOIN (SELECT account_id, MAX(id) AS max_id FROM xy_chat_messages "
+                "WHERE owner_id = :owner AND is_self = 1 "
+                "AND sender_name NOT LIKE '%*%' GROUP BY account_id) t "
+                "ON t.max_id = m.id"
+            ),
+            {"owner": current_user.id},
+        )
+        for r in nick_rows.all():
+            if r[1]:
+                acct_names[r[0]] = r[1]
+
+        sql = (
+            "SELECT account_id, cid, message_id, sender_name, is_self, "
+            "managed_sender, msg_type, text, UNIX_TIMESTAMP(msg_time) * 1000 AS ts "
+            "FROM xy_chat_messages WHERE owner_id = :owner AND text LIKE :like "
+        )
+        params: dict = {"owner": current_user.id, "like": like}
+        if account_id:
+            sql += "AND account_id = :acct "
+            params["acct"] = account_id
+        sql += "ORDER BY msg_time DESC LIMIT :lim"
+        result = await db.execute(text(sql), {**params, "lim": limit})
+        rows = result.mappings().all()
+        messages = [
+            {
+                "accountId": r["account_id"],
+                "accountName": acct_names.get(r["account_id"], ""),
+                "cid": r["cid"],
+                "messageId": r["message_id"],
+                "senderName": r["sender_name"],
+                "isSelf": bool(r["is_self"]),
+                "managedSender": bool(r["managed_sender"]),
+                "type": r["msg_type"],
+                "text": r["text"],
+                "time": int(r["ts"] or 0),
+            }
+            for r in rows
+        ]
+        return ApiResponse(success=True, data={"messages": messages, "keyword": keyword})
+    except Exception as e:
+        logger.error(f"聊天记录搜索失败: {e}")
+        return ApiResponse(success=False, message=f"搜索失败: {e}")
 
 
 @router.get("/peer-read/{account_id}/{cid}")
