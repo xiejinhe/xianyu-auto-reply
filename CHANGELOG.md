@@ -17,6 +17,17 @@
 
 ---
 
+## 未发布修复 · 2026-10-28（macOS 本机各服务 IPv4 互访修复）
+
+### 怎么回事
+- 新版 websocket/scheduler 监听 `::` 在 macOS 上实际只收 IPv6，不收 127.0.0.1。backend-web 用 `127.0.0.1:8190` 访问 websocket 的 `/internal` 接口连不上，导致网页 IM 客户端取 Token 失败 → 该账号被判「失效需重登」，前端显示一个账号未连接（但 XianyuAsync 主长连接其实 2/2 在线）。
+- 根因：`resolve_listen_host` 在 macOS 上探测绑定 `::` 成功后误判双栈可用，而 macOS 默认 `IPV6_V6ONLY=1`。已把 `darwin` 与 `win32` 同样处理，回退监听 `0.0.0.0`。
+
+### 怎么修的
+- `common/utils/network_utils.py`：`resolve_listen_host` 对 `darwin` 也直接回退到 `0.0.0.0`，保证本机服务间 IPv4 互访可达。
+
+---
+
 ## v1.0.77 · 2026-10-26（聊天记录搜索 + 轮询彻底事件化 + 侧栏可收起）
 
 ### 怎么回事
