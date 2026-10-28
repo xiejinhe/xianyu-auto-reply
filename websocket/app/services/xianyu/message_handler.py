@@ -114,19 +114,33 @@ class MessageHandler:
         self.message_expire_time = self._load_message_expire_time()  # 从数据库加载
 
     def _is_self_sender(self, sender_id: str) -> bool:
-        """是否「自己」发出的消息。
+        """是否「本账号自己」发出的消息（严格只比 myid）。
 
-        cid 跨账号共享（实测：同一买家与多个卖家账号共用同一个 cid）：
-        账号 A 发的消息，本账号的长连接同样收得到。只比 myid 会把同为
-        托管账号的发送者误判成买家——2026-10-20 事故：误响铃、误弹
-        「账号收到新消息」toast、消息被渲染成左侧对方消息并署名。
-        因此发送者是任一托管账号（含本账号）即视为自己发出。
+        2026-10-28 修正：此前「任一托管账号都算自己」（2026-10-20 为防误响铃
+        引入），副作用是托管账号互聊会话里，对方（自己的另一个托管号）的消息
+        在长连接推送中被标成 isSelf=true，而 HTTP 历史接口（backend-web 的
+        _parse_message，2026-10-26 已改为只比 myid）给的是 isSelf=false，
+        两条数据源打架 → 前端互聊会话消息全渲染到同一侧（2026-10-28 实测）。
+
+        防误响铃改由 managed_sender 字段承担（见 _is_managed_peer），不再污染
+        isSelf。自动回复的「自己消息」判定在 auto_reply_service 里独立实现
+        （myid 或托管账号，宽松语义），不受本次改动影响。
         """
         sid = str(sender_id or "").strip()
         if not sid:
             return False
-        if self.myid and sid == str(self.myid):
-            return True
+        return bool(self.myid and sid == str(self.myid))
+
+    def _is_managed_peer(self, sender_id: str) -> bool:
+        """发送者是否为「其它托管账号」（非本账号）：前端据此跳过响铃与跨账号 toast。
+
+        承接 2026-10-20 防误响铃的初衷：cid 跨账号共享时，另一个托管账号发的
+        消息本账号长连接也收得到，渲染上是对方（isSelf=false，左侧），但不该
+        当成真实买家消息去响铃/弹「账号收到新消息」toast。
+        """
+        sid = str(sender_id or "").strip()
+        if not sid or not self.myid or sid == str(self.myid):
+            return False
         try:
             from common.utils.managed_account_ids import is_managed_account
 
@@ -1113,6 +1127,9 @@ class MessageHandler:
                 sender_id=sender_id,
                 sender_name=str(parsed.get("send_user_name") or ""),
                 is_self=self._is_self_sender(sender_id),
+                # 托管账号互聊时对方（自己的另一个号）不是自己，但要标记成
+                # managed_sender，让前端照旧跳过响铃/跨账号 toast
+                managed_sender=self._is_managed_peer(sender_id),
                 msg_type=fwd_type,
                 text="" if is_image else content,
                 images=lines if is_image else [],

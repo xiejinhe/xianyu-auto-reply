@@ -26,6 +26,24 @@
 ### 怎么修的
 - `common/utils/network_utils.py`：`resolve_listen_host` 对 `darwin` 也直接回退到 `0.0.0.0`，保证本机服务间 IPv4 互访可达。
 
+## 未发布修复 · 2026-10-28（线上聊天三个问题）
+
+### 怎么回事
+1. **互聊消息全跑到同一侧**：两个托管号互相聊天的会话里，不同人发的消息气泡全渲染在同一侧。
+2. **右侧「收起工作区」按钮重叠**：压住了「客户订单」面板头部的图标和标题。
+3. **快捷短语点「+」没反应**：接口本身正常，但点了没有任何可见变化，像按钮坏了。
+
+### 怎么修的
+1. `websocket/app/services/xianyu/message_handler.py`：`_is_self_sender` 改为**严格只比 `myid`**
+   （此前「任一托管账号都算自己」，与 HTTP 历史接口 2026-10-26 的修正不一致，导致两条数据源打架）；
+   新增 `_is_managed_peer()`，并把 `managed_sender` 补进整条推送链路
+   （`backend_push_forwarder.schedule_chat_push` → `internal_chat_push` → 广播 `managedSender`），
+   防误响铃改由该字段承担，不再污染 `isSelf`。自动回复判定独立实现，不受影响。
+2. `frontend/src/pages/chat-new/CustomerOrdersPanel.tsx`：面板头部加 `md:pl-8`，给绝对定位的
+   收起按钮让出左侧空间。
+3. `frontend/src/pages/chat-new/QuickPhrasesPanel.tsx`：新增 `titleInputRef`，点「+」后
+   重置表单并把光标聚焦到「短语名称」输入框，点击有明确反馈。
+
 ---
 
 ## v1.0.77 · 2026-10-26（聊天记录搜索 + 轮询彻底事件化 + 侧栏可收起）

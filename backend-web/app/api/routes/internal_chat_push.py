@@ -35,6 +35,10 @@ class AppChannelPushRequest(BaseModel):
     sender_id: str = Field(default="", description="发送者用户ID")
     sender_name: str = Field(default="", description="发送者昵称")
     is_self: bool = Field(default=False, description="是否本账号自己发出的消息")
+    managed_sender: bool = Field(
+        default=False,
+        description="发送者是否为「其它托管账号」（非本账号）：渲染成对方消息(左侧)，但跳过响铃与跨账号 toast",
+    )
     msg_type: str = Field(default="text", description="text / image / card / system")
     text: str = Field(default="", description="文本内容")
     images: List[str] = Field(default_factory=list, description="图片URL列表")
@@ -76,6 +80,9 @@ async def receive_app_channel_push(
         "senderId": req.sender_id,
         "senderName": req.sender_name,
         "isSelf": req.is_self,
+        # 托管账号互聊：对方是自己另一个托管号时 isSelf=false（正确渲染到左侧），
+        # 但 managedSender=true，前端照旧跳过响铃/跨账号 toast（2026-10-28）
+        "managedSender": req.managed_sender,
         "type": req.msg_type or "text",
         "text": req.text,
         "images": req.images or [],

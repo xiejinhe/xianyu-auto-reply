@@ -52,7 +52,10 @@ export function CustomerOrdersPanel({
   const anyActionRunning = !!deliveringOrderNo || !!confirmingOrderNo
   return (
     <div className="basis-3/5 min-h-0 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 flex flex-col">
-      <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      {/* md+ 时 ChatNew 会在本卡片左上角绝对定位一个「收起工作区」按钮
+          （absolute left-0 top-3，约占 24px 宽），这里留出左侧空间，
+          避免它压住 Package 图标和「客户订单」标题（2026-10-28 反馈重叠） */}
+      <div className="p-3 md:pl-8 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Package className="w-4 h-4 text-blue-500" />
           <span className="font-medium text-sm text-gray-700 dark:text-gray-300">客户订单</span>

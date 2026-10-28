@@ -88,6 +88,7 @@ def schedule_chat_push(
     sender_id: str = "",
     sender_name: str = "",
     is_self: bool = False,
+    managed_sender: bool = False,
     msg_type: str = "text",
     text: str = "",
     images: Optional[List[str]] = None,
@@ -122,6 +123,9 @@ def schedule_chat_push(
         "sender_id": sender_id or "",
         "sender_name": sender_name or "",
         "is_self": bool(is_self),
+        # 托管账号互聊：对方是自己的另一个托管号，非本账号发出，但要标记
+        # managed_sender 让前端照旧跳过响铃/跨账号 toast（2026-10-28）
+        "managed_sender": bool(managed_sender),
         "msg_type": msg_type,
         "text": text or "",
         "images": images or [],
