@@ -1132,7 +1132,9 @@ class MessageHandler:
             # 用户看到"5 秒"时无法判断到底是本通道生效还是 15 秒轮询撞上的）
             logger.info(
                 f"【{self.cookie_id}】App通道转发: cid={chat_id}, "
-                f"type={fwd_type}, id={message_id or '-'}"
+                f"type={fwd_type}, id={message_id or '-'}, "
+                f"sender={sender_id or '-'}, is_self={self._is_self_sender(sender_id)}, "
+                f"managed={self._is_managed_peer(sender_id)}"
             )
             schedule_chat_push(
                 account_id=self.cookie_id,
