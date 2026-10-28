@@ -127,6 +127,12 @@ class MessageHandler:
         （myid 或托管账号，宽松语义），不受本次改动影响。
         """
         sid = str(sender_id or "").strip()
+        # 去掉 @goofish 后缀再比：长连接推送里 send_user_id 可能是
+        # "2217728125233@goofish"（message_10 / message_4 两条解析路径未剥离），
+        # 而 myid 是纯数字 unb；不剥离就永远比不上，连自己发的消息都被判成
+        # 对方 → 互聊会话消息全渲染到左侧（2026-10-29 实测）。
+        if "@" in sid:
+            sid = sid.split("@")[0]
         if not sid:
             return False
         return bool(self.myid and sid == str(self.myid))
@@ -139,6 +145,9 @@ class MessageHandler:
         当成真实买家消息去响铃/弹「账号收到新消息」toast。
         """
         sid = str(sender_id or "").strip()
+        # 同上：先剥离 @goofish 后缀，否则托管账号集合查询也会落空
+        if "@" in sid:
+            sid = sid.split("@")[0]
         if not sid or not self.myid or sid == str(self.myid):
             return False
         try:
@@ -1103,6 +1112,11 @@ class MessageHandler:
             )
 
             sender_id = str(parsed.get("send_user_id") or "")
+            # 统一剥离 @goofish 后缀：message_10 / message_4 两条解析路径取到的是
+            # "xxx@goofish"，与 HTTP 历史接口的纯数字 ID 不一致；前端按 senderId
+            # 比对（引用消息查表、头像/资料缓存）会因格式不同而错位。
+            if "@" in sender_id:
+                sender_id = sender_id.split("@")[0]
             revoked = bool(parsed.get("revoked"))
             # 消息类型：撤回占位 > 图片 > 订单卡片 > 文本
             if revoked:

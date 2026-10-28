@@ -39,6 +39,11 @@
    新增 `_is_managed_peer()`，并把 `managed_sender` 补进整条推送链路
    （`backend_push_forwarder.schedule_chat_push` → `internal_chat_push` → 广播 `managedSender`），
    防误响铃改由该字段承担，不再污染 `isSelf`。自动回复判定独立实现，不受影响。
+   **补充真根因（10-29）**：`send_user_id` 有 3 条解析路径，其中 `message_10`、
+   `message_4` 两条**没有剥离 `@goofish` 后缀**，而 `myid`(unb) 是纯数字 →
+   `sid` 永远比不上 `myid`，**连自己发的消息都被判成对方**（这才是"全靠左"的
+   直接原因；上一轮只去掉托管账号兜底时它仍未命中）。现统一在解析出口与
+   两个判定函数内都剥离后缀，并让推送给前端的 `senderId` 与历史接口格式一致。
 2. `frontend/src/pages/chat-new/CustomerOrdersPanel.tsx`：面板头部加 `md:pl-8`，给绝对定位的
    收起按钮让出左侧空间。
 3. `frontend/src/pages/chat-new/QuickPhrasesPanel.tsx`：新增 `titleInputRef`，点「+」后
