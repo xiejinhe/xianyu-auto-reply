@@ -37,6 +37,14 @@ class ConnectionManager:
     # 停机导致的断开不是账号本身有问题，这里统一豁免。
     shutting_down: bool = False
 
+    # 进程启动时间戳（lifespan 启动、账号任务加载前由 _bootstrap 设置）。头
+    # startup_grace_seconds 秒内发生的「短连接断开」一律不计入禁用判断——闲鱼长
+    # 连接刚建立时往往要经历若干次握手/重连才稳定，正常启动也会在头 1 分钟内抖动
+    # 若干次，据此禁用账号纯属误伤（2026-10-29 实测：启动后约 40 秒内快速重连十几
+    # 轮触发阈值的禁用，但 10:09:14 起心跳就一直正常，连接本身没问题）。
+    process_started_at = None
+    startup_grace_seconds = 120
+
     @classmethod
     def mark_shutting_down(cls) -> None:
         """标记进程正在停机（lifespan 关闭阶段调用，须在 stop 连接之前）"""
@@ -121,6 +129,14 @@ class ConnectionManager:
         # 计划内停机导致的断开不计入，避免重启一次就禁用全部账号
         if ConnectionManager.shutting_down:
             self.short_disconnect_times.clear()
+            return False
+        # 进程启动宽限期内的短连接断开不计入禁用判断：正常启动抖动不算故障，
+        # 避免刚拉起就被误杀（期间也不留计数残值，宽限期结束后从零开始计）。
+        if (
+            ConnectionManager.process_started_at is not None
+            and (time.time() - ConnectionManager.process_started_at)
+            < self.startup_grace_seconds
+        ):
             return False
         # 只记录短连接（维持时间少于阈值）
         if connected_duration >= self.short_connection_threshold:

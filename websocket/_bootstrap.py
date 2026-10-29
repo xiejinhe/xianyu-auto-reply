@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import faulthandler
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -123,7 +124,15 @@ async def lifespan(app: FastAPI):
             logger.error(f"CookieManager启动失败: {e}")
     else:
         logger.info("已禁用自动启动WebSocket连接（AUTO_START_WEBSOCKET=false）")
-    
+
+    # 标记进程启动时间：头 startup_grace_seconds 秒内的短连接断开不计入禁用判断，
+    # 避免正常启动抖动误杀账号（见 connection_manager.record_short_disconnect）
+    try:
+        from app.services.xianyu.connection_manager import ConnectionManager
+        ConnectionManager.process_started_at = time.time()
+    except Exception as e:
+        logger.error(f"标记进程启动时间失败: {e}")
+
     yield
     
     logger.info(f"{settings.project_name} 关闭中...")
