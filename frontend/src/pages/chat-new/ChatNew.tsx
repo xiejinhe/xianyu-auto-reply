@@ -1128,6 +1128,23 @@ export function ChatNew() {
       // 屏幕上下文是当前活跃账号的——消息缓存、消息列表、会话列表摘要
       // 全部按活跃账号写，订单角标也一起刷。
       const screenAccount = activeAccountIdRef.current
+      // ⚠️ 跨账号投影必须按屏幕账号重算左右：cid 在同一对用户之间共享，
+      // 两个都是本系统托管的账号时，两条长连接都会收到同一条消息的推送，
+      // 各自带上「自己视角」的 isSelf。直接把别账号视角的副本塞进当前
+      // 窗口，就会出现「自己发的消息跑到左边」（2026-10-29 实证：刷新
+      // 页面才恢复，因为 HTTP 历史接口是按当前账号重新算 isSelf 的）。
+      let projected = msg
+      let projectedSummary = summary
+      if (accountId !== screenAccount) {
+        // 推送里的 senderId 已由后端剥离 @goofish，与 account_id 同为纯数字
+        const senderId = (msg.senderId || '').split('@')[0]
+        // 自己发的判定只按「屏幕账号」；managedSender = 是自己另一个托管号
+        // （防误响铃语义）：账号列表里的账号即本系统托管账号。
+        const selfSend = !!senderId && senderId === screenAccount
+        const managed = !selfSend && accountsRef.current.some((a) => a.account_id === senderId)
+        projected = { ...msg, senderId: senderId || msg.senderId, isSelf: selfSend, managedSender: managed }
+        projectedSummary = `${selfSend ? '你' : '他'}：${body}`
+      }
       msgsCacheRef.current[screenAccount] ??= {}
       let messageCache = msgsCacheRef.current[screenAccount][cid]
       if (!messageCache) {
@@ -1135,11 +1152,11 @@ export function ChatNew() {
           hasMore: historyPageRef.current.msgHasMore, cursor: msgCursorRef.current }
         msgsCacheRef.current[screenAccount][cid] = messageCache
       }
-      messageCache.msgs = appendMsg(messageCache.msgs, msg)
+      messageCache.msgs = appendMsg(messageCache.msgs, projected)
       const screenCache = convsCacheRef.current[screenAccount]
       const nextConversations = screenCache?.convs
-        ? updateConvList(screenCache.convs, cid, summary, msg, true)
-        : updateConvList(conversationsRef.current, cid, summary, msg, true)
+        ? updateConvList(screenCache.convs, cid, projectedSummary, projected, true)
+        : updateConvList(conversationsRef.current, cid, projectedSummary, projected, true)
       if (screenCache) screenCache.convs = nextConversations
       conversationsRef.current = nextConversations
       setConversations(nextConversations)

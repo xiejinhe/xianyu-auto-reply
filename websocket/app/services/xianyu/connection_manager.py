@@ -29,7 +29,19 @@ class ConnectionState(Enum):
 
 class ConnectionManager:
     """WebSocket连接管理器"""
-    
+
+    # 进程级「计划内停机」标志（2026-10-29 引入）
+    # 服务重启/停机时，所有长连接会被立刻掐断，连接时长必然是几秒的「短连接」。
+    # 短连接计数达到 5 次就会把账号禁用（disable_account），于是**每次正常重启
+    # 都会把所有托管账号打成 disabled**，要人工去库里改回 active 才恢复。
+    # 停机导致的断开不是账号本身有问题，这里统一豁免。
+    shutting_down: bool = False
+
+    @classmethod
+    def mark_shutting_down(cls) -> None:
+        """标记进程正在停机（lifespan 关闭阶段调用，须在 stop 连接之前）"""
+        cls.shutting_down = True
+
     def __init__(self, xianyu_instance):
         """
         初始化连接管理器
@@ -52,8 +64,12 @@ class ConnectionManager:
         # 短连接频繁断开检测（连接维持少于30秒视为短连接）
         self.short_disconnect_times: list = []  # 记录短连接断开的时间戳
         self.short_connection_threshold = 30  # 短连接阈值（秒）
-        self.frequent_disconnect_window = 300  # 频繁断开检测窗口（5分钟）
-        self.frequent_disconnect_limit = 5  # 频繁断开次数限制
+        # 窗口/次数放宽：原先 5 次/300 秒太敏感——一次服务重启、一次网络抖动
+        # 就能把账号永久禁用（2026-10-29 实测：半天内连续重启几次，两个托管
+        # 账号全被打成 disabled，要人工改库才恢复）。这条规则的作用是防止
+        # 死循环重连打闲鱼服务端，而连接本身已有指数退避，这里给足容错。
+        self.frequent_disconnect_window = 600  # 频繁断开检测窗口（10分钟）
+        self.frequent_disconnect_limit = 10  # 频繁断开次数限制
         
         # 心跳配置
         self.heartbeat_interval = xianyu_instance.heartbeat_interval
@@ -102,6 +118,10 @@ class ConnectionManager:
         Returns:
             True 如果检测到频繁断开需要禁用账号，False 否则
         """
+        # 计划内停机导致的断开不计入，避免重启一次就禁用全部账号
+        if ConnectionManager.shutting_down:
+            self.short_disconnect_times.clear()
+            return False
         # 只记录短连接（维持时间少于阈值）
         if connected_duration >= self.short_connection_threshold:
             # 长连接，清空短连接记录

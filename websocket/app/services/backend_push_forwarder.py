@@ -35,6 +35,24 @@ _MAX_PENDING = 200
 
 _pending_tasks: Set[asyncio.Task] = set()
 _auth_warned = False
+# 每个转发端点的连续失败次数。转发是 fire-and-forget，以前失败只打 debug，
+# 于是「BACKEND_WEB_SERVICE_URL 指向已停端口」这类配置错误能静默潜伏好几天
+# ——消息还有网页 IM 推送/轮询兜底，只有没第二条路的「已读回执」暴露出来，
+# 表现为"App 有已读、网页端永远没有"（2026-10-29 实测）。
+_fail_counts: dict = {}
+
+
+def _log_forward_failure(path: str, detail: str) -> None:
+    """转发失败按端点累计告警：首次必报，之后每 20 条报一次，成功时清零。"""
+    count = _fail_counts.get(path, 0) + 1
+    _fail_counts[path] = count
+    if count == 1 or count % 20 == 0:
+        logger.warning(
+            f"App通道转发失败 已连续 {count} 次: {detail}"
+            f"（请核对 BACKEND_WEB_SERVICE_URL 是否指向在跑的 backend-web）"
+        )
+    else:
+        logger.debug(f"App通道转发失败({count}): {detail}")
 
 
 def _build_url(path: str = "/api/v1/internal/chat-push") -> str:
@@ -70,14 +88,14 @@ async def _post(payload: dict, path: str = "/api/v1/internal/chat-push") -> None
             ) as response:
                 if response.status != 200:
                     body = await response.text()
-                    logger.debug(
-                        f"【{payload.get('account_id')}】App通道推送转发失败 "
-                        f"HTTP {response.status}: {body[:120]}"
-                    )
+                    _log_forward_failure(path, f"HTTP {response.status}: {body[:120]}")
+                else:
+                    _fail_counts.pop(path, None)
     except asyncio.TimeoutError:
-        logger.debug(f"【{payload.get('account_id')}】App通道推送转发超时")
+        _log_forward_failure(path, "请求超时(3s)")
     except Exception as exc:
-        logger.debug(f"【{payload.get('account_id')}】App通道推送转发异常: {exc}")
+        # 连接被拒(111)/打不到主机 都落在这里，正是端口配错时的形态
+        _log_forward_failure(path, f"异常: {exc}")
 
 
 def schedule_chat_push(

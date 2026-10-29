@@ -127,7 +127,17 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info(f"{settings.project_name} 关闭中...")
-    
+
+    # 先标记「计划内停机」再断连接：否则本次掐断会被短连接计数器记一笔，
+    # 攒够 5 次就把账号禁用——每次重启都禁用一遍全部账号（2026-10-29 实测）
+    try:
+        from app.services.xianyu.connection_manager import ConnectionManager
+
+        ConnectionManager.mark_shutting_down()
+        logger.info("已标记计划内停机（短连接断开不计入账号禁用）")
+    except Exception as e:
+        logger.error(f"标记计划内停机失败: {e}")
+
     # 停止CookieManager
     try:
         await cookie_manager.stop()
